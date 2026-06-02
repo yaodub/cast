@@ -1,0 +1,30 @@
+{
+  "name": "@getcast/web-fetch",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./server": "./src/server.ts"
+  },
+  "scripts": {
+    "dev": "PORT=3002 tsx watch src/server.ts",
+    "test": "tsx src/test.ts",
+    "build": "tsx build.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "cheerio": "^1.0.0",
+    "domhandler": "^5.0.3",
+    "turndown": "^7.2.0",
+    "tiktoken": "^1.0.21",
+    "playwright": "^1.60.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/turndown": "^5.0.5",
+    "esbuild": "^0.27.3",
+    "tsx": "^4.19.0"
+  }
+}

@@ -1,0 +1,506 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`truth-table snapshots > bits="" produces stable output 1`] = `
+{
+  "contract": {
+    "receive": {
+      "freeText": false,
+      "push": false,
+      "structuredInbound": false,
+    },
+    "send": {
+      "freeText": false,
+      "push": false,
+      "query": false,
+      "request": false,
+    },
+  },
+  "peerListing": [],
+  "prompt": null,
+  "rejection": "Output text was rejected — this channel delivers nothing addressed to this peer. Do not retry this text. If reasoning needs a local record, use \`<cast:internal>…</cast:internal>\` instead.",
+}
+`;
+
+exports[`truth-table snapshots > bits="a" produces stable output 1`] = `
+{
+  "contract": {
+    "receive": {
+      "freeText": false,
+      "push": false,
+      "structuredInbound": true,
+    },
+    "send": {
+      "freeText": false,
+      "push": false,
+      "query": false,
+      "request": false,
+    },
+  },
+  "peerListing": [
+    "they can query you",
+  ],
+  "prompt": "This channel does not deliver free-form conversation. Only the structured envelopes listed below reach the addressee; any other text is rejected as undeliverable.
+You may emit:
+- \`<cast:answer request="…">…</cast:answer>\` in reply to an incoming \`<cast:query>\`.
+Incoming \`<cast:request>\` envelopes are fire-and-forget — handle them via tools; emitting \`<cast:answer>\` in reply is pointless because the sender opted out of the return path.
+\`<cast:internal>…</cast:internal>\` is always available for private reasoning you want logged locally; it is never delivered.",
+  "rejection": "Output text was rejected — this channel only delivers structured envelopes (\`<cast:answer request="…">\`) to the addressee. Do not retry this text. For reasoning you want kept locally, wrap it in \`<cast:internal>…</cast:internal>\` — that is never delivered, never rejected.",
+}
+`;
+
+exports[`truth-table snapshots > bits="a" produces stable output 2`] = `
+{
+  "contract": {
+    "receive": {
+      "freeText": false,
+      "push": false,
+      "structuredInbound": true,
+    },
+    "send": {
+      "freeText": false,
+      "push": false,
+      "query": false,
+      "request": false,
+    },
+  },
+  "peerListing": [
+    "they can query you",
+  ],
+  "prompt": "This channel does not deliver free-form conversation. Only the structured envelopes listed below reach the addressee; any other text is rejected as undeliverable.
+You may emit:
+- \`<cast:answer request="…">…</cast:answer>\` in reply to an incoming \`<cast:query>\`.
+Incoming \`<cast:request>\` envelopes are fire-and-forget — handle them via tools; emitting \`<cast:answer>\` in reply is pointless because the sender opted out of the return path.
+\`<cast:internal>…</cast:internal>\` is always available for private reasoning you want logged locally; it is never delivered.",
+  "rejection": "Output text was rejected — this channel only delivers structured envelopes (\`<cast:answer request="…">\`) to the addressee. Do not retry this text. For reasoning you want kept locally, wrap it in \`<cast:internal>…</cast:internal>\` — that is never delivered, never rejected.",
+}
+`;
+
+exports[`truth-table snapshots > bits="h" produces stable output 1`] = `
+{
+  "contract": {
+    "receive": {
+      "freeText": false,
+      "push": true,
+      "structuredInbound": false,
+    },
+    "send": {
+      "freeText": false,
+      "push": false,
+      "query": false,
+      "request": false,
+    },
+  },
+  "peerListing": [
+    "they can push to you",
+  ],
+  "prompt": null,
+  "rejection": "Output text was rejected — this channel delivers nothing addressed to this peer. Do not retry this text. If reasoning needs a local record, use \`<cast:internal>…</cast:internal>\` instead.",
+}
+`;
+
+exports[`truth-table snapshots > bits="i" produces stable output 1`] = `
+{
+  "contract": {
+    "receive": {
+      "freeText": true,
+      "push": false,
+      "structuredInbound": false,
+    },
+    "send": {
+      "freeText": false,
+      "push": false,
+      "query": false,
+      "request": false,
+    },
+  },
+  "peerListing": [
+    "they can message you",
+  ],
+  "prompt": null,
+  "rejection": "Output text was rejected — this channel delivers nothing addressed to this peer. Do not retry this text. If reasoning needs a local record, use \`<cast:internal>…</cast:internal>\` instead.",
+}
+`;
+
+exports[`truth-table snapshots > bits="io" produces stable output 1`] = `
+{
+  "contract": {
+    "receive": {
+      "freeText": true,
+      "push": false,
+      "structuredInbound": false,
+    },
+    "send": {
+      "freeText": true,
+      "push": false,
+      "query": false,
+      "request": false,
+    },
+  },
+  "peerListing": [
+    "you can message",
+    "they can message you",
+  ],
+  "prompt": null,
+  "rejection": "Output text was rejected — this channel delivers nothing addressed to this peer. Do not retry this text. If reasoning needs a local record, use \`<cast:internal>…</cast:internal>\` instead.",
+}
+`;
+
+exports[`truth-table snapshots > bits="ioaqrph" produces stable output 1`] = `
+{
+  "contract": {
+    "receive": {
+      "freeText": true,
+      "push": true,
+      "structuredInbound": true,
+    },
+    "send": {
+      "freeText": true,
+      "push": true,
+      "query": true,
+      "request": true,
+    },
+  },
+  "peerListing": [
+    "you can query",
+    "you can fire fire-and-forget requests",
+    "you can message",
+    "you can push",
+    "they can query you",
+    "they can message you",
+    "they can push to you",
+  ],
+  "prompt": "Free-form conversation messages on this channel are delivered to the addressee normally.
+You may emit:
+- \`<cast:answer request="…">…</cast:answer>\` in reply to an incoming \`<cast:query>\`.
+- \`<cast:query target="…">…</cast:query>\` to ask the addressee a question — expect a \`<cast:answer>\` back.
+- \`<cast:request target="…">…</cast:request>\` to fire-and-forget — no reply will be delivered.
+Incoming \`<cast:request>\` envelopes are fire-and-forget — handle them via tools; emitting \`<cast:answer>\` in reply is pointless because the sender opted out of the return path.
+\`<cast:internal>…</cast:internal>\` is always available for private reasoning you want logged locally; it is never delivered.",
+  "rejection": "Output text was rejected — this channel only delivers structured envelopes (\`<cast:answer request="…">\`, \`<cast:query target="…">\`, \`<cast:request target="…">\`) to the addressee. Do not retry this text. For reasoning you want kept locally, wrap it in \`<cast:internal>…</cast:internal>\` — that is never delivered, never rejected.",
+}
+`;
+
+exports[`truth-table snapshots > bits="o" produces stable output 1`] = `
+{
+  "contract": {
+    "receive": {
+      "freeText": false,
+      "push": false,
+      "structuredInbound": false,
+    },
+    "send": {
+      "freeText": true,
+      "push": false,
+      "query": false,
+      "request": false,
+    },
+  },
+  "peerListing": [
+    "you can message",
+  ],
+  "prompt": null,
+  "rejection": "Output text was rejected — this channel delivers nothing addressed to this peer. Do not retry this text. If reasoning needs a local record, use \`<cast:internal>…</cast:internal>\` instead.",
+}
+`;
+
+exports[`truth-table snapshots > bits="oqra" produces stable output 1`] = `
+{
+  "contract": {
+    "receive": {
+      "freeText": false,
+      "push": false,
+      "structuredInbound": true,
+    },
+    "send": {
+      "freeText": true,
+      "push": false,
+      "query": true,
+      "request": true,
+    },
+  },
+  "peerListing": [
+    "you can query",
+    "you can fire fire-and-forget requests",
+    "you can message",
+    "they can query you",
+  ],
+  "prompt": "Free-form conversation messages on this channel are delivered to the addressee normally.
+You may emit:
+- \`<cast:answer request="…">…</cast:answer>\` in reply to an incoming \`<cast:query>\`.
+- \`<cast:query target="…">…</cast:query>\` to ask the addressee a question — expect a \`<cast:answer>\` back.
+- \`<cast:request target="…">…</cast:request>\` to fire-and-forget — no reply will be delivered.
+Incoming \`<cast:request>\` envelopes are fire-and-forget — handle them via tools; emitting \`<cast:answer>\` in reply is pointless because the sender opted out of the return path.
+\`<cast:internal>…</cast:internal>\` is always available for private reasoning you want logged locally; it is never delivered.",
+  "rejection": "Output text was rejected — this channel only delivers structured envelopes (\`<cast:answer request="…">\`, \`<cast:query target="…">\`, \`<cast:request target="…">\`) to the addressee. Do not retry this text. For reasoning you want kept locally, wrap it in \`<cast:internal>…</cast:internal>\` — that is never delivered, never rejected.",
+}
+`;
+
+exports[`truth-table snapshots > bits="p" produces stable output 1`] = `
+{
+  "contract": {
+    "receive": {
+      "freeText": false,
+      "push": false,
+      "structuredInbound": false,
+    },
+    "send": {
+      "freeText": false,
+      "push": true,
+      "query": false,
+      "request": false,
+    },
+  },
+  "peerListing": [
+    "you can push",
+  ],
+  "prompt": "This channel does not deliver free-form conversation. Only the structured envelopes listed below reach the addressee; any other text is rejected as undeliverable.
+\`<cast:internal>…</cast:internal>\` is always available for private reasoning you want logged locally; it is never delivered.",
+  "rejection": "Output text was rejected — this channel delivers nothing addressed to this peer. Do not retry this text. If reasoning needs a local record, use \`<cast:internal>…</cast:internal>\` instead.",
+}
+`;
+
+exports[`truth-table snapshots > bits="ph" produces stable output 1`] = `
+{
+  "contract": {
+    "receive": {
+      "freeText": false,
+      "push": true,
+      "structuredInbound": false,
+    },
+    "send": {
+      "freeText": false,
+      "push": true,
+      "query": false,
+      "request": false,
+    },
+  },
+  "peerListing": [
+    "you can push",
+    "they can push to you",
+  ],
+  "prompt": "This channel does not deliver free-form conversation. Only the structured envelopes listed below reach the addressee; any other text is rejected as undeliverable.
+\`<cast:internal>…</cast:internal>\` is always available for private reasoning you want logged locally; it is never delivered.",
+  "rejection": "Output text was rejected — this channel delivers nothing addressed to this peer. Do not retry this text. If reasoning needs a local record, use \`<cast:internal>…</cast:internal>\` instead.",
+}
+`;
+
+exports[`truth-table snapshots > bits="q" produces stable output 1`] = `
+{
+  "contract": {
+    "receive": {
+      "freeText": false,
+      "push": false,
+      "structuredInbound": false,
+    },
+    "send": {
+      "freeText": false,
+      "push": false,
+      "query": true,
+      "request": false,
+    },
+  },
+  "peerListing": [
+    "you can query",
+  ],
+  "prompt": "This channel does not deliver free-form conversation. Only the structured envelopes listed below reach the addressee; any other text is rejected as undeliverable.
+You may emit:
+- \`<cast:query target="…">…</cast:query>\` to ask the addressee a question — expect a \`<cast:answer>\` back.
+\`<cast:internal>…</cast:internal>\` is always available for private reasoning you want logged locally; it is never delivered.",
+  "rejection": "Output text was rejected — this channel only delivers structured envelopes (\`<cast:query target="…">\`) to the addressee. Do not retry this text. For reasoning you want kept locally, wrap it in \`<cast:internal>…</cast:internal>\` — that is never delivered, never rejected.",
+}
+`;
+
+exports[`truth-table snapshots > bits="q" produces stable output 2`] = `
+{
+  "contract": {
+    "receive": {
+      "freeText": false,
+      "push": false,
+      "structuredInbound": false,
+    },
+    "send": {
+      "freeText": false,
+      "push": false,
+      "query": true,
+      "request": false,
+    },
+  },
+  "peerListing": [
+    "you can query",
+  ],
+  "prompt": "This channel does not deliver free-form conversation. Only the structured envelopes listed below reach the addressee; any other text is rejected as undeliverable.
+You may emit:
+- \`<cast:query target="…">…</cast:query>\` to ask the addressee a question — expect a \`<cast:answer>\` back.
+\`<cast:internal>…</cast:internal>\` is always available for private reasoning you want logged locally; it is never delivered.",
+  "rejection": "Output text was rejected — this channel only delivers structured envelopes (\`<cast:query target="…">\`) to the addressee. Do not retry this text. For reasoning you want kept locally, wrap it in \`<cast:internal>…</cast:internal>\` — that is never delivered, never rejected.",
+}
+`;
+
+exports[`truth-table snapshots > bits="qa" produces stable output 1`] = `
+{
+  "contract": {
+    "receive": {
+      "freeText": false,
+      "push": false,
+      "structuredInbound": true,
+    },
+    "send": {
+      "freeText": false,
+      "push": false,
+      "query": true,
+      "request": false,
+    },
+  },
+  "peerListing": [
+    "you can query",
+    "they can query you",
+  ],
+  "prompt": "This channel does not deliver free-form conversation. Only the structured envelopes listed below reach the addressee; any other text is rejected as undeliverable.
+You may emit:
+- \`<cast:answer request="…">…</cast:answer>\` in reply to an incoming \`<cast:query>\`.
+- \`<cast:query target="…">…</cast:query>\` to ask the addressee a question — expect a \`<cast:answer>\` back.
+Incoming \`<cast:request>\` envelopes are fire-and-forget — handle them via tools; emitting \`<cast:answer>\` in reply is pointless because the sender opted out of the return path.
+\`<cast:internal>…</cast:internal>\` is always available for private reasoning you want logged locally; it is never delivered.",
+  "rejection": "Output text was rejected — this channel only delivers structured envelopes (\`<cast:answer request="…">\`, \`<cast:query target="…">\`) to the addressee. Do not retry this text. For reasoning you want kept locally, wrap it in \`<cast:internal>…</cast:internal>\` — that is never delivered, never rejected.",
+}
+`;
+
+exports[`truth-table snapshots > bits="qr" produces stable output 1`] = `
+{
+  "contract": {
+    "receive": {
+      "freeText": false,
+      "push": false,
+      "structuredInbound": false,
+    },
+    "send": {
+      "freeText": false,
+      "push": false,
+      "query": true,
+      "request": true,
+    },
+  },
+  "peerListing": [
+    "you can query",
+    "you can fire fire-and-forget requests",
+  ],
+  "prompt": "This channel does not deliver free-form conversation. Only the structured envelopes listed below reach the addressee; any other text is rejected as undeliverable.
+You may emit:
+- \`<cast:query target="…">…</cast:query>\` to ask the addressee a question — expect a \`<cast:answer>\` back.
+- \`<cast:request target="…">…</cast:request>\` to fire-and-forget — no reply will be delivered.
+\`<cast:internal>…</cast:internal>\` is always available for private reasoning you want logged locally; it is never delivered.",
+  "rejection": "Output text was rejected — this channel only delivers structured envelopes (\`<cast:query target="…">\`, \`<cast:request target="…">\`) to the addressee. Do not retry this text. For reasoning you want kept locally, wrap it in \`<cast:internal>…</cast:internal>\` — that is never delivered, never rejected.",
+}
+`;
+
+exports[`truth-table snapshots > bits="qra" produces stable output 1`] = `
+{
+  "contract": {
+    "receive": {
+      "freeText": false,
+      "push": false,
+      "structuredInbound": true,
+    },
+    "send": {
+      "freeText": false,
+      "push": false,
+      "query": true,
+      "request": true,
+    },
+  },
+  "peerListing": [
+    "you can query",
+    "you can fire fire-and-forget requests",
+    "they can query you",
+  ],
+  "prompt": "This channel does not deliver free-form conversation. Only the structured envelopes listed below reach the addressee; any other text is rejected as undeliverable.
+You may emit:
+- \`<cast:answer request="…">…</cast:answer>\` in reply to an incoming \`<cast:query>\`.
+- \`<cast:query target="…">…</cast:query>\` to ask the addressee a question — expect a \`<cast:answer>\` back.
+- \`<cast:request target="…">…</cast:request>\` to fire-and-forget — no reply will be delivered.
+Incoming \`<cast:request>\` envelopes are fire-and-forget — handle them via tools; emitting \`<cast:answer>\` in reply is pointless because the sender opted out of the return path.
+\`<cast:internal>…</cast:internal>\` is always available for private reasoning you want logged locally; it is never delivered.",
+  "rejection": "Output text was rejected — this channel only delivers structured envelopes (\`<cast:answer request="…">\`, \`<cast:query target="…">\`, \`<cast:request target="…">\`) to the addressee. Do not retry this text. For reasoning you want kept locally, wrap it in \`<cast:internal>…</cast:internal>\` — that is never delivered, never rejected.",
+}
+`;
+
+exports[`truth-table snapshots > bits="r" produces stable output 1`] = `
+{
+  "contract": {
+    "receive": {
+      "freeText": false,
+      "push": false,
+      "structuredInbound": false,
+    },
+    "send": {
+      "freeText": false,
+      "push": false,
+      "query": false,
+      "request": true,
+    },
+  },
+  "peerListing": [
+    "you can fire fire-and-forget requests",
+  ],
+  "prompt": "This channel does not deliver free-form conversation. Only the structured envelopes listed below reach the addressee; any other text is rejected as undeliverable.
+You may emit:
+- \`<cast:request target="…">…</cast:request>\` to fire-and-forget — no reply will be delivered.
+\`<cast:internal>…</cast:internal>\` is always available for private reasoning you want logged locally; it is never delivered.",
+  "rejection": "Output text was rejected — this channel only delivers structured envelopes (\`<cast:request target="…">\`) to the addressee. Do not retry this text. For reasoning you want kept locally, wrap it in \`<cast:internal>…</cast:internal>\` — that is never delivered, never rejected.",
+}
+`;
+
+exports[`truth-table snapshots > bits="r" produces stable output 2`] = `
+{
+  "contract": {
+    "receive": {
+      "freeText": false,
+      "push": false,
+      "structuredInbound": false,
+    },
+    "send": {
+      "freeText": false,
+      "push": false,
+      "query": false,
+      "request": true,
+    },
+  },
+  "peerListing": [
+    "you can fire fire-and-forget requests",
+  ],
+  "prompt": "This channel does not deliver free-form conversation. Only the structured envelopes listed below reach the addressee; any other text is rejected as undeliverable.
+You may emit:
+- \`<cast:request target="…">…</cast:request>\` to fire-and-forget — no reply will be delivered.
+\`<cast:internal>…</cast:internal>\` is always available for private reasoning you want logged locally; it is never delivered.",
+  "rejection": "Output text was rejected — this channel only delivers structured envelopes (\`<cast:request target="…">\`) to the addressee. Do not retry this text. For reasoning you want kept locally, wrap it in \`<cast:internal>…</cast:internal>\` — that is never delivered, never rejected.",
+}
+`;
+
+exports[`truth-table snapshots > bits="ra" produces stable output 1`] = `
+{
+  "contract": {
+    "receive": {
+      "freeText": false,
+      "push": false,
+      "structuredInbound": true,
+    },
+    "send": {
+      "freeText": false,
+      "push": false,
+      "query": false,
+      "request": true,
+    },
+  },
+  "peerListing": [
+    "you can fire fire-and-forget requests",
+    "they can query you",
+  ],
+  "prompt": "This channel does not deliver free-form conversation. Only the structured envelopes listed below reach the addressee; any other text is rejected as undeliverable.
+You may emit:
+- \`<cast:answer request="…">…</cast:answer>\` in reply to an incoming \`<cast:query>\`.
+- \`<cast:request target="…">…</cast:request>\` to fire-and-forget — no reply will be delivered.
+Incoming \`<cast:request>\` envelopes are fire-and-forget — handle them via tools; emitting \`<cast:answer>\` in reply is pointless because the sender opted out of the return path.
+\`<cast:internal>…</cast:internal>\` is always available for private reasoning you want logged locally; it is never delivered.",
+  "rejection": "Output text was rejected — this channel only delivers structured envelopes (\`<cast:answer request="…">\`, \`<cast:request target="…">\`) to the addressee. Do not retry this text. For reasoning you want kept locally, wrap it in \`<cast:internal>…</cast:internal>\` — that is never delivered, never rejected.",
+}
+`;

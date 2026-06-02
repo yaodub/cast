@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Discussions
+    url: https://github.com/yaodub/cast/discussions
+    about: Ask questions, share patterns, or talk about Cast more openly than an issue allows.
+  - name: Security vulnerability
+    url: https://github.com/yaodub/cast/security/advisories/new
+    about: Report a security issue privately. Please do not file public issues for security concerns.

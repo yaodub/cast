@@ -1,0 +1,32 @@
+{
+  "name": "@getcast/ext-email",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schemas": "./src/schemas.ts"
+  },
+  "scripts": {
+    "build": "tsx build.ts"
+  },
+  "dependencies": {
+    "croner": "^10.0.1",
+    "html-to-text": "^9.0.5",
+    "imapflow": "^1.0.174",
+    "mailauth": "^4.13.2",
+    "mailparser": "^3.7.2",
+    "nodemailer": "^6.10.1"
+  },
+  "devDependencies": {
+    "@types/html-to-text": "^9.0.4",
+    "@types/mailparser": "^3.4.5",
+    "@types/nodemailer": "^6.4.17",
+    "esbuild": "^0.27.3",
+    "tsx": "^4.19.0"
+  },
+  "peerDependencies": {
+    "@getcast/extension-schema": "workspace:*",
+    "zod": "^4.0.0"
+  }
+}

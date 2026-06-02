@@ -1,0 +1,27 @@
+{
+  "name": "@getcast/ext-whatsapp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schemas": "./src/schemas.ts"
+  },
+  "scripts": {
+    "build": "tsx build.ts"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "7.0.0-rc.9",
+    "better-sqlite3": "^11.8.1",
+    "pino": "^9.14.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "esbuild": "^0.27.3",
+    "tsx": "^4.19.0"
+  },
+  "peerDependencies": {
+    "@getcast/extension-schema": "workspace:*",
+    "zod": "^4.0.0"
+  }
+}

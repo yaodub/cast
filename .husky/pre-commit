@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Warn when staged changes include agent service code. Service code is the
+# primary sandbox-to-host
+# escape vector; Cast consoles never write it, so any staged service/ file
+# either came from the operator's own coding tool (fine — confirm) or from
+# a console policy escape (investigate).
+#
+# Activation: this hook is not wired automatically (would require modifying
+# the repo's git config). Operators enable it via one of:
+#   git config core.hooksPath .husky       # whole-repo opt-in
+#   cp .husky/pre-commit .git/hooks/       # single-clone copy
+#   pnpm install husky && pnpm exec husky  # if husky is later adopted
+#
+# Environment variables:
+#   CAST_ALLOW_SERVICE=1 — skip the prompt entirely (operator pre-authorized)
+#
+# Exit codes:
+#   0 — no service/ files staged, or operator confirmed
+#   1 — service/ files staged and operator declined
+set -euo pipefail
+
+if [[ "${CAST_ALLOW_SERVICE:-}" == "1" ]]; then
+  exit 0
+fi
+
+# Staged files under mnt/agents/*/service/. Added, modified, or renamed.
+STAGED=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '^mnt/agents/[^/]+/service/' || true)
+
+if [[ -z "$STAGED" ]]; then
+  exit 0
+fi
+
+cat >&2 <<EOF
+
+WARNING: staged changes include agent service code:
+EOF
+while IFS= read -r line; do
+  printf '  %s\n' "$line" >&2
+done <<< "$STAGED"
+cat >&2 <<'EOF'
+
+Service code must be developed externally (Claude Code + /compose-cast-agent).
+If you authored these files directly via your own coding tool, re-run the
+commit with one of:
+    CAST_ALLOW_SERVICE=1 git commit ...
+    git commit --no-verify ...
+
+If these changes came from a Cast console, that is a policy escape — please
+investigate before committing.
+
+EOF
+exit 1

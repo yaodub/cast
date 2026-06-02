@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" fill="none">
+  <style>
+    g { stroke: #5E656E; fill: #5E656E; }
+    @media (prefers-color-scheme: dark) {
+      g { stroke: #C7CDD3; fill: #C7CDD3; }
+    }
+  </style>
+  <g transform="rotate(-23, 200, 200)" stroke-linecap="round" stroke-width="28">
+    <circle cx="200" cy="200" r="50" />
+    <path d="M 310.59 122.57 A 135 135 0 1 0 310.59 277.43" fill="none" />
+    <path d="M 351.54 93.88 A 185 185 0 1 0 351.54 306.12" fill="none" />
+    <line x1="310.59" y1="122.57" x2="351.54" y2="93.88" />
+    <line x1="310.59" y1="277.43" x2="351.54" y2="306.12" />
+  </g>
+</svg>

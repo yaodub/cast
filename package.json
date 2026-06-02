@@ -1,0 +1,70 @@
+{
+  "name": "cast",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Framework for building Claude-powered agents that run as isolated container processes.",
+  "license": "MIT",
+  "author": "Yao <yao@getcast.dev>",
+  "homepage": "https://getcast.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yaodub/cast.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yaodub/cast/issues"
+  },
+  "keywords": [
+    "agents",
+    "claude",
+    "anthropic",
+    "ai",
+    "llm",
+    "framework",
+    "containers",
+    "mcp",
+    "agent-orchestration"
+  ],
+  "type": "module",
+  "packageManager": "pnpm@10.30.2",
+  "scripts": {
+    "build": "tsc -p packages/cast/tsconfig.json && pnpm --filter @getcast/web-ui build",
+    "bundle": "tsx scripts/build-server.ts",
+    "start": "node scripts/start.mjs",
+    "dev": "tsx scripts/dev.ts",
+    "agent": "tsx packages/agent-kit/src/index.ts",
+    "build:image": "node packages/agent-runner/build.mjs",
+    "stdlib": "tsx packages/cast-stdlib/src/cli.ts",
+    "typecheck": "tsc -p packages/cast/tsconfig.json --noEmit",
+    "format": "prettier --write \"packages/cast/src/**/*.ts\"",
+    "format:check": "prettier --check \"packages/cast/src/**/*.ts\"",
+    "test": "vitest run -c packages/cast/vitest.config.ts",
+    "test:watch": "vitest -c packages/cast/vitest.config.ts",
+    "cli": "tsx packages/cast/src/cli.ts",
+    "tui": "tsx packages/cast/src/tui.ts",
+    "kill": "node tools/kill-containers.mjs",
+    "sync:snapshots": "pnpm --filter @getcast/server sync:snapshots"
+  },
+  "devDependencies": {
+    "@clack/prompts": "^1.0.1",
+    "@types/semver": "^7.7.1",
+    "@vitest/coverage-v8": "^4.0.18",
+    "cron-parser": "^5.5.0",
+    "dotenv": "^16.4.7",
+    "esbuild": "^0.27.3",
+    "grammy": "^1.40.0",
+    "prettier": "^3.8.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.0.18",
+    "zod": "^4.3.6"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild"
+    ]
+  }
+}

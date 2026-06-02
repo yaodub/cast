@@ -1,0 +1,107 @@
+@import "tailwindcss";
+
+body {
+  @apply bg-gray-950 text-gray-300 antialiased;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+button, [role="button"] { cursor: pointer; }
+button:disabled { cursor: default; }
+
+.mono {
+  font-family: ui-monospace, 'SF Mono', 'Cascadia Code', monospace;
+  font-size: 0.875em;
+}
+
+/* Ripple animation for activity indicator */
+@keyframes ripple {
+  0% { transform: scale(0.5); opacity: 1; }
+  100% { transform: scale(2.5); opacity: 0; }
+}
+
+/* Soft entrance for chat messages — fires once on mount so newly arrived
+   bubbles don't pop in and yank the eye. */
+@keyframes message-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: none; }
+}
+.message-in { animation: message-in 600ms ease-out both; }
+
+/* Stagger top-level blocks within a markdown message so long responses
+   land paragraph by paragraph instead of one big chunk. */
+.message-stagger > * { animation: message-in 500ms ease-out both; }
+.message-stagger > *:nth-child(1)  { animation-delay:    0ms; }
+.message-stagger > *:nth-child(2)  { animation-delay:  140ms; }
+.message-stagger > *:nth-child(3)  { animation-delay:  280ms; }
+.message-stagger > *:nth-child(4)  { animation-delay:  420ms; }
+.message-stagger > *:nth-child(5)  { animation-delay:  560ms; }
+.message-stagger > *:nth-child(6)  { animation-delay:  700ms; }
+.message-stagger > *:nth-child(7)  { animation-delay:  840ms; }
+.message-stagger > *:nth-child(8)  { animation-delay:  980ms; }
+.message-stagger > *:nth-child(9)  { animation-delay: 1120ms; }
+.message-stagger > *:nth-child(10) { animation-delay: 1260ms; }
+.message-stagger > *:nth-child(n+11) { animation-delay: 1400ms; }
+
+/* Blinking cursor for in-flight preview bubbles. */
+@keyframes cursor-blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+.preview-cursor {
+  display: inline-block;
+  margin-left: 2px;
+  color: #9ca3af;
+  animation: cursor-blink 1s steps(1) infinite;
+}
+
+/* Animated trailing dots for the activity-indicator label — reveals up
+   to three dots and loops so "thinking…" reads as in-motion. Width is
+   reserved so the label never reflows. Pure CSS: no re-render, runs on
+   the compositor, and keeps ticking harmlessly while the slot is hidden
+   (opacity 0). */
+@keyframes thinking-dots { from { width: 0; } to { width: 1.1ch; } }
+.thinking-dots {
+  display: inline-block;
+  overflow: hidden;
+  vertical-align: bottom;
+  width: 1.1ch;
+  animation: thinking-dots 1.4s steps(4, jump-none) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .thinking-dots { animation: none; }
+}
+
+/* Chat-panel dim backdrop — opacity ramps from 0 at the default (small)
+   height to 0.8 at the max (large) height. JS publishes the three
+   numbers; CSS does the math. Bare numbers (not lengths) so calc can
+   divide them. */
+.chat-dim-backdrop {
+  opacity: clamp(
+    0,
+    calc((var(--chat-h, 0) - var(--chat-default, 0)) / (var(--chat-max, 1) - var(--chat-default, 0)) * 0.8),
+    0.8
+  );
+}
+
+/* Custom select chevron — the native UA chevron sits flush right and
+   ignores padding. Strip it (`appearance: none`) and paint our own as a
+   background image. Applies to every `<select>` in the app; the web-ui
+   has no non-admin selects, so a global rule is the simplest scope.
+   `padding-right` uses `!important` to win against Tailwind's `px-*`
+   utility — same cascade layer, but the utility class is what callers
+   pass everywhere. */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%239ca3af' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 8l4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.5rem center;
+  background-size: 1.25rem 1.25rem;
+  padding-right: 2rem !important;
+}
+
+/* Scrollbar — visible but unobtrusive */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #4b5563; }

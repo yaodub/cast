@@ -1,0 +1,58 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Astro build cache
+.astro/
+
+# Secrets
+*.keys.json
+.env
+
+# OS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# Claude Code local config — settings, plans, memory pointers (personal, not project).
+# Skills under .claude/skills/ ARE shared: they're Cast-specific tooling that should
+# travel with the repo so anyone cloning it gets /cast-build, /cast-refine, /cast-debug.
+.claude/*
+!.claude/skills/
+
+# Claude Code local memory supplement (private context that doesn't ship publicly)
+CLAUDE.local.md
+
+# Agent type local data — keep fixture.example/ templates
+packages/agent-kit/types/**/fixture*/
+!packages/agent-kit/types/**/fixture.example/
+packages/agent-kit/types/**/dev/
+packages/agent-kit/types/**/ref/*
+packages/agent-kit/types/**/home/*
+packages/agent-kit/types/**/sessions/
+.tmp/
+.vitest-tmp/
+
+# Agent templates (independent git repos)
+packages/agent-kit/templates/
+
+# Composition backups
+.backups/
+
+# Python
+__pycache__/
+
+# E2E test runtime (ephemeral server instance)
+.test/
+
+# Reference / scratch work
+agents-sdk-docs
+
+# Personal scratch — parallel data namespace for local testing. Point
+# CAST_AGENTS_DIR and CAST_CONFIG_DIR at .personal/mnt/agents and
+# .personal/mnt/config to use this instead of the default ~/.cast/.
+.personal/

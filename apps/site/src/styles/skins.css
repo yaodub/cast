@@ -1,0 +1,1222 @@
+/* ============================================================
+   Cast — skins
+   Non-default aesthetic modes. Base (classical) left alone.
+   Scoped entirely to [data-skin=...] so the rest of the app
+   is unaware of these and never imports them conditionally.
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=VT323&family=Silkscreen:wght@400;700&display=swap');
+
+/* -------------------------------------------------------------
+   ZINE — photocopier / screen-printed.
+   The rule: under-decorate, don't over-decorate.
+   No stamps, no torn paper, no "artful" flourishes — just the
+   look of something made at 2am on a library Xerox.
+   ------------------------------------------------------------- */
+
+:root[data-skin="zine"] {
+  /* slightly desaturated + warmer, like aged toner */
+  --bg: oklch(96% 0.006 80);
+  --bg-elev: oklch(94% 0.008 80);
+  --bg-sunken: oklch(92% 0.010 80);
+  --fg: oklch(16% 0.01 80);
+  --border: oklch(30% 0.015 80);
+  --border-strong: oklch(22% 0.02 80);
+  --shadow-sm: none;
+  --shadow: none;
+  --shadow-lg: none;
+}
+:root[data-skin="zine"][data-theme="dark"] {
+  --bg: oklch(13% 0.008 80);
+  --bg-elev: oklch(16% 0.01 80);
+  --bg-sunken: oklch(10% 0.008 80);
+  --fg: oklch(94% 0.008 80);
+  --border: oklch(60% 0.02 80);
+  --border-strong: oklch(80% 0.02 80);
+}
+
+/* Paper noise: lo-fi SVG grain via data URI. Stays under everything. */
+[data-skin="zine"] body::before {
+  content: '';
+  position: fixed; inset: 0;
+  pointer-events: none;
+  z-index: 100;
+  opacity: 0.35;
+  mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.8 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  background-size: 240px 240px;
+}
+[data-skin="zine"][data-theme="dark"] body::before {
+  mix-blend-mode: screen;
+  opacity: 0.22;
+}
+
+/* Kill soft rounded corners. Zines don't have radii. */
+[data-skin="zine"] .btn,
+[data-skin="zine"] .chip,
+[data-skin="zine"] .badge,
+[data-skin="zine"] [class*="card"] { border-radius: 2px; }
+
+/* Chip / badge: hard-edged photocopy of a sticker */
+[data-skin="zine"] .chip {
+  border-radius: 0 !important;
+  border: 1.5px solid var(--fg) !important;
+  background: var(--bg) !important;
+  font-family: 'JetBrains Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 11px !important;
+  padding: 6px 10px !important;
+}
+
+/* Buttons: flat, with the one allowed flourish — an offset hard shadow.
+   Only on primary. Otherwise too much. */
+[data-skin="zine"] .btn {
+  border-radius: 0 !important;
+  font-family: 'JetBrains Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+}
+[data-skin="zine"] .btn-primary {
+  background: var(--fg) !important;
+  color: var(--bg) !important;
+  border: 1.5px solid var(--fg) !important;
+  box-shadow: 4px 4px 0 0 var(--accent) !important;
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+[data-skin="zine"] .btn-primary:hover {
+  transform: translate(1px, 1px);
+  box-shadow: 3px 3px 0 0 var(--accent) !important;
+}
+[data-skin="zine"] .btn-secondary {
+  border: 1.5px solid var(--fg) !important;
+  background: transparent !important;
+}
+
+/* Hero H1: misregistered CMYK photocopy. Static, not animated. */
+[data-skin="zine"] .hero-h1 {
+  font-family: 'Inter', sans-serif !important;
+  font-style: normal !important;
+  text-shadow:
+    2px 0 0 oklch(60% 0.22 25 / 0.55),
+    -2px 0 0 oklch(60% 0.18 220 / 0.55);
+}
+[data-skin="zine"] .hero-italic {
+  font-family: 'Inter', serif !important;
+  color: var(--fg) !important;
+  background: none !important;
+  -webkit-text-fill-color: var(--fg) !important;
+  background-clip: unset !important;
+  text-shadow:
+    2px 0 0 oklch(60% 0.22 25 / 0.55),
+    -2px 0 0 oklch(60% 0.18 220 / 0.55);
+  position: relative;
+}
+/* Under the italic: a wonky hand-underline via inline SVG */
+[data-skin="zine"] .hero-italic::after {
+  content: '';
+  position: absolute;
+  left: 2%; right: 2%;
+  bottom: -0.12em;
+  height: 0.18em;
+  background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 12' preserveAspectRatio='none'><path d='M2 6 Q 30 1, 60 7 T 120 5 T 180 6 L 198 4' stroke='currentColor' stroke-width='2.5' fill='none' stroke-linecap='round'/></svg>") center/100% 100% no-repeat;
+  color: var(--accent);
+  opacity: 0.85;
+}
+/* Sibling to hero-italic for words emphasized via underline instead of italic */
+[data-skin="zine"] .hero-underline {
+  font-family: 'Inter', sans-serif !important;
+  color: inherit !important;
+  background: none !important;
+  -webkit-text-fill-color: currentColor !important;
+  background-clip: unset !important;
+  text-decoration: underline;
+  text-decoration-thickness: 0.06em;
+  text-underline-offset: 0.14em;
+}
+
+/* Kill the aurora gradient. Zines don't glow. */
+[data-skin="zine"] .hero-aurora { display: none !important; }
+
+/* Watermark CastMark: desaturate, up its opacity a bit, overlay-blend */
+[data-skin="zine"] .hero-watermark {
+  opacity: 0.08 !important;
+  filter: grayscale(1) contrast(1.4);
+  mix-blend-mode: multiply;
+}
+[data-skin="zine"][data-theme="dark"] .hero-watermark {
+  mix-blend-mode: screen;
+}
+
+/* Section badges: like a typewriter caption glued on */
+[data-skin="zine"] .badge {
+  border-radius: 0 !important;
+  border: 1px solid var(--fg) !important;
+  background: var(--bg) !important;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--fg) !important;
+  padding: 3px 8px !important;
+  font-size: 10px !important;
+  transform: rotate(-0.8deg);
+  display: inline-block;
+}
+
+
+/* -------------------------------------------------------------
+   Y2K v4 — Cameron's World energy, dialed for readability.
+   Cream paper + visible pixel-dot tile. VT323 as real accent
+   font (section eyebrows, badges, chip, callouts, stats).
+   Candy sprinkles: pink/cyan/lime/amber badges in rotation;
+   hot-pink primary w/ hard black shadow; magenta-bordered code;
+   thin-black sticker cards with hard offset shadow; subtle
+   WordArt shadow on hero. Two ~1-2deg rotations as easter eggs.
+   Body still system-sans, sizes modern, voice unchanged.
+   ------------------------------------------------------------- */
+
+:root[data-skin="y2k"] {
+  /* Electric-iMac palette — cobalt + coral + butter, no hot pink */
+  --y2k-pink:   #E63946;   /* coral red (primary accent role) */
+  --y2k-pink2:  #F07B7B;   /* coral hover */
+  --y2k-cyan:   #2B9EB3;   /* teal-cyan */
+  --y2k-lime:   #7CC66A;   /* mellow lime */
+  --y2k-amber:  #F4C430;   /* butter yellow */
+  --y2k-purple: #5B47C9;   /* ultramarine */
+  --y2k-blue:   #1E4DD8;   /* cobalt link blue */
+  --y2k-visit:  #5B2E9E;
+
+  --y2k-ink:    #0B1F3A;   /* navy ink, warmer than black */
+  --y2k-paper:  #EAF4FB;   /* icy blue paper */
+  --y2k-paper2: #D8E9F5;   /* deeper icy blue for alt sections */
+  --y2k-paper3: #FFF4D6;   /* buttery yellow tint for 3rd rhythm */
+  --y2k-rule:   #0B1F3A;
+
+  /* Callouts */
+  --y2k-tip-bg:    #FFF1B8;
+  --y2k-tip-br:    #0B1F3A;
+  --y2k-tip-label: #8A6A00;
+  --y2k-warn-bg:   #FFCFB3;
+  --y2k-warn-br:   #0B1F3A;
+  --y2k-warn-label: #B03B00;
+  --y2k-jargon-bg: #D8E0FF;
+  --y2k-jargon-br: #0B1F3A;
+  --y2k-jargon-label: #3B2BB0;
+  --y2k-security-bg: #D6EDE6;
+  --y2k-security-br: #0B1F3A;
+  --y2k-security-label: #1B6B5C;
+
+  /* Theme-adaptive amber backplate — bright amber in light, dark warm in dark.
+     Mirrors the y2k-band-yellow swap used for full-width sections, but exposed
+     as a variable so inline backgrounds can opt in. */
+  --y2k-amber-bg: var(--y2k-amber);
+
+  --bg:         var(--y2k-paper);
+  --bg-elev:    #FFFFFF;
+  --bg-sunken:  var(--y2k-paper2);
+  --fg:         var(--y2k-ink);
+  --fg-muted:   #334A66;
+  --fg-subtle:  #6A7A8C;
+  --border:     var(--y2k-ink);
+  --border-strong: var(--y2k-ink);
+  --accent:     var(--y2k-blue);
+  --accent-hover: #143FB8;
+  --accent-soft: #D8E0FF;
+  --accent-fg:  #FFFFFF;
+  --code-bg:    #0B1A35;
+  --code-fg:    #C8F0FF;
+  --shadow-sm:  2px 2px 0 0 #0B1F3A;
+  --shadow:     3px 3px 0 0 #0B1F3A;
+  --shadow-lg:  4px 4px 0 0 #0B1F3A;
+
+  --s-keyword: #F07B7B;
+  --s-string:  #7CC66A;
+  --s-number:  #F4C430;
+  --s-comment: #5A7A9C;
+  --s-fn:      #2B9EB3;
+  --s-punct:   #B8C8DC;
+  --s-prop:    #F4C430;
+}
+
+/* "After-hours CRT" — late-90s monitor in a dark room.
+   Amber-on-near-black is the lived-in DOS/IBM 5150 look; cyan demotes
+   to trim (links, secondary buttons, accent shadows); magenta keeps
+   its CMYK-bloom role on the hero. Win95 chrome stays teal — that
+   was the system color and we're not redesigning Microsoft. */
+:root[data-skin="y2k"][data-theme="dark"] {
+  --y2k-crt-cyan:    #7DF9FF;   /* phosphor scan-cyan — now trim */
+  --y2k-crt-amber:   #FFB000;   /* IBM amber CRT — now primary */
+  --y2k-crt-magenta: #FF4FB1;   /* CMYK afterimage */
+  --y2k-crt-bg:      #0A0E1A;
+  --y2k-glow-cyan:   0 0 8px rgba(125, 249, 255, 0.55);
+  --y2k-glow-amber:  0 0 8px rgba(255, 176, 0, 0.55);
+
+  --bg:         #0A0E1A;
+  --bg-elev:    #2A2010;       /* warm amber-tinted raise; brighter than band-yellow */
+  --bg-sunken:  #05080F;
+  --fg:         #FFE8B8;       /* warm cream, the readout color */
+  --fg-muted:   #C9A977;
+  --fg-subtle:  #7A6645;
+  /* Subtle amber tint for incidental chrome (nav border, kbd outline, footer
+     divider). Sticker-bordered surfaces re-set border explicitly to bright amber. */
+  --border:     rgba(255, 176, 0, 0.22);
+  --border-strong: rgba(255, 176, 0, 0.45);
+  --accent:     var(--y2k-crt-amber);
+  --accent-hover: #FFC94D;
+  --accent-soft: #2A1F08;
+  --accent-fg:  #0A0E1A;
+  --code-bg:    #04060C;
+  --code-fg:    var(--y2k-crt-amber);
+  --shadow-sm:  2px 2px 0 0 var(--y2k-crt-cyan);
+  --shadow:     3px 3px 0 0 var(--y2k-crt-cyan);
+  --shadow-lg:  4px 4px 0 0 var(--y2k-crt-cyan);
+  --y2k-tip-bg:    #1F1A08;
+  --y2k-warn-bg:   #1F1208;
+  --y2k-jargon-bg: #061122;
+  --y2k-security-bg: #061812;
+  --y2k-tip-label:    var(--y2k-crt-amber);
+  --y2k-warn-label:   #FF7A4A;
+  --y2k-jargon-label: var(--y2k-crt-cyan);
+  --y2k-security-label: #4FD4B4;
+  --y2k-rule: var(--y2k-crt-amber);
+  --y2k-amber-bg: #221808;
+}
+
+/* Reset radii to 0 (stickers, not pills) but keep modern spacing */
+[data-skin="y2k"] [class*="card"],
+[data-skin="y2k"] [class*="tile"],
+[data-skin="y2k"] .feature,
+[data-skin="y2k"] .folder,
+[data-skin="y2k"] .callout,
+[data-skin="y2k"] pre,
+[data-skin="y2k"] .btn,
+[data-skin="y2k"] .chip,
+[data-skin="y2k"] .badge,
+[data-skin="y2k"] table { border-radius: 2px !important; }
+
+/* -------- Typography: body sans; VT323 is accent -------- */
+[data-skin="y2k"] body {
+  font-family: 'Inter', -apple-system, Segoe UI, sans-serif !important;
+  background-color: #FFFFFF !important;
+  color: var(--fg) !important;
+  background-image: none !important;
+}
+[data-skin="y2k"][data-theme="dark"] body {
+  background-color: var(--y2k-crt-bg) !important;
+  background-image:
+    radial-gradient(ellipse 60% 40% at 50% 0%, rgba(255, 176, 0, 0.07), transparent 70%),
+    radial-gradient(ellipse 50% 35% at 80% 100%, rgba(125, 249, 255, 0.04), transparent 70%) !important;
+}
+
+/* Hero stays transparent so the dots show through. No yellow slab. */
+[data-skin="y2k"] section:first-of-type {
+  background-color: transparent !important;
+  border-bottom: none !important;
+}
+
+[data-skin="y2k"] h1, [data-skin="y2k"] h2, [data-skin="y2k"] h3 {
+  font-family: 'Inter', sans-serif !important;
+  font-weight: 800 !important;
+  color: var(--fg) !important;
+  letter-spacing: -0.02em !important;
+}
+/* Headings explicitly marked as monospace (ToolDoc signatures etc.) keep their mono font. */
+[data-skin="y2k"] h1.mono, [data-skin="y2k"] h2.mono, [data-skin="y2k"] h3.mono, [data-skin="y2k"] h4.mono {
+  font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace !important;
+  font-weight: 500 !important;
+  letter-spacing: -0.01em !important;
+}
+
+/* -------- Section rhythm — 3 tones, deeper than v3 but not rainbow -------- */
+/* Dots move to the colored bands only. White stays clean. */
+[data-skin="y2k"] section {
+  background-color: transparent !important;
+  background-image: none !important;
+}
+/* Per-section bands, picked by semantic role. */
+[data-skin="y2k"] section.y2k-band-yellow {
+  background-color: var(--y2k-amber) !important;
+  background-image: none !important;
+  border-top: 2px solid var(--y2k-ink) !important;
+  border-bottom: 2px solid var(--y2k-ink) !important;
+}
+[data-skin="y2k"] section.y2k-band-ice {
+  background-color: var(--y2k-paper) !important;
+  background-image: none !important;
+  border-top: 2px solid var(--y2k-ink) !important;
+  border-bottom: 2px solid var(--y2k-ink) !important;
+}
+[data-skin="y2k"][data-theme="dark"] section.y2k-band-yellow {
+  background-color: #221808 !important;   /* slightly warmer than bg */
+  background-image: none !important;
+  border-top-color: var(--y2k-crt-amber) !important;
+  border-bottom-color: var(--y2k-crt-amber) !important;
+}
+[data-skin="y2k"][data-theme="dark"] section.y2k-band-ice {
+  background-color: #051028 !important;   /* cool counterpoint kept for rhythm */
+  background-image: none !important;
+  border-top-color: var(--y2k-crt-amber) !important;
+  border-bottom-color: var(--y2k-crt-amber) !important;
+}
+
+/* -------- Hero H1: big, bold, with tiny WordArt shadow -------- */
+[data-skin="y2k"] .hero-h1 {
+  font-family: 'Inter', sans-serif !important;
+  font-weight: 900 !important;
+  font-size: 76px !important;
+  line-height: 1.02 !important;
+  letter-spacing: -0.035em !important;
+  color: var(--y2k-ink) !important;
+  text-shadow:
+    2px 2px 0 var(--y2k-amber),
+    4px 4px 0 var(--y2k-pink) !important;
+}
+[data-skin="y2k"][data-theme="dark"] .hero-h1 {
+  color: #FFFFFF !important;
+  text-shadow:
+    0 0 18px rgba(255, 79, 177, 0.45),
+    2px 2px 0 var(--y2k-crt-magenta),
+    4px 4px 0 var(--y2k-crt-amber) !important;
+}
+[data-skin="y2k"] .hero-italic {
+  font-family: 'Inter', sans-serif !important;
+  font-style: italic !important;
+  font-weight: 900 !important;
+  background: none !important;
+  -webkit-text-fill-color: var(--y2k-pink) !important;
+  background-clip: unset !important;
+  color: var(--y2k-pink) !important;
+}
+[data-skin="y2k"][data-theme="dark"] .hero-italic {
+  -webkit-text-fill-color: var(--y2k-crt-cyan) !important;
+  color: var(--y2k-crt-cyan) !important;
+  /* No text-shadow override — inherits the h1 stack so both layers share
+     identical shadows, matching how the light hero is structured. */
+}
+/* Sibling to hero-italic for words emphasized via underline instead of italic */
+[data-skin="y2k"] .hero-underline {
+  font-family: 'Inter', sans-serif !important;
+  font-weight: 900 !important;
+  background: none !important;
+  -webkit-text-fill-color: currentColor !important;
+  background-clip: unset !important;
+  color: inherit !important;
+  text-decoration: underline;
+  text-decoration-thickness: 0.07em;
+  text-underline-offset: 0.14em;
+}
+[data-skin="y2k"] .hero-aurora { display: none !important; }
+[data-skin="y2k"] .hero-watermark { opacity: 0.10 !important; filter: saturate(1.4) hue-rotate(-10deg); }
+
+/* -------- Version chip — butter-yellow sticker -------- */
+[data-skin="y2k"] .chip {
+  font-family: 'VT323', monospace !important;
+  font-size: 17px !important;
+  padding: 2px 10px !important;
+  border: 2px solid var(--y2k-ink) !important;
+  background: var(--y2k-amber) !important;
+  color: var(--y2k-ink) !important;
+  text-transform: none !important;
+  letter-spacing: 0.04em !important;
+  line-height: 1.3 !important;
+  box-shadow: 2px 2px 0 0 var(--y2k-ink) !important;
+  transform: rotate(-1deg);
+  display: inline-flex;
+}
+[data-skin="y2k"] .chip:hover {
+  background: var(--y2k-pink) !important;
+  color: #FFFFFF !important;
+  transform: rotate(-1deg) translate(-1px, -1px);
+  box-shadow: 3px 3px 0 0 var(--y2k-ink) !important;
+}
+
+/* -------- Badges — VT323, color rotation (coral/cyan/butter) -------- */
+[data-skin="y2k"] .badge {
+  font-family: 'VT323', monospace !important;
+  font-size: 15px !important;
+  font-weight: 400 !important;
+  padding: 1px 10px !important;
+  border: 2px solid var(--y2k-ink) !important;
+  background: var(--y2k-blue) !important;
+  color: #FFFFFF !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.08em !important;
+  box-shadow: 2px 2px 0 0 var(--y2k-ink) !important;
+  transform: none !important;
+  display: inline-block;
+}
+/* Section badges: bluish on default sections, alpha-red on color bands.
+   Mapping is section-bg-driven, so each band has a predictable label color. */
+[data-skin="y2k"] section.y2k-band-yellow .badge,
+[data-skin="y2k"] section.y2k-band-ice .badge {
+  background: var(--y2k-pink) !important;
+  color: #FFFFFF !important;
+}
+/* Nav badge (the "alpha" sticker next to the lockup) — always coral red. */
+[data-skin="y2k"] nav .badge {
+  background: var(--y2k-pink) !important;
+  color: #FFFFFF !important;
+}
+/* Coral modifier — explicit opt-in for badges outside section bands. */
+[data-skin="y2k"] .badge.coral {
+  background: var(--y2k-pink) !important;
+  color: #FFFFFF !important;
+}
+
+/* -------- Buttons: sticker style, hard black shadow -------- */
+[data-skin="y2k"] .btn {
+  font-family: 'Inter', sans-serif !important;
+  font-weight: 700 !important;
+  font-size: 15px !important;
+  padding: 10px 20px !important;
+  border: 2px solid var(--y2k-ink) !important;
+  letter-spacing: 0 !important;
+  box-shadow: 3px 3px 0 0 var(--y2k-ink) !important;
+  transition: transform 0.06s, box-shadow 0.06s !important;
+}
+[data-skin="y2k"] .btn:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: 4px 4px 0 0 var(--y2k-ink) !important;
+}
+[data-skin="y2k"] .btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 0 var(--y2k-ink) !important;
+}
+[data-skin="y2k"] .btn-primary {
+  background: var(--y2k-blue) !important;
+  color: #FFFFFF !important;
+  text-shadow: none !important;
+}
+[data-skin="y2k"] .btn-primary:hover { background: var(--accent-hover) !important; }
+[data-skin="y2k"] .btn-secondary {
+  background: var(--y2k-amber) !important;
+  color: var(--y2k-ink) !important;
+}
+[data-skin="y2k"] .btn-secondary:hover { background: var(--y2k-pink) !important; color: #FFFFFF !important; }
+
+/* Dark-mode shadow color — magenta so it actually pops against the amber
+   bg of the primary button (and provides a third color against the cyan
+   trim of the secondary). Yellow-on-yellow was invisible. */
+[data-skin="y2k"][data-theme="dark"] .btn { box-shadow: 3px 3px 0 0 var(--y2k-crt-magenta) !important; }
+[data-skin="y2k"][data-theme="dark"] .btn:hover { box-shadow: 4px 4px 0 0 var(--y2k-crt-magenta) !important; }
+
+/* -------- Links: classic blue, underlined, visited purple -------- */
+[data-skin="y2k"] a:not(.btn):not(.chip):not(.badge):not(.card-link) {
+  color: var(--y2k-blue);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+}
+[data-skin="y2k"] a:not(.btn):not(.chip):not(.badge):not(.card-link):visited { color: var(--y2k-visit); }
+[data-skin="y2k"] a:not(.btn):not(.chip):not(.badge):not(.card-link):hover { color: var(--y2k-pink); text-decoration-thickness: 2px; }
+[data-skin="y2k"][data-theme="dark"] a:not(.btn):not(.chip):not(.badge):not(.card-link) { color: var(--y2k-cyan); }
+[data-skin="y2k"][data-theme="dark"] a:not(.btn):not(.chip):not(.badge):not(.card-link):visited { color: var(--y2k-pink2); }
+[data-skin="y2k"][data-theme="dark"] a:not(.btn):not(.chip):not(.badge):not(.card-link):hover { color: var(--accent); text-decoration-thickness: 2px; }
+
+/* Docs "Start here" cards — title is an anchor (blue + underline), desc is plain */
+[data-skin="y2k"] .docs-card { display: block; }
+[data-skin="y2k"] .docs-card .docs-card-title {
+  color: var(--y2k-blue) !important;
+  text-decoration: underline !important;
+  text-underline-offset: 2px !important;
+  text-decoration-thickness: 1px !important;
+}
+[data-skin="y2k"][data-theme="dark"] .docs-card .docs-card-title { color: var(--y2k-cyan) !important; }
+[data-skin="y2k"] .docs-card:hover .docs-card-title { color: var(--y2k-pink) !important; text-decoration-thickness: 2px !important; }
+[data-skin="y2k"][data-theme="dark"] .docs-card:hover .docs-card-title { color: var(--accent) !important; }
+[data-skin="y2k"] .docs-card .docs-card-desc { color: var(--fg-muted) !important; text-decoration: none !important; }
+
+/* "What Cast gives you" feature entries — retro spec-sheet idiom.
+   Inset double-rule frame (BBS / technical-manual feel), no shadow, larger kicker. */
+[data-skin="y2k"] .docs-feature {
+  background: transparent !important;
+  border: 1px solid var(--border-strong) !important;
+  outline: 1px solid var(--border-strong) !important;
+  outline-offset: 3px !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+  padding: 18px 20px !important;
+}
+[data-skin="y2k"][data-theme="dark"] .docs-feature {
+  border-color: var(--y2k-crt-amber) !important;
+  outline-color: var(--y2k-crt-amber) !important;
+}
+[data-skin="y2k"] .docs-feature .docs-card-title {
+  font-family: 'JetBrains Mono', ui-monospace, monospace !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.1em !important;
+  font-size: 14px !important;
+  font-weight: 700 !important;
+  color: var(--y2k-blue) !important;
+  text-decoration: none !important;
+  margin-bottom: 10px !important;
+  padding-bottom: 8px !important;
+  border-bottom: 1px dashed var(--border-strong) !important;
+}
+[data-skin="y2k"][data-theme="dark"] .docs-feature .docs-card-title { color: var(--accent) !important; border-bottom-color: var(--y2k-crt-amber) !important; }
+[data-skin="y2k"] .docs-feature .docs-card-desc {
+  font-size: 14px !important;
+  color: var(--fg) !important;
+  line-height: 1.6 !important;
+}
+
+/* -------- Cards / tiles / folder — sticker borders + hard shadow -------- */
+[data-skin="y2k"] [class*="card"]:not(.docs-card-title):not(.docs-card-desc),
+[data-skin="y2k"] [class*="tile"],
+[data-skin="y2k"] .feature,
+[data-skin="y2k"] .folder {
+  background: var(--bg-elev) !important;
+  border: 2px solid var(--y2k-ink) !important;
+  box-shadow: 3px 3px 0 0 var(--y2k-ink) !important;
+}
+[data-skin="y2k"][data-theme="dark"] [class*="card"]:not(.docs-card-title):not(.docs-card-desc),
+[data-skin="y2k"][data-theme="dark"] [class*="tile"],
+[data-skin="y2k"][data-theme="dark"] .feature,
+[data-skin="y2k"][data-theme="dark"] .folder {
+  background: var(--bg-elev) !important;
+  border-color: var(--y2k-crt-amber) !important;
+  box-shadow: 3px 3px 0 0 var(--y2k-crt-cyan) !important;
+}
+
+/* -------- Code blocks: navy, cobalt border -------- */
+[data-skin="y2k"] pre {
+  background: var(--code-bg) !important;
+  color: var(--code-fg) !important;
+  border: 2px solid var(--y2k-blue) !important;
+  box-shadow: 3px 3px 0 0 var(--y2k-ink) !important;
+}
+[data-skin="y2k"][data-theme="dark"] pre { box-shadow: 3px 3px 0 0 var(--y2k-amber) !important; }
+
+/* HIW ASCII figure colors — phosphor brights in dark mode for legibility on near-black bg */
+.fig-shade { color: var(--y2k-amber); }
+.fig-harness { color: #5BB0E8; }
+.fig-arrow { color: var(--y2k-pink); }
+[data-skin="y2k"][data-theme="dark"] .fig-shade { color: #FFD24A; }
+[data-skin="y2k"][data-theme="dark"] .fig-harness { color: #7DF9FF; }
+[data-skin="y2k"][data-theme="dark"] .fig-arrow { color: #FF4FB1; }
+
+/* .code framing in y2k: bump outer to 2px to match inner pre weight; round inner pre to
+   match outer rounding; in dark mode brighten outer and dim inner. */
+[data-skin="y2k"] .code {
+  border-width: 2px !important;
+  border-color: var(--y2k-ink) !important;
+}
+[data-skin="y2k"][data-theme="dark"] .code {
+  border-color: var(--y2k-crt-amber) !important;
+}
+[data-skin="y2k"] .code pre {
+  border-radius: 8px !important;
+}
+[data-skin="y2k"][data-theme="dark"] .code pre {
+  border-color: rgba(255, 176, 0, 0.22) !important;
+}
+[data-skin="y2k"][data-theme="dark"] .code-head {
+  border-bottom-color: rgba(255, 176, 0, 0.15) !important;
+}
+
+[data-skin="y2k"] :not(pre) > code {
+  background: var(--y2k-paper2) !important;
+  color: var(--y2k-ink) !important;
+  border: 1px solid var(--y2k-ink) !important;
+  padding: 0 5px !important;
+  font-size: 0.9em !important;
+}
+[data-skin="y2k"][data-theme="dark"] :not(pre) > code {
+  background: var(--code-bg) !important;
+  color: var(--y2k-crt-amber) !important;
+  border-color: var(--y2k-crt-amber) !important;
+}
+
+/* -------- HR: dashed coral thick -------- */
+[data-skin="y2k"] hr {
+  border: none !important;
+  border-top: 3px dashed var(--y2k-pink) !important;
+  margin: 32px 0 !important;
+}
+
+/* -------- Tables: chunky navy borders, cobalt header -------- */
+[data-skin="y2k"] table {
+  border-collapse: separate !important;
+  border-spacing: 0 !important;
+  border: 2px solid var(--y2k-ink) !important;
+  background: var(--bg-elev) !important;
+  box-shadow: 3px 3px 0 0 var(--y2k-ink) !important;
+  overflow: hidden !important;
+}
+[data-skin="y2k"] table th {
+  background: var(--y2k-blue) !important;
+  color: #FFFFFF !important;
+  border-bottom: 2px solid var(--y2k-ink) !important;
+  padding: 10px 14px !important;
+  font-family: 'VT323', monospace !important;
+  font-weight: 400 !important;
+  font-size: 17px !important;
+  letter-spacing: 0.06em !important;
+  text-transform: uppercase !important;
+  text-align: left !important;
+}
+[data-skin="y2k"] table th + th { border-left: 2px solid var(--y2k-ink) !important; }
+[data-skin="y2k"] table td {
+  border-top: 1px solid var(--y2k-ink) !important;
+  padding: 10px 14px !important;
+  font-size: 14px !important;
+  color: var(--fg) !important;
+}
+[data-skin="y2k"] table td + td { border-left: 1px solid var(--y2k-ink) !important; }
+[data-skin="y2k"] table tr:nth-child(even) td { background: var(--y2k-paper2) !important; }
+[data-skin="y2k"][data-theme="dark"] table { border-color: var(--y2k-crt-amber) !important; box-shadow: 3px 3px 0 0 var(--y2k-crt-cyan) !important; }
+[data-skin="y2k"][data-theme="dark"] table th { background: var(--code-bg) !important; color: var(--y2k-crt-amber) !important; border-bottom-color: var(--y2k-crt-amber) !important; text-shadow: var(--y2k-glow-amber); }
+[data-skin="y2k"][data-theme="dark"] table th + th { border-left-color: var(--y2k-crt-amber) !important; }
+[data-skin="y2k"][data-theme="dark"] table td { border-top-color: rgba(255, 176, 0, 0.25) !important; }
+[data-skin="y2k"][data-theme="dark"] table td + td { border-left-color: rgba(255, 176, 0, 0.25) !important; }
+[data-skin="y2k"][data-theme="dark"] table tr:nth-child(even) td { background: #1A1408 !important; }
+
+/* -------- Callout boxes — sticker-bordered, VT323 labels -------- */
+[data-skin="y2k"] .callout {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 14px;
+  align-items: start;
+  padding: 14px 16px;
+  border: 2px solid var(--y2k-ink) !important;
+  box-shadow: 3px 3px 0 0 var(--y2k-ink);
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--fg);
+  margin: 20px 0;
+}
+[data-skin="y2k"][data-theme="dark"] .callout {
+  border-color: var(--y2k-crt-amber) !important;
+  box-shadow: 3px 3px 0 0 var(--y2k-crt-cyan);
+  color: var(--fg);
+}
+[data-skin="y2k"][data-theme="dark"] .callout-jargon { border-color: var(--y2k-crt-cyan) !important; }
+[data-skin="y2k"][data-theme="dark"] .callout .callout-label { text-shadow: var(--y2k-glow-amber); }
+[data-skin="y2k"][data-theme="dark"] .callout-jargon .callout-label { text-shadow: var(--y2k-glow-cyan); }
+[data-skin="y2k"] .callout .callout-label {
+  font-family: 'VT323', monospace;
+  font-size: 17px;
+  letter-spacing: 0.04em;
+  line-height: 1.3;
+  padding-top: 1px;
+  white-space: nowrap;
+  font-weight: 400;
+}
+[data-skin="y2k"] .callout-tip    { background: var(--y2k-tip-bg); }
+[data-skin="y2k"] .callout-tip    .callout-label { color: var(--y2k-tip-label); }
+[data-skin="y2k"] .callout-warn   { background: var(--y2k-warn-bg); }
+[data-skin="y2k"] .callout-warn   .callout-label { color: var(--y2k-warn-label); }
+[data-skin="y2k"] .callout-jargon { background: var(--y2k-jargon-bg); }
+[data-skin="y2k"] .callout-jargon .callout-label { color: var(--y2k-jargon-label); }
+[data-skin="y2k"] .callout-security { background: var(--y2k-security-bg); }
+[data-skin="y2k"] .callout-security .callout-label { color: var(--y2k-security-label); }
+
+/* Step-numerals — big cobalt numerals with butter shadow */
+[data-skin="y2k"] .y2k-step-num {
+  font-family: 'VT323', monospace;
+  font-size: 72px;
+  line-height: 1;
+  color: var(--y2k-blue);
+  letter-spacing: 0;
+  text-shadow: 2px 2px 0 var(--y2k-amber);
+  margin-bottom: 8px;
+}
+[data-skin="y2k"][data-theme="dark"] .y2k-step-num {
+  color: var(--y2k-crt-amber);
+  text-shadow:
+    0 0 16px rgba(255, 176, 0, 0.55),
+    2px 2px 0 var(--y2k-crt-cyan);
+}
+
+/* Section eyebrow label (optional on top of badges, VT323 monospace) */
+[data-skin="y2k"] .y2k-eyebrow {
+  font-family: 'VT323', monospace;
+  font-size: 18px;
+  color: var(--y2k-blue);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* Hide skin-only widgets in other skins */
+:root:not([data-skin="y2k"]) .y2k-only { display: none !important; }
+:root:not([data-skin="zine"]) .zine-only { display: none !important; }
+
+
+/* Decorative stickers — hide on narrow viewports where they would collide
+   with the hero text or content columns. Any element tagged with `.sticker`
+   or a `sticker-*` / ` sticker-*` class picks this up. */
+@media (max-width: 900px) {
+  .sticker,
+  [class^="sticker-"],
+  [class*=" sticker-"] { display: none !important; }
+}
+
+/* The "Making Toast" parody book is a printed yellow Dummies-style cover —
+   it doesn't read on a dark page (the cover IS the light source) and looks
+   like a stuck loading frame. Hide it in dark mode. */
+[data-theme="dark"] .sticker-hero-book { display: none !important; }
+
+/* Turbo Pascal IDE block — palette via CSS custom properties so it follows
+   page theme without any JS. Light = Borland printed-manual; dark = QBasic-style
+   color pops on saturated navy. */
+.tp-block {
+  --tp-bg: #F0F0E0;
+  --tp-body: #1a1a1a;
+  --tp-border: #0000A8;
+  --tp-title: #0000A8;
+  --tp-keyword: #0000A8;
+  --tp-string: #A00000;
+  --tp-comment: #888888;
+  --tp-link: #A00000;
+  --tp-gutter: #B0B0A0;
+  --tp-shadow: rgba(0,0,168,0.18);
+  --tp-outer: #0000A8;
+}
+[data-theme="dark"] .tp-block {
+  --tp-bg: #0000A8;
+  --tp-body: #FFFFFF;
+  --tp-border: #FFFF55;
+  --tp-title: #FFFFFF;
+  --tp-keyword: #FFFF55;
+  --tp-string: #FF55FF;
+  --tp-comment: #55FFFF;
+  --tp-link: #55FFFF;
+  --tp-gutter: #5555AA;
+  --tp-shadow: rgba(0,0,0,0.35);
+  --tp-outer: #000;
+}
+
+/* QBasic-style block cursor — solid white block that blinks at ~2Hz, the
+   classic DOS Edit / QBasic insert cursor cadence. */
+@keyframes qbasic-blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+.qbasic-cursor { animation: qbasic-blink 1s steps(1) infinite; }
+
+/* Decorative stickers — hide on narrow viewports where they would collide
+
+/* The "what is this" book lives in the right-hand gutter. It extends ~146px
+   past the 780px container's right edge, so it needs a viewport of at least
+   1072px to fit entirely on-screen. Below that, hide it. */
+@media (max-width: 1071px) {
+  .sticker-what-is-this { display: none !important; }
+}
+
+
+/* ============================================================
+   Win95 window frame — used by the "your agent lives in a folder"
+   section. Wraps the existing folder tree in era-appropriate
+   chrome so the metaphor lands visually.
+   Scoped to [data-skin="y2k"] so other skins are unaffected.
+   ============================================================ */
+[data-skin="y2k"] .win95-window {
+  background: #c0c0c0;
+  /* Classic raised bezel: white top/left highlight, dark bottom/right shadow,
+     plus a hard 1px outer black outline for definition. */
+  border: 1px solid #000;
+  box-shadow:
+    inset 1px 1px 0 0 #fff,
+    inset -1px -1px 0 0 #808080,
+    inset 2px 2px 0 0 #dfdfdf,
+    inset -2px -2px 0 0 #404040,
+    4px 4px 0 0 rgba(0,0,0,0.25);
+  font-family: 'Pixelated MS Sans Serif', 'MS Sans Serif', 'Microsoft Sans Serif', Tahoma, system-ui, sans-serif;
+  color: #000;
+  overflow: hidden;
+}
+
+[data-skin="y2k"] .win95-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 3px 0 4px;
+  margin: 2px 2px 0 2px;
+  background: linear-gradient(90deg, #000080 0%, #1084d0 100%);
+  color: #fff;
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.01em;
+}
+[data-skin="y2k"] .win95-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+[data-skin="y2k"] .win95-title-icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+[data-skin="y2k"] .win95-controls {
+  display: flex;
+  gap: 2px;
+}
+[data-skin="y2k"] .win95-btn {
+  appearance: none;
+  width: 18px;
+  height: 16px;
+  padding: 0;
+  line-height: 1;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  color: #000;
+  background: #c0c0c0;
+  border: 1px solid #000;
+  box-shadow:
+    inset 1px 1px 0 0 #fff,
+    inset -1px -1px 0 0 #808080;
+  cursor: default;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+[data-skin="y2k"] .win95-btn-glyph {
+  width: 10px;
+  height: 8px;
+  display: block;
+  shape-rendering: crispEdges;
+}
+[data-skin="y2k"] .win95-btn:active {
+  box-shadow:
+    inset 1px 1px 0 0 #808080,
+    inset -1px -1px 0 0 #fff;
+}
+
+[data-skin="y2k"] .win95-menubar {
+  display: flex;
+  gap: 14px;
+  padding: 3px 8px;
+  font-size: 12px;
+  color: #000;
+  background: #c0c0c0;
+  border-bottom: 1px solid #808080;
+  box-shadow: 0 1px 0 0 #fff;
+}
+[data-skin="y2k"] .win95-menubar u { text-decoration: underline; }
+
+[data-skin="y2k"] .win95-statusrow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-sunken);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+[data-skin="y2k"] .win95-body {
+  /* Inner sunken bezel so the content area sits inside the window chrome */
+  background: var(--bg-elev);
+  margin: 4px;
+  border: 1px solid #404040;
+  box-shadow:
+    inset 1px 1px 0 0 #808080,
+    inset -1px -1px 0 0 #fff;
+}
+/* Dark mode: "Plus! Dark" theme — Microsoft's after-hours desktop scheme.
+   Dark grey bezel (still raised), teal titlebar gradient (instead of cobalt),
+   light text on dark menubar. Looks like a kid's PC at 1am with the lights off. */
+[data-skin="y2k"][data-theme="dark"] .win95-window {
+  background: #2A2E3A;
+  color: #E6F8FF;
+  border-color: #000;
+  box-shadow:
+    inset 1px 1px 0 0 #4A5060,
+    inset -1px -1px 0 0 #15171E,
+    inset 2px 2px 0 0 #3A4050,
+    inset -2px -2px 0 0 #0A0C12,
+    4px 4px 0 0 rgba(0, 0, 0, 0.6);
+}
+[data-skin="y2k"][data-theme="dark"] .win95-titlebar {
+  background: linear-gradient(90deg, #003D3D 0%, #008B8B 100%);
+}
+[data-skin="y2k"][data-theme="dark"] .win95-menubar {
+  background: #2A2E3A;
+  color: #E6F8FF;
+  border-bottom-color: #15171E;
+  box-shadow: 0 1px 0 0 #4A5060;
+}
+[data-skin="y2k"][data-theme="dark"] .win95-btn {
+  background: #2A2E3A;
+  color: #E6F8FF;
+  border-color: #000;
+  box-shadow:
+    inset 1px 1px 0 0 #4A5060,
+    inset -1px -1px 0 0 #15171E;
+}
+[data-skin="y2k"][data-theme="dark"] .win95-btn-close svg path { fill: #E6F8FF !important; }
+[data-skin="y2k"][data-theme="dark"] .win95-body {
+  background: var(--bg-elev);
+  border-color: #15171E;
+  box-shadow:
+    inset 1px 1px 0 0 #15171E,
+    inset -1px -1px 0 0 #4A5060;
+}
+
+
+/* ============================================================
+   y2k dark — additional CRT polish
+   Scanline overlay, phosphor glow on accent text, retuned
+   button/badge palette, Visio diagram fill darkening.
+   ============================================================ */
+
+/* Faint horizontal scanlines — sits above background, below content.
+   Uses ::after on body so it stacks above the radial-glow background
+   gradient but doesn't compete with the existing zine ::before grain.
+   Amber-tinted because that's what an amber CRT actually looked like. */
+[data-skin="y2k"][data-theme="dark"] body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0.18;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 176, 0, 0.07) 0px,
+    rgba(255, 176, 0, 0.07) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  mix-blend-mode: screen;
+}
+
+/* Chip — solid amber fill with dark text, mirrors the light butter chip.
+   Cyan offset shadow gives the y2k pop. */
+[data-skin="y2k"][data-theme="dark"] .chip {
+  background: var(--y2k-crt-amber) !important;
+  color: #0A0E1A !important;
+  border-color: #0A0E1A !important;
+  box-shadow: 2px 2px 0 0 var(--y2k-crt-cyan) !important;
+  text-shadow: none !important;
+}
+[data-skin="y2k"][data-theme="dark"] .chip:hover {
+  background: var(--y2k-crt-magenta) !important;
+  color: #FFFFFF !important;
+  border-color: #0A0E1A !important;
+  box-shadow: 3px 3px 0 0 var(--y2k-crt-cyan) !important;
+}
+
+/* Badge — section-bg-driven mapping in dark mode too.
+   Default: cyan badge (mirrors light blue). Bands: magenta (mirrors light red). */
+[data-skin="y2k"][data-theme="dark"] .badge {
+  background: var(--y2k-crt-cyan) !important;
+  border-color: #0A0E1A !important;
+  color: #0A0E1A !important;
+  box-shadow: 2px 2px 0 0 var(--y2k-crt-magenta) !important;
+  text-shadow: none !important;
+}
+[data-skin="y2k"][data-theme="dark"] section.y2k-band-yellow .badge,
+[data-skin="y2k"][data-theme="dark"] section.y2k-band-ice .badge {
+  background: var(--y2k-crt-magenta) !important;
+  color: #FFFFFF !important;
+  box-shadow: 2px 2px 0 0 var(--y2k-crt-amber) !important;
+}
+[data-skin="y2k"][data-theme="dark"] nav .badge {
+  background: var(--y2k-crt-magenta) !important;
+  color: #FFFFFF !important;
+  box-shadow: 2px 2px 0 0 var(--y2k-crt-amber) !important;
+}
+
+/* VT323 accent text — section eyebrow + table header glow */
+[data-skin="y2k"][data-theme="dark"] .y2k-eyebrow {
+  color: var(--y2k-crt-amber);
+  text-shadow: var(--y2k-glow-amber);
+}
+
+/* Buttons — primary is amber-on-black (the readout color); secondary
+   is cyan trim. Hover glow is the giveaway: this is what "the button
+   is on" looked like before CSS could do real glow. */
+[data-skin="y2k"][data-theme="dark"] .btn-primary {
+  background: var(--y2k-crt-amber) !important;
+  color: #0A0E1A !important;
+  border-color: var(--y2k-crt-amber) !important;
+  /* Cyan shadow specifically on the orange primary — warm/cool complementary
+     pop. Generic .btn rule above sets magenta; this overrides for primary only. */
+  box-shadow: 3px 3px 0 0 var(--y2k-crt-cyan) !important;
+}
+[data-skin="y2k"][data-theme="dark"] .btn-primary:hover {
+  background: var(--accent-hover) !important;
+  box-shadow: 4px 4px 0 0 var(--y2k-crt-cyan), 0 0 18px rgba(255, 176, 0, 0.5) !important;
+}
+[data-skin="y2k"][data-theme="dark"] .btn-secondary {
+  background: transparent !important;
+  color: var(--y2k-crt-cyan) !important;
+  border-color: var(--y2k-crt-cyan) !important;
+}
+[data-skin="y2k"][data-theme="dark"] .btn-secondary:hover {
+  background: var(--y2k-crt-cyan) !important;
+  color: #0A0E1A !important;
+  box-shadow: 4px 4px 0 0 var(--y2k-crt-magenta), 0 0 18px rgba(125, 249, 255, 0.5) !important;
+}
+
+/* Hero watermark — tint amber, drop opacity slightly so it reads as glow not blob.
+   The CastMark gradient sits around hue 210 (cool); rotating ~200deg lands on amber. */
+[data-skin="y2k"][data-theme="dark"] .hero-watermark {
+  opacity: 0.10 !important;
+  filter: saturate(1.6) hue-rotate(200deg);
+}
+
+/* Code block — amber border + cyan shadow + faint inner amber glow */
+[data-skin="y2k"][data-theme="dark"] pre {
+  border-color: var(--y2k-crt-amber) !important;
+  box-shadow: 3px 3px 0 0 var(--y2k-crt-cyan), inset 0 0 24px rgba(255, 176, 0, 0.05) !important;
+}
+
+/* Visio diagram — recolor white box fills + ink strokes for the dark page.
+   The diagram is inline SVG that hardcodes #FFFFFF / #DDE7F0 fills, so we
+   need attribute selectors to override; var(--y2k-ink) strokes already
+   pick up the dark-mode override below. */
+[data-skin="y2k"][data-theme="dark"] svg rect[fill="#FFFFFF"],
+[data-skin="y2k"][data-theme="dark"] svg rect[fill="#ffffff"] { fill: #1A1408 !important; }
+[data-skin="y2k"][data-theme="dark"] svg rect[fill="#DDE7F0"] { fill: #2A1F08 !important; }
+/* Inside-band cream, local-disk wrap cream, allowed-network green — three
+   more hardcoded fills in VisioDiagram that need dark-mode remapping. */
+[data-skin="y2k"][data-theme="dark"] svg rect[fill="#FBFAF5"] { fill: #0F0E18 !important; }
+[data-skin="y2k"][data-theme="dark"] svg rect[fill="#F4F0E6"] { fill: #15110A !important; }
+[data-skin="y2k"][data-theme="dark"] svg rect[fill="#EAF4EC"] { fill: #0A1F18 !important; }
+/* y2k-ink is hardcoded as a CSS var, but several SVG texts use fill="var(--y2k-ink)";
+   in dark mode that's still the light navy. Remap the var inside the y2k dark scope
+   so diagram text/strokes flip to amber automatically. */
+[data-skin="y2k"][data-theme="dark"] {
+  --y2k-ink: var(--y2k-crt-amber);
+}
+
+/* HR — dashed amber */
+[data-skin="y2k"][data-theme="dark"] hr {
+  border-top-color: var(--y2k-crt-amber) !important;
+}
+
+/* GitHub hazard-triangle white halo — only visible in dark mode so the
+   yellow sign separates from the near-black bg. Uses stroke-opacity so the
+   path geometry stays in the DOM and we don't have to fork the JSX. */
+.y2k-gh-halo { stroke-opacity: 0; }
+[data-skin="y2k"][data-theme="dark"] .y2k-gh-halo { stroke-opacity: 1; }
+
+/* Final-CTA terminal block — promote it to a real CRT readout */
+[data-skin="y2k"][data-theme="dark"] section.y2k-band-yellow code,
+[data-skin="y2k"][data-theme="dark"] section .code-bg { color: var(--y2k-crt-amber); }
+
+/* -------- iChat window + bubbles (Sound familiar? section) --------
+   Aqua-era window chrome with topic in titlebar. Blue buddy, neutral
+   grey Cast bubbles. Colored top → whiteish bottom gradient with
+   bordered tails (downward) and Helvetica throughout. */
+.ichat-window {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #FFFFFF;
+  box-shadow: 0 4px 14px -4px rgba(11, 31, 58, 0.20);
+  margin-bottom: 28px;
+}
+.ichat-titlebar {
+  background-image:
+    repeating-linear-gradient(180deg, rgba(0,0,0,0.05) 0, rgba(0,0,0,0.05) 1px, transparent 1px, transparent 3px),
+    linear-gradient(180deg, #DCDCDC 0%, #A8A8A8 100%);
+  padding: 6px 14px;
+  text-align: center;
+  border-bottom: 1px solid var(--border);
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1A1A1A;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.45);
+  letter-spacing: 0;
+}
+.ichat-window-body {
+  padding: 16px 16px 22px;
+  background: #FFFFFF;
+}
+.ichat-bubble {
+  position: relative;
+  padding: 10px 14px;
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-size: 14.5px;
+  line-height: 1.5;
+  max-width: 78%;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  color: #111111;
+}
+.ichat-bubble.from-them {
+  background: linear-gradient(180deg, #6E9BD2 0%, #E8F0FA 100%);
+  border-bottom-left-radius: 0;
+  box-shadow:
+    0 2px 0 rgba(11, 31, 58, 0.04),
+    0 4px 10px -4px rgba(11, 31, 58, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.40);
+}
+.ichat-bubble.from-them::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: -10px;
+  width: 0;
+  height: 0;
+  border-bottom: 10px solid #E8F0FA;
+  border-left: 10px solid transparent;
+  filter:
+    drop-shadow(0 1px 0 var(--border))
+    drop-shadow(-1px 0 0 var(--border));
+}
+.ichat-bubble.from-us {
+  background: linear-gradient(180deg, #9C9C9C 0%, #ECECEC 100%);
+  border-bottom-right-radius: 0;
+  box-shadow:
+    0 2px 0 rgba(11, 31, 58, 0.04),
+    0 4px 10px -4px rgba(11, 31, 58, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.40);
+}
+.ichat-bubble.from-us::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  right: -10px;
+  width: 0;
+  height: 0;
+  border-bottom: 10px solid #ECECEC;
+  border-right: 10px solid transparent;
+  filter:
+    drop-shadow(0 1px 0 var(--border))
+    drop-shadow(1px 0 0 var(--border));
+}
+/* Dark-mode: keep the window+bubble palette legible against the dark warm band. */
+[data-skin="y2k"][data-theme="dark"] .ichat-window {
+  border-color: var(--y2k-crt-amber);
+}
+[data-skin="y2k"][data-theme="dark"] .ichat-titlebar {
+  border-bottom-color: var(--y2k-crt-amber);
+}
+[data-skin="y2k"][data-theme="dark"] .ichat-bubble {
+  border-color: var(--y2k-crt-amber);
+}
+[data-skin="y2k"][data-theme="dark"] .ichat-bubble.from-them::after {
+  filter:
+    drop-shadow(0 1px 0 var(--y2k-crt-amber))
+    drop-shadow(-1px 0 0 var(--y2k-crt-amber));
+}
+[data-skin="y2k"][data-theme="dark"] .ichat-bubble.from-us::after {
+  filter:
+    drop-shadow(0 1px 0 var(--y2k-crt-amber))
+    drop-shadow(1px 0 0 var(--y2k-crt-amber));
+}
+
+/* -------- Advice-column case panels (Sound familiar? section) --------
+   Cards have hard-coded white/translucent-white backgrounds inline (works
+   in light mode against the amber band). In dark mode the band flips to
+   warm dark brown — white panels become eye-burning bright spots, so
+   override to warm dark tones that sit just above the band. Class names
+   intentionally avoid "card"/"tile" substrings — those are reserved by
+   the y2k [class*="card"] sticker-style rules above. */
+[data-skin="y2k"][data-theme="dark"] .case-letter {
+  background: rgba(255, 200, 100, 0.05) !important;
+}
+[data-skin="y2k"][data-theme="dark"] .case-reply {
+  background: #2E1C0E !important;
+  border-color: #FFD24A !important;
+}

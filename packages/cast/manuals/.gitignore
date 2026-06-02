@@ -1,0 +1,4 @@
+# Aggregated extension manuals — generated at server start (dev) or build
+# time (prod) by packages/cast/src/console/shared/extension-manuals.ts.
+# Source of truth lives in packages/ext-*/manual/.
+extensions/

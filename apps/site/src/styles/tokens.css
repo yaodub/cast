@@ -1,0 +1,263 @@
+/* ============================================================
+   Cast — design tokens + base styles
+   ============================================================ */
+
+:root {
+  --accent-hue: 210;
+
+  /* Light theme (default) */
+  --bg: oklch(99% 0.003 240);
+  --bg-elev: oklch(97% 0.004 240);
+  --bg-sunken: oklch(96% 0.006 240);
+  --fg: oklch(18% 0.015 250);
+  --fg-muted: oklch(48% 0.012 250);
+  --fg-subtle: oklch(62% 0.01 250);
+  --border: oklch(91% 0.008 250);
+  --border-strong: oklch(84% 0.012 250);
+  --accent: oklch(58% 0.13 var(--accent-hue));
+  --accent-hover: oklch(52% 0.14 var(--accent-hue));
+  --accent-soft: oklch(94% 0.04 var(--accent-hue));
+  --accent-fg: oklch(99% 0.003 240);
+  --code-bg: oklch(97% 0.006 250);
+  --code-fg: oklch(22% 0.015 250);
+  --shadow-sm: 0 1px 2px 0 oklch(20% 0.02 250 / 0.04);
+  --shadow: 0 1px 3px 0 oklch(20% 0.02 250 / 0.06), 0 1px 2px 0 oklch(20% 0.02 250 / 0.04);
+  --shadow-lg: 0 12px 32px -8px oklch(20% 0.02 250 / 0.12), 0 4px 12px -2px oklch(20% 0.02 250 / 0.06);
+
+  /* Syntax */
+  --s-keyword: oklch(48% 0.16 290);
+  --s-string: oklch(45% 0.14 145);
+  --s-number: oklch(55% 0.16 35);
+  --s-comment: oklch(60% 0.02 250);
+  --s-fn: oklch(50% 0.14 var(--accent-hue));
+  --s-punct: oklch(40% 0.02 250);
+  --s-prop: oklch(42% 0.14 260);
+}
+
+:root[data-theme="dark"] {
+  --bg: oklch(14% 0.012 250);
+  --bg-elev: oklch(17% 0.013 250);
+  --bg-sunken: oklch(11% 0.01 250);
+  --fg: oklch(95% 0.005 240);
+  --fg-muted: oklch(70% 0.01 250);
+  --fg-subtle: oklch(55% 0.012 250);
+  --border: oklch(24% 0.013 250);
+  --border-strong: oklch(32% 0.015 250);
+  --accent: oklch(75% 0.14 var(--accent-hue));
+  --accent-hover: oklch(82% 0.14 var(--accent-hue));
+  --accent-soft: oklch(25% 0.05 var(--accent-hue));
+  --accent-fg: oklch(14% 0.012 250);
+  --code-bg: oklch(17% 0.013 250);
+  --code-fg: oklch(92% 0.008 250);
+  --shadow-sm: 0 1px 2px 0 oklch(0% 0 0 / 0.3);
+  --shadow: 0 1px 3px 0 oklch(0% 0 0 / 0.4);
+  --shadow-lg: 0 12px 32px -8px oklch(0% 0 0 / 0.5), 0 4px 12px -2px oklch(0% 0 0 / 0.3);
+
+  --s-keyword: oklch(78% 0.14 290);
+  --s-string: oklch(78% 0.13 145);
+  --s-number: oklch(78% 0.14 40);
+  --s-comment: oklch(48% 0.01 250);
+  --s-fn: oklch(78% 0.13 var(--accent-hue));
+  --s-punct: oklch(70% 0.01 250);
+  --s-prop: oklch(78% 0.12 260);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-feature-settings: 'cv11', 'ss01', 'ss03';
+  -webkit-font-smoothing: antialiased;
+  font-size: 15px;
+  line-height: 1.55;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+p code, li code, td code, th code, h1 code, h2 code, h3 code, h4 code,
+.docs-card code, .docs-prose code {
+  white-space: nowrap;
+}
+
+.mono, code, pre, kbd {
+  font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  font-feature-settings: 'ss02', 'ss03', 'zero';
+}
+
+a { color: inherit; text-decoration: none; }
+button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 10px; border: 2px solid var(--bg); }
+::-webkit-scrollbar-thumb:hover { background: var(--fg-subtle); }
+
+/* Scroll without showing a scrollbar (sticky panels that overflow). */
+.no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
+/* Selection */
+::selection { background: var(--accent-soft); color: var(--fg); }
+
+/* Utility */
+.container { max-width: 1200px; margin: 0 auto; padding: 0 32px; }
+.container-narrow { max-width: 880px; margin: 0 auto; padding: 0 32px; }
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  color: var(--fg-muted);
+  letter-spacing: 0.02em;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.15s ease;
+  border: 1px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-primary {
+  background: var(--fg);
+  color: var(--bg);
+}
+.btn-primary:hover { background: var(--accent); color: var(--accent-fg); }
+.btn-secondary {
+  background: transparent;
+  color: var(--fg);
+  border-color: var(--border-strong);
+}
+.btn-secondary:hover { background: var(--bg-elev); border-color: var(--fg-subtle); }
+.btn-ghost {
+  background: transparent;
+  color: var(--fg-muted);
+  padding: 8px 12px;
+}
+.btn-ghost:hover { color: var(--fg); background: var(--bg-elev); }
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 500;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+hr.rule { border: 0; border-top: 1px solid var(--border); margin: 0; }
+
+/* Focus rings */
+a:focus-visible, button:focus-visible, input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ---- Code blocks ---- */
+.code {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-sunken);
+  color: var(--fg-muted);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.code-head .dots { display: flex; gap: 6px; }
+.code-head .dots span { width: 10px; height: 10px; border-radius: 50%; background: var(--border-strong); }
+.code pre {
+  margin: 0;
+  padding: 16px 20px;
+  overflow-x: auto;
+  color: var(--code-fg);
+}
+.code pre .ln { color: var(--fg-subtle); user-select: none; display: inline-block; width: 2em; text-align: right; margin-right: 16px; }
+.tok-k { color: var(--s-keyword); }
+.tok-s { color: var(--s-string); }
+.tok-n { color: var(--s-number); }
+.tok-c { color: var(--s-comment); font-style: italic; }
+.tok-f { color: var(--s-fn); }
+.tok-p { color: var(--s-prop); }
+.tok-pu { color: var(--s-punct); }
+.tok-t { color: var(--s-keyword); }
+
+/* Tweaks panel */
+.tweaks-panel {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  width: 300px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  z-index: 1000;
+  overflow: hidden;
+  font-size: 13px;
+}
+.tweaks-panel.collapsed { width: auto; }
+.tweaks-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+.tweaks-panel.collapsed .tweaks-head { border-bottom: 0; padding: 10px 14px; }
+.tweaks-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 14px; }
+.tweaks-panel.collapsed .tweaks-body { display: none; }
+.tweak-row { display: flex; flex-direction: column; gap: 6px; }
+.tweak-row label { font-size: 11px; font-family: 'JetBrains Mono', monospace; text-transform: uppercase; letter-spacing: 0.05em; color: var(--fg-muted); }
+.seg { display: flex; background: var(--bg-sunken); border: 1px solid var(--border); border-radius: 8px; padding: 2px; }
+.seg button {
+  flex: 1;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--fg-muted);
+  transition: all 0.15s;
+}
+.seg button.active { background: var(--bg); color: var(--fg); box-shadow: var(--shadow-sm); }
+.tweak-row input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
