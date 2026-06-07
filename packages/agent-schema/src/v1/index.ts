@@ -85,6 +85,67 @@ export const AgentManifestSchema = z
   .passthrough();
 export type AgentManifest = z.infer<typeof AgentManifestSchema>;
 
+/**
+ * Service metadata and entrypoint configuration (blueprint/service/manifest.json).
+ *
+ * Open like the agent manifest — `.passthrough()` preserves tool-added fields
+ * (the stamping pipeline copies unknown keys verbatim, stripping only `entry`).
+ * The base spec defines only the fields below; SPEC.md §9 is the prose contract.
+ */
+export const ServiceManifestSchema = z
+  .object({
+    /** Service name (informational). */
+    name: z.string().optional(),
+    /** Service version (informational). */
+    version: z.string().optional(),
+    /** Entrypoint relative to blueprint/service/. Absent = stamped index.js. */
+    entry: z.string().optional(),
+    /**
+     * Operator-editable secrets declaration. Keys are env-var-style names;
+     * values describe the admin form field. The values themselves live in
+     * config/ext/service/secrets.json — never in the manifest.
+     */
+    secrets: z
+      .record(
+        z.string(),
+        z.object({
+          /** Form label shown in the admin UI. */
+          label: z.string(),
+          /** Mask the value in the admin UI (passwords, tokens). */
+          secret: z.boolean().optional(),
+          /** Surface an "unset" badge when the key is missing. Advisory — nothing blocks startup. */
+          required: z.boolean().optional(),
+        }),
+      )
+      .optional(),
+    /**
+     * Operator-editable settings declaration — the non-credential sibling of
+     * `secrets`, mirroring the extensions' config.json/secrets.json split.
+     * Values live in config/ext/service/config.json (native JSON types);
+     * `default` is what the admin form shows while the key is unset.
+     */
+    config: z
+      .record(
+        z.string(),
+        z.object({
+          /** Form label shown in the admin UI. */
+          label: z.string(),
+          /** Form widget + write coercion. */
+          type: z.enum(['string', 'number', 'boolean']),
+          /** Displayed (not persisted) while the key is absent from config.json. */
+          default: z.union([z.string(), z.number(), z.boolean()]).optional(),
+        }),
+      )
+      .optional(),
+    /**
+     * Service-rendered admin page (svc.admin() over the host proxy at
+     * /agents/{folder}/admin/). True surfaces a permalink in the admin UI.
+     */
+    admin: z.boolean().optional(),
+  })
+  .passthrough();
+export type ServiceManifest = z.infer<typeof ServiceManifestSchema>;
+
 /** Runtime backup config (config/agent.json → backup). */
 export const BackupConfigSchema = z.object({
   retain: z.number().int().min(1),
@@ -92,15 +153,15 @@ export const BackupConfigSchema = z.object({
 });
 export type BackupConfig = z.infer<typeof BackupConfigSchema>;
 
-/** File-watch tunables (config/agent.json → fileWatch). Task 77 Phase 3+. */
+/** File-watch tunables (config/agent.json → fileWatch). */
 export const FileWatchConfigSchema = z.object({
   /** Token threshold for inlining row bodies in <cast:watch> tags.
    *  `0` disables inlining entirely (agent re-reads on receipt). Higher
    *  values save Read round-trips at the cost of context size. Range 0–50000. */
   maxPreviewTokens: z.number().int().min(0).max(50_000).default(1000),
   /** Max active watches per runner (channel + participant pair). Cap exists
-   *  to keep prompt context bounded. Range 1–50. Phase 4 enforces at tool
-   *  registration; Phase 3 ships the field for forward-compat. */
+   *  to keep prompt context bounded. Range 1–50. Enforced at tool
+   *  registration; the field ships for forward-compat. */
   maxWatchesPerChannel: z.number().int().min(1).max(50).default(3),
 }).strict();
 export type FileWatchConfig = z.infer<typeof FileWatchConfigSchema>;
@@ -260,7 +321,7 @@ export const AgentConfigSchema = z
     /** IANA timezone for the agent (e.g. "America/New_York"). Falls back to server timezone. */
     timezone: z.string().optional(),
     backup: BackupConfigSchema.optional(),
-    /** File-watch tunables (Task 77). */
+    /** File-watch tunables. */
     fileWatch: FileWatchConfigSchema.optional(),
     /** Max user-visible bytes per agent output (post-strip of `<cast:internal>` blocks).
      *  Default 32_768. Outputs exceeding this are blackholed and the agent is told to

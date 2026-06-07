@@ -74,14 +74,14 @@ Layers 1-3 and 10 are server-managed. **Layers 4-8 are your primary authoring su
 A blueprint names no user. Who the agent is talking to is resolved at the routing layer and injected every turn in Layer 10's `<conversation-context>`:
 
 ```xml
-<participant id="u:a7f3k" handle="tg:12345" declared-name="Alice" />
+<participant id="u:a7f3k@d9c1e2" declared-name="Alice" />
 ```
 
-`id` is the server-issued identity (`local` for the CLI operator). `declared-name` is the name that participant chose, via `/set-name`, pairing, or the transport. To address someone by name, read `declared-name`. Never write a name into `prompt.md`. The same prompt serves every participant, and the agent tells them apart from this element, not from baked-in text.
+`id` is the bare server-issued identity (operator surfaces carry their bare surface, e.g. `cli:alice`). The transport handle (`tg:12345`) is gateway-local and never reaches the agent. `declared-name` is the name that participant chose, via `/set-name`, pairing, or the transport. To address someone by name, read `declared-name`. Never write a name into `prompt.md`. The same prompt serves every participant, and the agent tells them apart from this element, not from baked-in text.
 
-Treat all participants uniformly. There is no privileged "operator" persona in the blueprint. `local` is just another identity at the ACL layer (it happens to hold full bits), and a hosted multi-user deployment may have no `local` participant at all. To tell a human apart from a peer agent, read the inbound source tags: a peer agent's turn arrives wrapped (e.g. `<cast:push fromAgent=...>` / a query envelope) and should be validated before acting on, while a participant's own turn has no such wrapper.
+Treat all participants uniformly. There is no privileged "operator" persona in the blueprint. Operator surfaces (`cli:`/`admin:` handles) hold full bits at the ACL layer, and a hosted multi-user deployment may have no operator participant at all. To tell a human apart from a peer agent, read the inbound source tags: a peer agent's turn arrives wrapped (e.g. `<cast:push fromAgent=...>` / a query envelope) and should be validated before acting on, while a participant's own turn has no such wrapper.
 
-Hardcoding a recipient, an address, or a specific person's name collapses three roles (author, operator, runtime user) into one and yields an agent that can only ever serve one person. Operator-supplied values belong in config (Configure's lane) or a resource slot. Runtime recipients are acquired at runtime: the message being answered, pairing, or `agent__list_participants`. See `console/what-is-an-agent.md` and `console/design/anti-patterns.md` (Principle 6).
+Hardcoding a recipient, an address, or a specific person's name collapses three roles (author, operator, runtime user) into one and yields an agent that can only ever serve one person. Operator-supplied values belong in config (Configure's lane) or a resource slot. Runtime recipients are acquired at runtime: the message being answered, pairing, or discovery (`agent__list_channels` / `agent__list_participants` — scoped to the rooms the calling cell is placed in, so relay cells discover their co-members without any baked address). See `console/what-is-an-agent.md` and `console/design/anti-patterns.md` (Principle 6).
 
 ### blueprint/identity/
 
@@ -157,7 +157,7 @@ From the developer's perspective, a service does three things:
 2. **Populates `shared/ext/service/`** with data the agent can read (mounted at `/shared/service`)
 3. **Injects dynamic context** via `shared/ext/service/agent-context.md` (prompt assembly layer 9)
 
-Service databases stay in `ext/service/` (the service CWD), not in any agent-visible directory. Operator-owned service secrets live in `config/ext/service/.env`. For the mechanical service contract (entrypoint resolution, env vars, IPC messages), see SPEC.md §9.
+Service databases stay in `ext/service/` (the service CWD), not in any agent-visible directory. Operator-owned service files live in `config/ext/service/` — `secrets.json` (credentials) and `config.json` (settings), declared in the service manifest's `secrets`/`config` fields and edited from the admin UI; the server restarts the service when either changes. A service can also render its own admin page (manifest `admin: true`, proxied at `/agents/{folder}/admin/`). For the mechanical service contract (entrypoint resolution, env vars, IPC messages), see SPEC.md §9.
 
 ## Server Tools
 
@@ -200,7 +200,8 @@ Task output is sent to the user. The prompt can instruct the task agent to wrap 
 | Tool | Description |
 |------|-------------|
 | `agent__list_peers` | List peer agents with per-channel permissions (who you can query, who can query you, messaging directions). Peers are other agents — not users. |
-| `agent__list_participants` | List participants who have previously interacted with this agent. Returns addresses and last activity timestamps. System contexts only. |
+| `agent__list_channels` | List the channels where the calling cell's participant is placed, with sharding and visibility markers. The agent itself and operator surfaces see every configured channel. |
+| `agent__list_participants` | List the members of a channel the caller is placed in, as push-target identities with day-level recency (optional `channel` param, defaults to the current channel). Scoped to the caller's own rooms — a cell can list exactly what the push gate would let it reach. The agent itself and operator surfaces get unfiltered views; with no channel in context they get the agent-wide registry with exact timestamps. |
 
 ### Message log tools (conditional on `log_messages: true`)
 

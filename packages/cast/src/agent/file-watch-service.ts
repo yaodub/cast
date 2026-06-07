@@ -17,7 +17,7 @@
  * Delivery: each fire calls the injected `route(agentId, agentId, body, routing,
  * ..., 'watch', attrs)`. The watch service does NOT touch runners directly —
  * it goes through the same chokepoint scheduler / lifecycle / service IPC use,
- * which exercises Phase 0's `<cast:watch ...>` wrapping in `runner.deliver()`.
+ * which exercises the `<cast:watch ...>` wrapping in `runner.deliver()`.
  */
 import fs from 'fs';
 import { watch as chokidarWatch, type FSWatcher } from 'chokidar';
@@ -61,7 +61,7 @@ const WatchEntrySchema = z.object({
   qualifier: z.string().optional(),
   /** ISO timestamp of registration. */
   registered: z.string(),
-  /** Optional ISO expiry — Phase 5 prunes; Phase 3 stores forward-compat. */
+  /** Optional ISO expiry — pruned when reached, stored for forward-compat. */
   expiresAt: z.string().optional(),
 });
 type PersistedWatchEntry = z.infer<typeof WatchEntrySchema>;
@@ -182,11 +182,11 @@ export class FileWatchService {
   }
 
   // -------------------------------------------------------------------------
-  // Registration API (Phase 4 wires MCP tools to these; Phase 3 tests use directly)
+  // Registration API (MCP tools wire to these; tests use directly)
   // -------------------------------------------------------------------------
 
   /**
-   * Register a watch. Resolves the path via the Phase 1 resolver; rejects
+   * Register a watch. Resolves the path via the resolver; rejects
    * ENOENT/symlink/traversal/no-mount per the path-must-exist contract.
    *
    * Async: when arming a fresh host path, awaits chokidar's `ready` event so
@@ -283,7 +283,7 @@ export class FileWatchService {
     this.persist();
   }
 
-  /** List watches scoped to a single conv-key (Phase 4 tool consumer). */
+  /** List watches scoped to a single conv-key (tool consumer). */
   list(convKey: string): WatchEntry[] {
     return [...(this.byConvKey.get(convKey) ?? [])];
   }

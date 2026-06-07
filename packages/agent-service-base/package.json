@@ -1,6 +1,6 @@
 {
   "name": "@getcast/agent-service-base",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -8,7 +8,6 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
-    "dotenv": "^16.4.7",
     "simple-oauth2": "^5.1.0",
     "zod": "^3.25.0"
   },

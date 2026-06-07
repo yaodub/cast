@@ -12,7 +12,7 @@
  * that streaming work introduced — the leak that prompted this refactor.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { applyWebFetchPolicy, formatFallbackMessage, gateUserHooks, type SpawnHooks } from './conversation-runner.js';
+import { formatFallbackMessage, gateUserHooks, type SpawnHooks } from './conversation-runner.js';
 import type { ConversationPkt, PreviewPkt } from '../gateway/packets.js';
 import type { TypingEvt } from '../types.js';
 
@@ -277,35 +277,3 @@ describe('formatFallbackMessage', () => {
   });
 });
 
-/**
- * applyWebFetchPolicy — the built-in WebFetch security gate, keyed purely on
- * network mode. Both-branches discipline (style guide §Runtime Validation
- * Strategy): exercise both the allow (full → kept) and deny (everything else →
- * disabled) directions, since the deny side is the property that matters.
- */
-describe('applyWebFetchPolicy', () => {
-  it('KEEPS built-in WebFetch on full network (authoring consoles / deliberately full-net agents)', () => {
-    // On full net the agent can already reach any host (Bash/curl), so the
-    // built-in adds no exposure — and it's the only fetch path here.
-    expect(applyWebFetchPolicy([], 'full')).not.toContain('WebFetch');
-  });
-
-  it('DISABLES built-in WebFetch on sdk-only (the default network mode)', () => {
-    expect(applyWebFetchPolicy([], 'sdk-only')).toContain('WebFetch');
-  });
-
-  it('DISABLES built-in WebFetch on none (no egress)', () => {
-    expect(applyWebFetchPolicy([], 'none')).toContain('WebFetch');
-  });
-
-  it('DISABLES built-in WebFetch when containerNetwork is unset (entrypoint default = sdk-only)', () => {
-    expect(applyWebFetchPolicy([], undefined)).toContain('WebFetch');
-  });
-
-  it('preserves the agent\'s existing disabled tools and does not mutate the input', () => {
-    const base = ['task__*'];
-    const out = applyWebFetchPolicy(base, 'sdk-only');
-    expect(out).toEqual(['task__*', 'WebFetch']);
-    expect(base).toEqual(['task__*']); // input untouched
-  });
-});

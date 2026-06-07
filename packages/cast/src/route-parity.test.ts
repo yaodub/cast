@@ -1,5 +1,5 @@
 /**
- * Route-parity assertion test (post task 94 Phase D).
+ * Route-parity assertion test.
  *
  * Both `agent-route.routeMessage` (user channels via AgentManager) and
  * `ConsoleManager.route` (console channels) are now thin façades over
@@ -34,7 +34,7 @@ const CONSOLE_ROUTE = fs.readFileSync(
 
 /**
  * Invariants both routes must implement, expressed as grepable structural
- * patterns over their post-Phase-D façade calls.
+ * patterns over their façade calls.
  */
 const SHARED_INVARIANTS: { name: string; agentPattern: RegExp; consolePattern: RegExp; reason: string }[] = [
   {

@@ -20,7 +20,7 @@ import { randomBytes } from 'crypto';
 import { z } from 'zod';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { HookCallback, McpServerConfig, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
-import { createMcpSocketProxy, createMcpTcpProxy } from './mcp-socket-proxy.js';
+import { createMcpSocketProxy, createMcpTcpProxy, type CallMeta } from './mcp-socket-proxy.js';
 import { createTurnTextStreamer, type TurnTextStreamer, type PipeMessageKind } from './turn-text-streamer.js';
 
 import { createInterface } from 'readline';
@@ -32,6 +32,17 @@ let currentStreamer: TurnTextStreamer | null = null;
  *  runQuery's `system/init` handler to decide whether to rotate streamId, and
  *  at the usage-emit site to tag the turn's phase (`lifecycle` → `cleanup`). */
 let lastInboundKind: PipeMessageKind = 'participant';
+
+/** SIDE EFFECT: per-spawn call context, set from the init payload (runQuery)
+ *  and read by the service MCP proxy to stamp `_meta` on tool calls. The runner
+ *  is single-conversation-per-spawn, so the participant is constant for the
+ *  spawn — a module ref is sufficient, and resetting it on a fresh spawn is
+ *  correct. Host-attested (comes from the host's stdin payload), so the agent
+ *  cannot forge it. */
+let currentCallMeta: CallMeta | undefined;
+
+/** The service socket's MCP name — only it receives the attested call context. */
+const SERVICE_MCP_NAME = 'agent';
 
 /** The live SDK query handle for the current runQuery — captured so a piped
  *  turn can switch the model mid-session via `setModel` (cleanup-phase model). */
@@ -78,6 +89,12 @@ const ContainerInputFields = {
    *  agent-schema's container-io.ts — process boundary, no cross-import.) */
   disabledTools: z.array(z.string()).optional(),
   conversationKey: z.string().optional(),
+  /** Conversation participant + channel, stamped host-side so the runner can
+   *  attest them onto service tool calls (MCP `_meta`) for participant-routed
+   *  approval. Absent for rooms / self turns. (Mirrored from agent-schema's
+   *  container-io.ts — process boundary, no cross-import.) */
+  participant: z.string().optional(),
+  channelName: z.string().optional(),
   agentFolder: z.string(),
   address: z.string(),
   isScheduledTask: z.boolean().optional(),
@@ -374,23 +391,18 @@ export function classifyClaudeError(resultText: string): ClaudeFailureReason | n
 // be visible to commands Kit runs.
 const SECRET_ENV_VARS = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'];
 
-const ALLOWED_TOOLS = [
-  'Bash',
-  'Read', 'Write', 'Edit', 'Glob', 'Grep',
-  'WebSearch',
-  'Task', 'TaskOutput', 'TaskStop',
-  'TodoWrite', 'ToolSearch', 'Skill',
-  'NotebookEdit',
-  'mcp__*',
-];
-
 // Built-in SDK tools removed from the model's context for every spawn.
-// disallowedTools is enforced regardless of permissionMode (unlike allowedTools,
-// which bypassPermissions nullifies) and also hides the tool from ToolSearch.
+// disallowedTools is the only real availability lever under bypassPermissions:
+// it's enforced regardless of permissionMode and hides the tool from ToolSearch,
+// whereas allowedTools only pre-approves — it never restricts, so we don't set it.
 // - AskUserQuestion: no interactive user in the container path — replies go through the gateway.
 // - Config: mutates SDK runtime settings including permission mode.
-// Per-agent disabled tools (including built-in WebFetch, decided host-side) merge
-// in via resolveDisallowedTools().
+// This floor holds only the runner's own contract invariants. SDK-feature policy
+// (cron tools, RemoteTrigger, plan mode, the Task* checklist, …) is decided
+// host-side — see cast's container/sdk-surface.ts — and arrives on the init
+// wire's disabledTools (tool names) and container env (feature flags), so
+// policy changes apply on the next spawn without an image rebuild. Merge
+// happens in resolveDisallowedTools().
 const DISALLOWED_TOOLS = ['AskUserQuestion', 'Config'];
 
 // Merge the built-in floor with the agent's per-spawn disabled-tools list (from
@@ -547,6 +559,13 @@ async function runQuery(
   // its usage is attributed to the `cleanup` phase. Otherwise the init turn is
   // a normal participant turn.
   lastInboundKind = containerInput.isCleanup ? 'lifecycle' : 'participant';
+  // SIDE EFFECT: capture the spawn's conversation context so the service MCP
+  // proxy can attest it onto tool calls. Constant per spawn (single conversation).
+  currentCallMeta = {
+    participant: containerInput.participant,
+    channelName: containerInput.channelName,
+    conversationKey: containerInput.conversationKey,
+  };
   // currentModel persists across runQuery restarts (a mid-session setModel
   // should survive a between-queries query rebuild); seed it from the spawn
   // model on first use. prevModelUsage resets — each query() process is a
@@ -640,7 +659,6 @@ async function runQuery(
         ? { type: 'preset' as const, preset: 'claude_code' as const, append: identitySystemPrompt }
         : undefined,
       includePartialMessages: true,
-      allowedTools: ALLOWED_TOOLS,
       disallowedTools: resolveDisallowedTools(containerInput.disabledTools),
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
@@ -864,7 +882,6 @@ async function runBootstrap(
     options: {
       cwd: WORKSPACE_HOME,
       systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const, append: fullPrompt },
-      allowedTools: ALLOWED_TOOLS,
       disallowedTools: resolveDisallowedTools(agentDisabledTools),
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
@@ -923,10 +940,11 @@ async function main(): Promise<void> {
   for (const [key, value] of Object.entries(containerInput.secrets || {})) {
     sdkEnv[key] = value;
   }
-  // Disable the bundled CLI's auto-memory feature. It injects MEMORY.md
-  // guidance into the system prompt and writes to ~/.claude/projects/<hash>/memory/,
-  // which collides with the agent's own /memory volume.
-  sdkEnv.CLAUDE_CODE_DISABLE_AUTO_MEMORY = '1';
+  // SDK feature kill-switches (DISABLE_CRON, ENABLE_TASKS=0, DISABLE_AUTO_MEMORY)
+  // are NOT set here — the host injects them as container env from its fleet
+  // policy table (cast's container/sdk-surface.ts), and the process.env spread
+  // above carries them into the SDK. Policy lives host-side; this file only
+  // asserts the runner's own contract.
 
   // Connect to MCP servers.
   // CAST_MCP_PORTS: TCP transport (Docker Desktop macOS) — "cast=54321,agent=54322"
@@ -949,7 +967,7 @@ async function main(): Promise<void> {
       const url = `http://${mcpHost}:${port}/mcp`;
       log(`Connecting to MCP via TCP: ${url} (name: ${name})`);
       try {
-        const { sdkServer, close } = await createMcpTcpProxy(url, name);
+        const { sdkServer, close } = await createMcpTcpProxy(url, name, name === SERVICE_MCP_NAME ? () => currentCallMeta : undefined);
         mcpServers[name] = sdkServer;
         mcpCleanups.push(close);
       } catch (err) {
@@ -977,7 +995,7 @@ async function main(): Promise<void> {
           const serverName = sockFile.replace(/\.sock$/, '');
           log(`Connecting to MCP socket: ${sockPath} (name: ${serverName})`);
           try {
-            const { sdkServer, close } = await createMcpSocketProxy(sockPath, serverName);
+            const { sdkServer, close } = await createMcpSocketProxy(sockPath, serverName, serverName === SERVICE_MCP_NAME ? () => currentCallMeta : undefined);
             mcpServers[serverName] = sdkServer;
             mcpCleanups.push(close);
           } catch (err) {

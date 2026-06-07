@@ -227,7 +227,7 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
   .nav-dropdown button:last-child { border-bottom: none; }
 }
 
-/* Phone-only adjustments (task 106). Sections reflow for narrow viewports;
+/* Phone-only adjustments. Sections reflow for narrow viewports;
    the mild zoom below is densification, not the old load-bearing 0.65 hack. */
 @media (max-width: 640px) {
   /* Mild densification on top of the reflow (operator taste: full-size felt

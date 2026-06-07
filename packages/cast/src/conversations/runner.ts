@@ -3,9 +3,9 @@
  * Conversation class drives. Knows nothing about slots, paging, conversations,
  * persistence.
  *
- * Phase B introduces this interface so Conversation is testable in isolation
+ * This interface lets Conversation be tested in isolation
  * with mock runners. The concrete implementation (today's `ConversationRunner`
- * suitably adapted) is wired in Phase C.
+ * suitably adapted) is wired by the host.
  *
  * Key differences from today's `ConversationRunner` the spec calls out:
  *
@@ -104,16 +104,15 @@ export type RunnerFactory<TCtx = unknown> = (
  *
  *  Replaces the prior `graceful: boolean` field on `TeardownOpts`, which
  *  sent the close hint but did not wait for exit — the name promised drain
- *  semantics it never delivered. See incident: 696K-iteration emitFallback
- *  feedback loop traced to a non-graceful destroy on
- *  `replaceInvalidatedRunner` killing an in-flight turn mid-write. */
+ *  semantics it never delivered. A non-graceful destroy on
+ *  `replaceInvalidatedRunner` could kill an in-flight turn mid-write. */
 export type TeardownMode =
   | { kind: 'immediate' }
   | { kind: 'drain'; timeoutMs: number };
 
 /**
  * The Runner contract that Conversation drives. The concrete implementation
- * may be `ConversationRunner` from the agent package; Phase B tests inject
+ * may be `ConversationRunner` from the agent package; tests inject
  * mocks.
  */
 export interface Runner {
@@ -160,7 +159,7 @@ export interface Runner {
   /** Live child-process handle for the container, when alive. Used by the
    *  host for diagnostics (`getActiveProcesses`) and shutdown SIGKILL
    *  fallback (`drainRunners`). Null when the runner has no live container.
-   *  Phase E will replace this with a cleaner host-side process registry. */
+   *  A future change will replace this with a cleaner host-side process registry. */
   readonly activeProcess: ChildProcess | null;
   /** Runtime container name for the live process, or null when no live
    *  container. Lets the host target egress reconciles via `container exec`. */
@@ -189,7 +188,7 @@ export type DeliverKind =
   | 'watch'
   | 'push'
   // `system` — see `agent/conversation-runner.ts:DeliverKind` for the
-  // streamer-state rationale (Phase 2 refinement 1 + 3 path (b), task 96).
+  // streamer-state rationale.
   | 'system';
 
 export type { SpawnHooks };

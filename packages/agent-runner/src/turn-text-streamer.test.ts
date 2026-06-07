@@ -124,7 +124,7 @@ describe('TurnTextStreamer', () => {
     });
   });
 
-  describe('nextTurn — Phase 2 refinement 1 + 3 (path b)', () => {
+  describe('nextTurn — refinement 1 + 3 (path b)', () => {
     it('participant kind re-arms and rotates streamId', () => {
       const { streamer, frames } = makeStreamer();
       streamer.feedDelta('first turn');

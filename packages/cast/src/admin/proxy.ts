@@ -3,6 +3,11 @@
  *
  * Ported from web/routes.ts. The Cast server proxies /agents/{folder}/admin/*
  * to the service's admin HTTP handler on its Unix socket.
+ *
+ * Two ways in:
+ *   - API callers: admin Bearer header (unchanged).
+ *   - Browsers: a path-scoped cookie session, set by the authenticated
+ *     `service.adminPageUrl` tRPC call (see service-page-access.ts).
  */
 import http from 'http';
 import { Router } from 'express';
@@ -10,24 +15,33 @@ import { Router } from 'express';
 import { ADMIN_SOCKET_NAME, agentPath } from '../config.js';
 import { isValidSession, extractToken } from './trpc.js';
 import type { AdminDeps } from './trpc.js';
+import { SESSION_COOKIE, isValidSessionCookie } from './service-page-access.js';
 
 export function createProxyRouter(deps: AdminDeps): Router {
   const proxyRouter = Router();
 
-  proxyRouter.all('/:agent/admin/*path', (req, res) => {
-    if (!isValidSession(extractToken(req.headers.authorization))) {
+  // `{/*path}` (optional wildcard) so the bare page URL `/agents/{folder}/admin`
+  // matches too — a plain `/*path` requires a non-empty tail in Express 5.
+  proxyRouter.all('/:agent/admin{/*path}', (req, res) => {
+    const agent = req.params.agent!;
+
+    const cookies = (req as { cookies?: Record<string, string> }).cookies ?? {};
+    const browserSession = isValidSessionCookie(cookies[SESSION_COOKIE], agent);
+    if (!browserSession && !isValidSession(extractToken(req.headers.authorization))) {
       res.status(401).json({ error: 'Admin session required' });
       return;
     }
-    const agent = req.params.agent!;
+
     const mgr = deps.getManager(agent);
     if (!mgr) {
       res.status(404).json({ error: `Agent "${agent}" not found` });
       return;
     }
 
-    // Extract the path after /agents/{agent}/admin
-    const adminPath = '/' + (req.params.path || '');
+    // Extract the path after /agents/{agent}/admin. Express 5 wildcard params
+    // are arrays of segments (path-to-regexp v8); absent for the bare URL.
+    const pathParam = req.params.path as unknown as string[] | string | undefined;
+    const adminPath = '/' + (Array.isArray(pathParam) ? pathParam.join('/') : pathParam || '');
     const socketPath = agentPath(agent!, ADMIN_SOCKET_NAME);
 
     const proxyReq = http.request({

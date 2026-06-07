@@ -18,6 +18,7 @@ import { installMessageLogSchema, MessageLogStore } from '../lib/message-log-sto
 import { installTokenUsageSchema, TokenUsageStore } from '../lib/token-usage-store.js';
 
 import { parseJsonSafe } from '../lib/utils.js';
+import { extractIdentity } from '../auth/address.js';
 
 // --- Zod schemas & derived types ---
 
@@ -202,11 +203,22 @@ export class AgentDb {
     this.db.prepare(`
       INSERT INTO participants (address, last_active) VALUES (?, ?)
       ON CONFLICT(address) DO UPDATE SET last_active = excluded.last_active
-    `).run(address, new Date().toISOString());
+    `).run(this.identityKey(address), new Date().toISOString());
+  }
+
+  /**
+   * Transport-blind registry key: user participants (`u:…`) are keyed by bare
+   * identity (handle stripped) so the existence check matches what the ACL
+   * already authorizes on — closing the push existence asymmetry. Operator
+   * (`cli:`/`admin:`) and agent (`a:…`) addresses are already their own identity
+   * (no handle to strip), so they pass through unchanged.
+   */
+  private identityKey(address: string): string {
+    return address.startsWith('u:') ? extractIdentity(address) : address;
   }
 
   participantExists(address: string): boolean {
-    return !!this.db.prepare('SELECT 1 FROM participants WHERE address = ?').get(address);
+    return !!this.db.prepare('SELECT 1 FROM participants WHERE address = ?').get(this.identityKey(address));
   }
 
   getAllParticipants(): ParticipantRow[] {

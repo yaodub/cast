@@ -15,7 +15,7 @@ An agent is a directory. This specification defines the structure, files, and se
 
 **Agent runner** — the process that executes inside a container (or locally) and invokes the Claude Agent SDK.
 
-**Participant** — an external entity identified by a compound address: `{identity}/{handle}` (e.g., `u:a7f3k/tg:12345`, `local/cli:alice`). The identity part is a server-issued GUID; the handle is the transport-specific address.
+**Participant** — an external entity, identified above the gateway by its bare identity (`u:a7f3k@d9c1e2`). The identity is a server-issued GUID. The transport handle (`tg:12345`) is gateway-local: the gateway strips it on the way in and reattaches it on the way out via an IdP lookup, so it never reaches the agent layer, the prompt, conversation keys, or per-agent state. Operator surfaces are bare `cli:`/`admin:` participants (`cli:alice`, `admin:local`) — they bypass the IdP, so the surface itself is the participant.
 
 **Agent identity** — three distinct identifiers per agent:
 
@@ -25,7 +25,7 @@ An agent is a directory. This specification defines the structure, files, and se
 
 The bus is the alias-resolution boundary: `bus.resolveByLabel(alias)` returns the canonical. Rename-safe by design — the signing key fingerprint is the proof of identity.
 
-**Identity** — a user identity issued by the local identity provider: `u:xxx@issuer` (e.g., `u:a7f3k@d9c1e2`). The special identity `local` represents the CLI operator.
+**Identity** — a user identity issued by the local identity provider: `u:xxx@issuer` (e.g., `u:a7f3k@d9c1e2`). Operator surfaces (`cli:`/`admin:` handles) carry no IdP identity — the bare handle itself is the operator tier.
 
 **Channel** — a named conversation configuration that determines idle timeout, lifecycle phases, tool availability, and message logging.
 
@@ -271,7 +271,7 @@ blueprint/channels/{channel_name}/
 | `log_messages` | `boolean` | `true` | Record messages in the channel's message log. `false` disables the runner's message-log store injection — message + event log writes become no-ops and (on user channels) request/approval MCP tools are unavailable. User channels write to `agent.db`'s `message_log` bundle; console channels write to `console.db`'s `message_log` bundle. |
 | `use_sharding` | `boolean` | `false` | Enable qualifier-based sub-conversations on this channel (see "Sharding and qualifiers" below). |
 | `disabled_tools` | `string[]` | `[]` | Tool patterns to disable. Exact names, domain globs (`task__*`), or built-in SDK tool names (`WebFetch`). Merged with agent-wide disabled tools. See §Tool Disabling. |
-| `show_co_participants` | `boolean` | `true` | Whether the agent is aware of other participants on this channel. `false` replaces the `<other-participants>` conversation-context element with an explicit disabled marker and makes `conversation__list_summaries` return only the caller's own conversations plus a static policy note (co-participant rows from any flag-off channel are filtered out). Visibility control only — conversation isolation (per-participant keying) is unconditional and unaffected. |
+| `show_co_participants` | `boolean` | `true` | Whether the agent is aware of other participants on this channel, and whether they can see and reach each other. `false` replaces the `<other-participants>` conversation-context element with an explicit disabled marker, hides the channel's members from member-tier `agent__list_participants` callers (own row plus a population-blind policy note, queried from any room), adds the same policy note to `conversation__list_summaries` (whose rows are already caller-scoped for member-tier callers regardless of this flag), and refuses cross-conversation push (`conversation__push_to_participant`) from one co-participant to another. The agent itself and operator surfaces are exempt — it is a member↔member control. Per-participant conversation keying is unconditional and unaffected: the flag gates reach and visibility between participants, not the isolation of a single conversation's transcript. |
 
 Implicit channel config (used only when no `channel.json` file exists at all — distinct from field-level defaults): `idle_timeout: 1800000` (30min), `lifecycle: "none"`, `log_messages: true`. User-channel and console-channel histories live in physically separate SQLite files (`agent.db` vs `console.db`) so console planning content never co-mingles with user-channel agent reasoning.
 
@@ -467,7 +467,7 @@ Operator-managed access control. Defines agent peers and rejection messages. **N
 
 ```json
 {
-  "owner": "local",
+  "owner": "operator",
   "peers": {
     "bond": { "*": "ioaq" },
     "sales": { "query": "a" }
@@ -484,7 +484,7 @@ Channels `__design` and `__configure` are system-owned infrastructure channels. 
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `owner` | `string` | `"local"` | Identity with full access. Typically `"local"` (CLI operator) or a user identity. |
+| `owner` | `string` | `"operator"` | Identity with full authorization. The default `"operator"` is an inert label matching no identity — the operator tier (`cli:`/`admin:` handles) holds full bits without it. Setting a `u:` identity gives that user unconditional reach (pushes); enumeration and cross-participant summary reads stay member-scoped (see the `agent__list_*` rows in §10). |
 | `peers` | `object` | `{}` | Map of agent alias → channel permissions. Agent peers only — human users are managed via pairing in `state/paired-users.json`. |
 | `reject_message` | `string \| null` | `null` | Custom message sent to denied human participants. |
 
@@ -494,7 +494,7 @@ Runtime-managed ACL grants for paired human users. Written by the pairing flow, 
 
 ```json
 {
-  "u:45f532a0@d9c1e2": { "*": "io" },
+  "u:45f532a0@d9c1e2": { "default": "io", "briefings": "io" },
   "u:2e402b49@d9c1e2": { "default": "io" }
 }
 ```
@@ -507,7 +507,7 @@ Pairing code state. Codes are generated at runtime by the server — there are n
 
 ```json
 {
-  "a8k2m1": { "generated": true, "for_handle": "tg:12345", "expires": "2026-04-02T12:00:00Z" },
+  "a8k2m1": { "generated": true, "expires": "2026-04-02T12:00:00Z" },
   "b3x9q7": { "consumed": true, "generated": true }
 }
 ```
@@ -518,19 +518,21 @@ All codes are single-use. A code entry without `consumed: true` is available; on
 
 | Bit | Direction | What it authorizes |
 |-----|-----------|-------------------|
-| `i` | them → me | Conversation messages (persistent, bidirectional) |
+| `i` | them → me | Conversation messages (persistent, bidirectional). Holding `i` on a channel makes the user a member of it, the unit of co-participant visibility and push reach. |
 | `o` | me → them | Conversation messages (push, outbound) |
 | `q` | me → them | Query (expect an answer back) |
-| `a` | them → me | Answer: accept inbound queries and requests |
+| `a` | them → me | Answer: accept inbound queries and requests. Holding `a` on a channel makes the peer agent a member of it, as a request counterparty. |
 | `r` | me → them | Request (fire-and-forget; receiver reuses `a`) |
 | `p` | me → them | Push (cross-agent hand-off; sender's current participant becomes target's) |
 | `h` | them → me | Host push (accept incoming push, host the conversation with sender's named user) |
 
 Pairings: `q`↔`a` (query/answer), `r`↔`a` (request reuses `a`; intent distinguished at the `<cast:query>`/`<cast:request>` payload-tag level — the receiver sees whichever tag the sender chose), `p`↔`h` (push/host).
 
-Bits are combined as strings per channel: `"io"`, `"aq"`, `"ioaq"`, `"a"`, `"ph"`, etc. `"*"` = wildcard (all channels not explicitly listed). Specific channel names override the wildcard. The channel wildcard `"*"` does NOT match infra channels (`__*`) — those always require an explicit channel grant.
+Bits are combined as strings per channel: `"io"`, `"aq"`, `"ioaq"`, `"a"`, `"ph"`, etc. `"*"` = wildcard (all channels not explicitly listed). Specific channel names override the wildcard. The channel wildcard `"*"` does NOT match infra channels (`__*`), which always require an explicit channel grant.
 
-The `owner` identity and `local` (CLI operator) always receive full access. Server-scope consoles (`console:*`) are authorized through code-declared grants in `auth/console-grants.ts` and do not appear in disk `acl.json`. See §16 for the full check matrix, safety model, and configuration examples.
+A `"*"` grant authorizes access but does not confer membership of any specific channel. The membership-based rules (co-participant visibility, cross-conversation push reach, and discovery via `agent__list_channels` / `agent__list_participants`) read concrete per-channel placement only. `membershipBits` does not expand `"*"`, so a wildcard-only grant is a member of nothing for those rules, even while it is authorized to converse.
+
+The `owner` identity and the operator tier (`cli:`/`admin:` handles) always receive full authorization. Server-scope consoles (`console:*`) are authorized through code-declared grants in `auth/console-grants.ts` and do not appear in disk `acl.json`. See §16 for the full check matrix, safety model, and configuration examples.
 
 ---
 
@@ -579,6 +581,8 @@ Communication is via Node.js IPC (`process.send` / `process.on('message')`). Ser
 |---------|-------------|
 | `{ type: "ready" }` | Service initialized. Server waits for this before considering startup complete. |
 | `{ type: "route-message", id, channel, text, target? }` | Route a message to the agent on the specified channel. `id` is a correlation ID. |
+| `{ type: "request-approval", id, tool, args, summary, details?, participant, channel?, conversationKey?, expiresIn? }` | Ask a human to approve a tool call. `args` is JSON-encoded. Fire-and-forget; an approval later arrives as `execute-approved-tool`. |
+| `{ type: "approval-tool-result", id, result, isError? }` | Result of executing an approved tool, correlated to the `execute-approved-tool` request. |
 
 **Server → Service:**
 
@@ -586,6 +590,7 @@ Communication is via Node.js IPC (`process.send` / `process.on('message')`). Ser
 |---------|-------------|
 | `{ type: "shutdown" }` | Graceful shutdown. Service should stop and exit within 5 seconds. |
 | `{ type: "route-result", id, result, error }` | Response to a `route-message`. `id` matches the original request. |
+| `{ type: "execute-approved-tool", id, tool, args }` | Run a previously approved tool call. `args` is JSON-encoded; the service replies with `approval-tool-result`. |
 
 ### MCP Socket
 
@@ -595,19 +600,38 @@ The service may host an MCP server on a Unix domain socket at `mcp/agent.sock` w
 
 Services contribute dynamic context to the agent's system prompt by writing `shared/ext/service/agent-context.md`. The server reads this file synchronously during prompt assembly and injects it as layer 9 (wrapped in `<service-context>`). The service controls when and how often it updates this file. The CWD for the service process is `ext/service/`.
 
-### config/ext/service/.env
+### config/ext/service/ — operator-owned service files
 
-Service-specific secrets, loaded by the service process itself. Operator-owned, lives in the config namespace. Not committed to version control.
+Two flat JSON maps, read by the service process at startup and edited from the admin UI (or by hand):
+
+| File | Values | Startup snapshot | Declared via |
+|------|--------|------------------|--------------|
+| `secrets.json` | strings (credentials) | `svc.secrets` | manifest `secrets` |
+| `config.json` | string \| number \| boolean (settings) | `svc.settings` | manifest `config` |
+
+Operator-owned, config namespace, not committed to version control, not mounted into containers. The server watches both files and restarts the service when either changes, so a startup read is always current; there is no in-process hot reload. The manifest declaration drives the admin UI's generated form; the admin surface rejects writes containing undeclared keys, and keys added to either file by hand are preserved on admin saves.
+
+### Service Admin Page
+
+A service may render its own admin page: `svc.admin(handler)` serves HTTP on the Unix socket at `adminSocketPath`, and the server reverse-proxies it at `/agents/{folder}/admin/*`. The handler receives `{ path, method, query, body? }` — `body` is the raw request body string (capped at 1 MB), so pages can accept form POSTs. Declaring `"admin": true` in the manifest surfaces a permalink in the admin UI; an authenticated admin call sets a path-scoped cookie session for the browser, so no credential rides a URL (API callers use the admin Bearer header directly). The page is reachable only while the service is running — flat settings/credentials editing stays on the host-rendered form, which works regardless of service state.
 
 ### blueprint/service/manifest.json
 
-Service metadata and entrypoint configuration:
+Service metadata, entrypoint, and operator-surface declarations:
 
 ```json
 {
   "name": "my-service",
   "version": "0.1.0",
-  "entry": "src/index.ts"
+  "entry": "src/index.ts",
+  "config": {
+    "SCAN_INTERVAL": { "label": "Scan interval (minutes)", "type": "number", "default": 30 }
+  },
+  "secrets": {
+    "API_USERNAME": { "label": "API username" },
+    "API_PASSWORD": { "label": "API password", "secret": true, "required": true }
+  },
+  "admin": true
 }
 ```
 
@@ -616,6 +640,11 @@ Service metadata and entrypoint configuration:
 | `name` | No | Service name (informational) |
 | `version` | No | Service version (informational) |
 | `entry` | No | Entrypoint relative to `blueprint/service/`. If absent, defaults to `index.js`. `.ts`/`.tsx` entries are run with tsx. |
+| `config` | No | Declaration of the settings the service reads from `config/ext/service/config.json` via `svc.settings`. Each value carries `label`, `type` (`string` \| `number` \| `boolean` — form widget + write coercion), and optional `default` (displayed, not persisted, while the key is unset). |
+| `secrets` | No | Declaration of the keys the service reads from `config/ext/service/secrets.json` via `svc.secrets`. Keys are env-var-style names. Each value carries `label` (admin form label), optional `secret` (mask the value in the UI), and optional `required` (advisory badge — nothing blocks startup). Values never live in the manifest. |
+| `admin` | No | `true` surfaces a permalink to the service-rendered admin page (see Service Admin Page above). |
+
+Validated as `ServiceManifestSchema` (exported from `@getcast/agent-schema/v1`). The manifest is open — unknown fields pass through, and stamping preserves them (only `entry` is stripped from stamped bundles).
 
 ---
 
@@ -632,7 +661,7 @@ config/
   ext/
     {name}/                 Operator-owned config + secrets (CM/SM-readable, Configure-writable)
       config.json           Operator overrides (optional)
-      .env                  Credentials (not committed, not mounted)
+      secrets.json          Credentials (not committed, not mounted)
 ext/
   {name}/                   Per-extension private runtime (DBs, caches, auth tokens)
   service/                  Agent service private runtime (reserved, see Section 9)
@@ -769,7 +798,8 @@ The server provides these tools via MCP. Tool names use `domain__action` naming 
 | `conversation__write_summary` | Write a summary of the current conversation |
 | `conversation__push_to_channel` | Push a turn into a different channel for the current participant, optionally on a different agent via `target_agent` (label, e.g. `"knowledge"`). Returns a correlation `id` in the result text; if the receiver later rejects the push (ACL revoked, draft mode, etc.) the rejection arrives as `<cast:rejection request="<id>">` on a subsequent turn |
 | `conversation__push_to_participant` | Push a turn into another participant's conversation on this agent (intra-agent only; no `target_agent`). Returns a correlation `id` for receiver-rejection correlation, same as `push_to_channel` |
-| `agent__list_participants` | List participants who have previously interacted with this agent (only available when no user participant in context) |
+| `agent__list_channels` | List the channels where the calling cell's participant is placed (the agent itself and operator surfaces see every configured channel). Sharded channels render as `name~*` |
+| `agent__list_participants` | List the members of a channel the caller is placed in, as push-target identities with day-level recency. Optional `channel` param defaults to the current channel; a `name~qualifier` form is accepted and the qualifier ignored (shards share membership). Scoped to the caller's standing: a cell can list exactly what `conversation__push_to_participant` would let it reach, and a query outside its rooms is denied without revealing whether the channel exists. The agent itself and operator surfaces get unfiltered views; with no channel in context they get the agent-wide registry with exact timestamps |
 | `agent__list_peers` | List peer agents with per-channel permissions (query, answer, message directions) |
 | `message_log__search` | Search past messages by keyword (requires message logging enabled) |
 | `message_log__recent` | Browse recent messages without keyword search |
@@ -904,7 +934,7 @@ These directories are managed at runtime. Understanding their contents is useful
 
 Server-managed persistent state. Contains conversation records (`conversations.jsonl`), scheduled tasks (`tasks.json`), the agent database (`agent.db` — message log with FTS5 search, participant registry), the attachment blob store (`attachments/`), and the identity roster (`identity-roster.json`). No other process should write here.
 
-**`identity-roster.json`** — human-readable snapshot of every user identity that has successfully paired with this agent. Updated automatically after each successful pairing. Schema: `{ "<identity-id>": { "name": string, "handles": string[] } }`. Not used for runtime identity lookups (the IdP handles that) — serves as operator reference and disaster recovery aid. Portable with the agent folder.
+**`identity-roster.json`** — human-readable snapshot of every user identity that has successfully paired with this agent. Updated automatically after each successful pairing. Schema: `{ "<identity-id>": { "name": string } }`. Handles are an IdP concern and stay out of the roster. Not used for runtime identity lookups (the IdP handles that) — serves as operator reference and disaster recovery aid. Portable with the agent folder.
 
 **`attachments/`** — content-addressed file store for all inbound and outbound media. Blobs are stored at `{hash[0:2]}/{hash}.{ext}` (SHA-256 content hash with 2-character prefix directory). Deduplication is automatic — identical files produce the same hash. Mounted read-only at `/attachments` in the container. The agent accesses files via paths embedded in `[Attachment]` message tags. Attachment metadata (label, hash, MIME type, size) is stored in the `attachments` JSON column on `agent.db` message rows.
 
@@ -985,7 +1015,7 @@ Channels are the interface contract: when Agent A can reach Agent B's `sales-que
 | Conversation (`io`) | `i` + `o` | Persistent, bidirectional. Either side can message at any time. This is what humans have with agents today. |
 | Request/Response (`qa`) | `q` + `a` | Transactional one-shot. One side initiates a query, the other responds once. Only the structured `<cast:answer>` tag routes back — bare text output is blocked. |
 | Request (fire-and-forget) | `r` + `a` | Sender issues a `<cast:request>` with no response expected; receiver accepts via its existing `a` bit and sees the `<cast:request>` tag in its formatted inbound (so it knows not to compose `<cast:answer>`). Intent distinguished from query at the payload-tag level. |
-| Push (`ph`) | `p` (sender) + `h` (target) | Cross-agent push via `conversation__push_to_channel`. The sender's current participant (typically the human) becomes the target's conversation participant; the target hosts the conversation with that human. Three-check model: receiver also requires the originating user to have `i` on the target channel. |
+| Push (`ph`) | `p` (sender side) + `h` (target side), both keyed on the user | Cross-agent push via `conversation__push_to_channel`. The sender's current participant (typically the human) becomes the target's conversation participant; the target hosts the conversation with that human. Both `p` and `h` are grants on the originating user (`u:<id>`), not on the peer agent. The agents are conduits. Three-check model: receiver also requires that user to have `i` on the target channel. |
 
 Conversation and request/response are distinct security surfaces. Giving an agent `q` on a channel means it can send bounded queries. Giving it `i` means it can have an ongoing conversation — a much larger surface.
 
@@ -996,7 +1026,7 @@ Conversation and request/response are distinct security surfaces. Giving an agen
 | Agent A queries Agent B on channel X | A has `q` for B | B has `a` for A on X |
 | Agent B responds to A's query | — (system-routed, requestId validated) | — |
 | Agent A sends a fire-and-forget request to B on X | A has `r` for B | B has `a` for A on X |
-| Agent A pushes to Agent B on X | A has `p` for B | B has `h` for A on X AND originating user has `i` on X (three-check) |
+| Agent A pushes to Agent B on X | A has `p` for the originating user on X | B has `h` for the originating user on X AND that same user has `i` on X (three-check) |
 | Human messages agent on X | — | Agent has `i` for human on X |
 | Agent messages human | Agent has `o` for human | — |
 | Agent A messages Agent B on X | A has `o` for B | B has `i` for A on X |

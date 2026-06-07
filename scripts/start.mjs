@@ -3,12 +3,14 @@
  *
  * Quickstart entrypoint. On a clean clone, runs `pnpm install`, builds the
  * web-ui and server bundle, builds the agent container image, then starts
- * the bundled server. On re-run after `git pull`, detects what's stale via
- * mtime + version checks and rebuilds only what's needed.
+ * the bundled server. On re-run after `git pull`, detects what's stale —
+ * mtime checks for the server bundle, a content-hash receipt tag for the
+ * agent image (see packages/agent-runner/image-hash.mjs) — and rebuilds
+ * only what's needed.
  *
  * Plain .mjs (not .ts) so it runs on a clean clone with just Node — no tsx
- * dep needed. The trade is: no type checking, no shared helpers. Acceptable
- * for ~150 lines of glue.
+ * dep needed. The trade is: no type checking, and shared helpers must stay
+ * plain .mjs (scripts/lib/). Acceptable for ~150 lines of glue.
  *
  * Counterpart: `scripts/dev.ts` is the contributor path (tsx watch, hot
  * reload on Cast source). This is the user path (stable bundled runtime).
@@ -21,6 +23,8 @@ import { delimiter, join } from 'path';
 import { ensureChromium } from './lib/ensure-chromium.mjs';
 import { waitForReady } from './lib/port-ready.mjs';
 import { resolveAgentsDir, resolveConfigDir } from './lib/resolve-paths.mjs';
+import { run } from './lib/run.mjs';
+import { computeImageHash, sentinelTag } from '../packages/agent-runner/image-hash.mjs';
 
 const log = (msg) => console.log(`\x1b[36m[cast]\x1b[0m ${msg}`);
 const fail = (msg) => {
@@ -47,8 +51,8 @@ function binaryExists(name) {
   return false;
 }
 
-function imageExists(runtime) {
-  try { execSync(`${runtime} image inspect cast-agent:latest`, { stdio: 'pipe' }); return true; }
+function imageExists(runtime, ref) {
+  try { execSync(`${runtime} image inspect ${ref}`, { stdio: 'pipe' }); return true; }
   catch { return false; }
 }
 
@@ -222,13 +226,13 @@ if (runtime === 'container') {
 // The latter handles `git pull` that bumped versions.
 if (!existsSync('node_modules')) {
   log('Installing dependencies (first run)...');
-  execSync('pnpm install', { stdio: 'inherit' });
+  run('pnpm install', 'Dependency install');
 } else if (existsSync('pnpm-lock.yaml')) {
   const lockMtime = statSync('pnpm-lock.yaml').mtimeMs;
   const nmMtime = statSync('node_modules').mtimeMs;
   if (lockMtime > nmMtime) {
     log('Lockfile changed — refreshing dependencies...');
-    execSync('pnpm install', { stdio: 'inherit' });
+    run('pnpm install', 'Dependency refresh');
   }
 }
 
@@ -268,16 +272,30 @@ if (!needsBundle) {
 }
 if (needsBundle) {
   log('Building web-ui...');
-  execSync('pnpm --filter @getcast/web-ui build', { stdio: 'inherit' });
+  run('pnpm --filter @getcast/web-ui build', 'Web-ui build');
   log('Bundling server (≈30s)...');
-  execSync('pnpm bundle', { stdio: 'inherit' });
+  run('pnpm bundle', 'Server bundle');
 }
 
 // --- 5. Agent container image ----------------------------------------------
 
-if (!imageExists(runtime)) {
-  log(`Building agent container image on ${runtime} (~2 min on first run)...`);
-  execSync('node packages/agent-runner/build.mjs', { stdio: 'inherit' });
+// Staleness check: build.mjs staples a receipt tag (cast-agent:src-<hash of
+// build inputs>) onto every default-tag build. If the receipt for the inputs
+// on disk right now is absent, the store holds no image built from them —
+// missing and stale collapse into the same probe, and a pre-receipt store
+// (v0.1.0) migrates itself with one rebuild. :latest stays the run tag.
+// Skipped when the operator points the server at a custom image — rebuilding
+// cast-agent would be wasted work. (CAST_RUNTIME from .env files isn't
+// honored here: these scripts don't parse .env, and partially honoring the
+// shell var would let the check and build.mjs resolve different runtimes.)
+const customImage = process.env.CONTAINER_IMAGE && process.env.CONTAINER_IMAGE !== 'cast-agent:latest';
+if (!customImage && !imageExists(runtime, sentinelTag(computeImageHash()))) {
+  if (imageExists(runtime, 'cast-agent:latest')) {
+    log(`Agent image sources changed — rebuilding on ${runtime} (~2 min)...`);
+  } else {
+    log(`Building agent container image on ${runtime} (first run, ~2 min)...`);
+  }
+  run('node packages/agent-runner/build.mjs', 'Agent image build');
 }
 
 // --- 6. Ports + browser open (best-effort) ----------------------------------

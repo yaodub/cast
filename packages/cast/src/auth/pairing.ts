@@ -58,6 +58,11 @@ export function writePairedUsers(agentFolder: string, users: Record<string, Reco
 const PairingCodeSchema = z.object({
   consumed: z.boolean().optional(),
   for_handle: z.string().min(1),
+  /** Channel the redeemed code grants `io` on. `.default('default')` makes an
+   *  in-flight code minted before this field existed narrow gracefully to the
+   *  `default` channel on redemption — which is exactly the right migration of
+   *  the old wholesale `*: io` grant, with no code invalidation. */
+  channel: z.string().min(1).default('default'),
   expires: z.string().optional(),
 });
 
@@ -86,10 +91,11 @@ export function writePairingCodes(agentFolder: string, codes: Record<string, z.i
 const CODE_EXPIRY_MS = 30 * 60 * 1000; // 30 minutes
 
 /**
- * Generate a 6-digit pairing code locked to a specific handle.
+ * Generate a 6-digit pairing code locked to a specific handle and channel.
+ * Redeeming the code grants `io` on that channel (default `default`).
  * Writes to `state/pairing-codes.json`. Returns the code string.
  */
-export function generatePairingCode(agentFolder: string, handle: string): string {
+export function generatePairingCode(agentFolder: string, handle: string, channel = 'default'): string {
   const codes = readPairingCodes(agentFolder);
 
   // Revoke any existing unconsumed code for this handle
@@ -107,6 +113,7 @@ export function generatePairingCode(agentFolder: string, handle: string): string
 
   codes[code] = {
     for_handle: handle,
+    channel,
     expires: new Date(Date.now() + CODE_EXPIRY_MS).toISOString(),
   };
   writePairingCodes(agentFolder, codes);

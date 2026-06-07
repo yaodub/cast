@@ -133,17 +133,17 @@ export async function createAgentTemplate(name?: string, opts: { dir?: string } 
       private: true,
       dependencies: {
         'cron-parser': '^5.5.0',
-        'dotenv': '^16.4.7',
       },
     });
 
+    // Secrets the service needs are declared here (`secrets` field) and land
+    // in the agent's config/ext/service/secrets.json via the admin UI.
     writeJson(path.join(serviceDir, 'manifest.json'), {
       name,
       version: '0.1.0',
       jobs: [],
     });
 
-    fs.writeFileSync(path.join(serviceDir, '.env.example'), '');
     fs.writeFileSync(path.join(serviceDir, 'src', 'index.ts'), SERVICE_SKELETON);
   }
 

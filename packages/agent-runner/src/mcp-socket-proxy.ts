@@ -85,10 +85,22 @@ function createUnixSocketFetch(socketPath: string) {
 
 type McpProxyResult = { sdkServer: ReturnType<typeof createSdkMcpServer>; close: () => Promise<void> };
 
+/** Per-call context the runner attests onto service tool calls as MCP `_meta`.
+ *  Mirrors the canonical `participant`/`channelName` fields in agent-schema's
+ *  container-io.ts (no cross-import — process boundary). */
+export type CallMeta = { participant?: string; channelName?: string; conversationKey?: string };
+
+/** Returns the current `CallMeta`, read at call time so it tracks the spawn's
+ *  conversation. Only passed for the service socket — never the host or external
+ *  servers (the host already has the participant; external servers must not see
+ *  internal identities). */
+type GetCallMeta = () => CallMeta | undefined;
+
 /** Connect to an MCP server, discover tools, and build an in-process SDK proxy. */
 async function buildProxyFromTransport(
   transport: StreamableHTTPClientTransport,
   serverName: string,
+  getCallMeta?: GetCallMeta,
 ): Promise<McpProxyResult> {
   const client = new Client({ name: `${serverName}-proxy`, version: '1.0.0' });
   await client.connect(transport);
@@ -109,7 +121,10 @@ async function buildProxyFromTransport(
       description: tool.description || '',
       inputSchema: shape,
       handler: async (args: Record<string, unknown>) => {
-        const result = await client.callTool({ name: tool.name, arguments: args });
+        const _meta = getCallMeta?.();
+        const result = await client.callTool(
+          _meta ? { name: tool.name, arguments: args, _meta } : { name: tool.name, arguments: args },
+        );
         return result as CallToolResult;
       },
     };
@@ -134,12 +149,13 @@ async function buildProxyFromTransport(
 export async function createMcpSocketProxy(
   socketPath: string,
   serverName: string,
+  getCallMeta?: GetCallMeta,
 ): Promise<McpProxyResult> {
   const transport = new StreamableHTTPClientTransport(
     new URL('http://localhost/mcp'), // hostname ignored — socket path determines target
     { fetch: createUnixSocketFetch(socketPath) as unknown as typeof globalThis.fetch }, // Node http.request → fetch bridge for Unix sockets
   );
-  return buildProxyFromTransport(transport, serverName);
+  return buildProxyFromTransport(transport, serverName, getCallMeta);
 }
 
 /**
@@ -150,7 +166,8 @@ export async function createMcpSocketProxy(
 export async function createMcpTcpProxy(
   url: string,
   serverName: string,
+  getCallMeta?: GetCallMeta,
 ): Promise<McpProxyResult> {
   const transport = new StreamableHTTPClientTransport(new URL(url));
-  return buildProxyFromTransport(transport, serverName);
+  return buildProxyFromTransport(transport, serverName, getCallMeta);
 }

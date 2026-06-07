@@ -34,7 +34,7 @@
  * at schema parse: a violating acl.json fails to parse and `checkAcl` returns deny.
  *
  * Semantics:
- *   - `local` identity always has full access (operator)
+ *   - operator tier always has full access (`isOperatorTier`)
  *   - owner identity always has full access
  *   - acl.json present → look up peer + channel → return bits
  *   - acl.json missing → deny all (secure by default)
@@ -42,7 +42,7 @@
  */
 import { z } from 'zod';
 
-import { extractIdentity } from './address.js';
+import { extractIdentity, isAgent, isOperatorTier } from './address.js';
 import {
   getConsoleInfraGrants,
   getManagerReceiverGrants,
@@ -96,7 +96,7 @@ const AGENT_PEER_ALLOWED_BITS = 'qra';
 
 export const AclSchema = z
   .object({
-    owner: z.string().default('local'),
+    owner: z.string().default('operator'),
     peers: z.record(PeerKeySchema, PeerChannelSchema).default({}),
     reject_message: z.string().nullable().default(null),
   })
@@ -148,12 +148,52 @@ function resolveAclPeers(bus: Bus, peers: Record<string, Record<string, string>>
   return out;
 }
 
+/**
+ * Shared peer-resolution substrate. Reads `config/acl.json`, parses it, and
+ * merges the operator-authored config peers over the paired-users grants — the
+ * single table that BOTH `checkAcl` (authorization) and `membershipBits` (room
+ * placement) read from, so the two decisions are structurally unable to drift.
+ * Returns null when there is no acl.json or it fails to parse — callers treat
+ * that as deny / member-of-nothing (secure by default).
+ */
+function resolveMergedPeers(
+  bus: Bus,
+  agentFolder: string,
+): { peers: Record<string, Record<string, string>>; owner: string; rejectMessage: string | null } | null {
+  const raw = readText(agentPath(agentFolder, 'config', 'acl.json'));
+  if (!raw) return null;
+  try {
+    const acl = AclSchema.parse(JSON.parse(raw));
+    const peers = { ...readPairedUsers(agentFolder), ...resolveAclPeers(bus, acl.peers) };
+    // Close the alias loophole: the parse-time agent-bit restriction
+    // (AclSchema.superRefine) runs on RAW keys, so a config alias that resolves
+    // to an agent (e.g. "billing" → a:<guid>) escapes it. Re-apply the
+    // restriction post-normalization — any a: identity carrying a non-qra bit
+    // fails the file closed (return null → deny-all / member-of-nothing),
+    // identical to how a canonical-keyed violation rejects the file at parse.
+    for (const [key, channels] of Object.entries(peers)) {
+      if (!isAgent(key)) continue;
+      for (const bits of Object.values(channels)) {
+        if ([...bits].some((b) => !AGENT_PEER_ALLOWED_BITS.includes(b))) {
+          logger.warn({ agentFolder, key }, 'Agent peer carries forbidden bits (alias loophole) — denying access');
+          return null;
+        }
+      }
+    }
+    return { peers, owner: normalizePeerKey(bus, acl.owner), rejectMessage: acl.reject_message };
+  } catch (err) {
+    // Parse error → deny (fail closed)
+    logger.warn({ agentFolder, err }, 'Failed to parse acl.json — denying access');
+    return null;
+  }
+}
+
 /** Look up permission bits for a resolved address on a given channel. */
 export function checkAcl(bus: Bus, agentFolder: string, resolvedAddress: string, channel?: string): AclResult {
   const identity = extractIdentity(resolvedAddress);
 
-  // Local operator always has full access
-  if (identity === 'local') {
+  // Operator tier always has full access
+  if (isOperatorTier(resolvedAddress)) {
     return { bits: ALL_BITS, rejectMessage: null };
   }
 
@@ -182,24 +222,16 @@ export function checkAcl(bus: Bus, agentFolder: string, resolvedAddress: string,
     return { bits, rejectMessage: null };
   }
 
-  const aclPath = agentPath(agentFolder, 'config', 'acl.json');
-  const raw = readText(aclPath);
-  if (!raw) {
-    // No ACL file → deny all external access (secure by default)
+  const merged = resolveMergedPeers(bus, agentFolder);
+  if (!merged) {
+    // No ACL file or parse error → deny all external access (secure by default)
     return { bits: '', rejectMessage: null };
   }
-  try {
-    const acl = AclSchema.parse(JSON.parse(raw));
-    const pairedUsers = readPairedUsers(agentFolder);
-    const resolvedConfigPeers = resolveAclPeers(bus, acl.peers);
-    const mergedPeers = { ...pairedUsers, ...resolvedConfigPeers };
-    const resolvedOwner = normalizePeerKey(bus, acl.owner);
-    return checkAclConfig({ ...acl, owner: resolvedOwner, peers: mergedPeers }, identity, channel ?? 'default');
-  } catch (err) {
-    // Parse error → deny (fail closed)
-    logger.warn({ agentFolder, err }, 'Failed to parse acl.json — denying access');
-    return { bits: '', rejectMessage: null };
-  }
+  return checkAclConfig(
+    { owner: merged.owner, peers: merged.peers, reject_message: merged.rejectMessage },
+    identity,
+    channel ?? 'default',
+  );
 }
 
 /**
@@ -231,24 +263,106 @@ export function lookupDescriptorAcl(
 
 /** Get all channel permissions for a peer from an agent's ACL. Returns undefined if peer not found. */
 export function getPeerChannels(bus: Bus, agentFolder: string, peerId: string): { name: string; bits: string }[] | undefined {
-  const raw = readText(agentPath(agentFolder, 'config', 'acl.json'));
-  if (!raw) return undefined;
-  try {
-    const acl = AclSchema.parse(JSON.parse(raw));
-    const identity = extractIdentity(peerId);
-    const resolvedOwner = normalizePeerKey(bus, acl.owner);
-    if (identity === 'local' || resolvedOwner === identity) {
-      return [{ name: '*', bits: ALL_BITS }];
-    }
-    const pairedUsers = readPairedUsers(agentFolder);
-    const peers = { ...pairedUsers, ...resolveAclPeers(bus, acl.peers) };
-
-    const peerChannels = peers[identity];
-    if (!peerChannels) return undefined;
-    return Object.entries(peerChannels).map(([name, bits]) => ({ name, bits }));
-  } catch {
-    return undefined;
+  const merged = resolveMergedPeers(bus, agentFolder);
+  if (!merged) return undefined;
+  const identity = extractIdentity(peerId);
+  if (isOperatorTier(peerId) || merged.owner === identity) {
+    return [{ name: '*', bits: ALL_BITS }];
   }
+  const peerChannels = merged.peers[identity];
+  if (!peerChannels) return undefined;
+  return Object.entries(peerChannels).map(([name, bits]) => ({ name, bits }));
+}
+
+/**
+ * Concrete room placement for an identity on ONE named channel. Reads the SAME
+ * merged-peers table `checkAcl` authorizes from (via `resolveMergedPeers`), so
+ * the two cannot drift — but deliberately omits every widening rule
+ * `checkAcl` / `checkAclConfig` apply:
+ *   - NO `local` / owner `ALL_BITS` short-circuit (`checkAcl` local branch,
+ *     `checkAclConfig` owner branch, `getPeerChannels` owner branch) — the
+ *     operator and the owner are placed room-by-room like anyone else, so
+ *     standing alone they are members of nothing;
+ *   - NO prefix-glob (`a:*`, `console:*`) expansion — a glob is a capability
+ *     grant, not a concrete placement;
+ *   - NO `*` channel-wildcard fallback (`checkAclConfig`'s non-infra branch) —
+ *     placement must be on THIS room, not "any room".
+ * Net: the operator and any unplaced identity resolve to '' → member of nothing.
+ * Used only by the cross-conversation push chokepoint, never for authorization.
+ */
+export function membershipBits(bus: Bus, agentFolder: string, resolvedAddress: string, channel: string): string {
+  const merged = resolveMergedPeers(bus, agentFolder);
+  if (!merged) return '';
+  return merged.peers[extractIdentity(resolvedAddress)]?.[channel] ?? '';
+}
+
+/**
+ * Concrete room placements for ONE identity — `membershipBits` inverted from
+ * "is X placed in room Y?" to "which rooms is X placed in?". Reads the SAME
+ * merged-peers table (`resolveMergedPeers`) and applies the SAME exclusions:
+ * no `*` channel-wildcard rows (a capability fallback, not a placement), no
+ * `__*` infra channels (code-declared, never disk membership), no operator /
+ * owner god-mode (standing alone they are placed nowhere), and the
+ * exact-identity lookup never falls back to a prefix glob. Invariant: every
+ * row returned here is confirmed by `membershipBits(..., row.channel)`.
+ */
+export function listPlacedChannels(
+  bus: Bus,
+  agentFolder: string,
+  resolvedAddress: string,
+): { channel: string; bits: string }[] {
+  const merged = resolveMergedPeers(bus, agentFolder);
+  if (!merged) return [];
+  const placements = merged.peers[extractIdentity(resolvedAddress)];
+  if (!placements) return [];
+  return Object.entries(placements)
+    .filter(([channel, bits]) => bits !== '' && channel !== '*' && !channel.startsWith('__'))
+    .map(([channel, bits]) => ({ channel, bits }));
+}
+
+/**
+ * Concrete members of ONE channel — the other inversion of `membershipBits`
+ * ("who is placed in room Y?"). Same table, same exclusions: prefix-glob peer
+ * keys (`a:*`, `console:*`) are capability grants, not placements, and are
+ * skipped; only rows naming EXACTLY this channel count (no `*` fallback);
+ * `__*` infra channels enumerate as empty. The operator tier and the
+ * configured owner appear only when concretely placed, like anyone else.
+ * Rows include peer agents (`a:` identities holding `a`) — callers split
+ * user/peer downstream. Used by the discovery read surface, never for
+ * authorization.
+ */
+export function listChannelMembers(
+  bus: Bus,
+  agentFolder: string,
+  channel: string,
+): { identity: string; bits: string }[] {
+  if (channel === '*' || channel.startsWith('__')) return [];
+  const merged = resolveMergedPeers(bus, agentFolder);
+  if (!merged) return [];
+  const members: { identity: string; bits: string }[] = [];
+  for (const [identity, channels] of Object.entries(merged.peers)) {
+    if (identity.endsWith(':*')) continue;
+    const bits = channels[channel];
+    if (bits) members.push({ identity, bits });
+  }
+  return members;
+}
+
+/**
+ * Whether an identity holds operator/owner full access — the two `ALL_BITS`
+ * short-circuits in `checkAcl` (the operator tier via `isOperatorTier`, the
+ * configured `owner`). This is the authorization-tier counterpart to
+ * `membershipBits`: these identities are authorized everywhere yet are members
+ * of no specific room (`membershipBits` returns '' for them). The
+ * cross-conversation push chokepoint uses it so the operator/owner can push
+ * (god-mode) even though they are members of nothing — without it, the
+ * room-membership path would wrongly deny them.
+ */
+export function isOperatorOrOwner(bus: Bus, agentFolder: string, resolvedAddress: string): boolean {
+  const identity = extractIdentity(resolvedAddress);
+  if (isOperatorTier(resolvedAddress)) return true;
+  const merged = resolveMergedPeers(bus, agentFolder);
+  return merged != null && merged.owner === identity;
 }
 
 // ---------------------------------------------------------------------------

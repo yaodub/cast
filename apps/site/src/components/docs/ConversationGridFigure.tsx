@@ -61,7 +61,7 @@ export function ConversationGridFigure({ rows, cols, pinned, cells = [], arrow, 
       >
         {pinned && (
           <text x={16} y={18} font-size={11} style={{ fill: 'var(--fg-subtle)', letterSpacing: '0.03em' }}>
-            {`▸ ${pinned} · held fixed`}
+            {`▸ ${pinned}`}
           </text>
         )}
 

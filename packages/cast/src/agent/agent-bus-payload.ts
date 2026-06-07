@@ -56,6 +56,13 @@ export const AgentBusPayloadSchema = z.discriminatedUnion('type', [
     declaredName: z.string().optional(),
     attachments: z.array(AttachmentSchema).optional(),
     routing: RoutingSchema.optional(),
+    /**
+     * Per-turn source wire (`tg:12345`, `web:abc`) — gateway-stamped delivery
+     * metadata, deliberately top-level (NOT in `RoutingSchema`, which feeds
+     * `RouteContext`). Consumed only at the bus-handler boundary (pairing);
+     * it must never enter conversation state, the prompt, or any tool result.
+     */
+    sourceHandle: z.string().optional(),
   }),
   /**
    * Cross-agent push. Carries the correlation `requestId` minted by the
@@ -120,9 +127,13 @@ export const AgentBusPayloadSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('pairing'),
     code: z.string(),
+    /** Source wire of the pairing message — what the code binds to. See `ingested.sourceHandle`. */
+    sourceHandle: z.string().optional(),
   }),
   z.object({
     type: z.literal('pairing_request'),
+    /** Source wire requesting a code. See `ingested.sourceHandle`. */
+    sourceHandle: z.string().optional(),
   }),
   z.object({
     type: z.literal('approval_response'),

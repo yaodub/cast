@@ -29,8 +29,8 @@ import type { Transport, TransportContext, TransportDefinition } from './schema.
 /**
  * Address-prefix namespaces no routed transport may claim. Two categories:
  *
- * - **System bus prefixes** (`u`, `local`) — gateway routing, not transport-owned.
- * - **Bespoke transport prefixes** (`cli`, `web`, `admin`, `console`) — owned by
+ * - **System bus prefix** (`u`) — gateway routing, not transport-owned.
+ * - **Bespoke transport prefixes** (`local`, `cli`, `web`, `admin`, `console`) — owned by
  *   always-instantiated bespoke transports that don't go through this registry.
  *   The `console:` namespace also hosts virtual agents (`console:config-manager`).
  *

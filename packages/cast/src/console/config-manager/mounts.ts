@@ -15,7 +15,7 @@
  *
  * Explicitly NOT mounted:
  *   - secrets/ — private keypairs (cryptographic material; never to LLM context)
- *   - ext per-extension .env files — extension credentials
+ *   - config/ext/* secrets.json files — extension + service credentials
  *   - <CAST_CONFIG_DIR>/routes.json — inline transport tokens
  *   - state/ — conversation logs are PII-heavy and cross-agent read alongside
  *     mutation capability is a context-leakage footgun. State-browser endpoint

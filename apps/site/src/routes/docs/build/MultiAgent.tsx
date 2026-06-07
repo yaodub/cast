@@ -371,8 +371,10 @@ export function BuildMultiAgent() {
       <FigPH />
 
       <Callout kind="security">
-        Cast's security model requires the user to be paired with both agents before
-        a hand-over can land. Without that prior pairing, the push drops.
+        The hand-over rides on the user's grants, not the agents'. The user needs a push
+        grant on the source, plus host-push and membership on the receiver. The operator
+        confers those. Pairing alone gives membership, not the push bits. The agents are
+        pure conduits, and without the user's grants the push drops.
       </Callout>
 
       <H2>ACL is configuration, not design</H2>

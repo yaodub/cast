@@ -46,6 +46,10 @@ vi.mock('./config.js', async () => {
     PUSH_ROW_TTL_MS: 5 * 60 * 1000,
     PUSH_ROW_SWEEP_MS: 60 * 1000,
     EGRESS_REFRESH_MS: 5 * 60 * 1000,
+    OUTBOUND_DELIVERY_TTL_MS: 6 * 60 * 60 * 1000,
+    OUTBOUND_RETRY_BACKOFF_MS: [5_000, 30_000, 120_000, 600_000],
+    OUTBOUND_ACK_REDUE_MS: 600_000,
+    OUTBOUND_WORKER_TICK_MS: 30_000,
   };
 });
 
@@ -79,9 +83,13 @@ vi.mock('./logger.js', () => ({
 
 vi.mock('./lib/utils.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./lib/utils.js')>();
+  // Counter, not Date.now() — uniqueness is part of generateId's contract.
+  // Packet ids key gateway.db rows (INSERT OR REPLACE), so a same-millisecond
+  // collision silently clobbers a pending packet and loses its delivery.
+  let idCounter = 0;
   return {
     ...actual,
-    generateId: (prefix: string) => `${prefix}-test-${Date.now()}`,
+    generateId: (prefix: string) => `${prefix}-test-${++idCounter}`,
     writeAtomic: vi.fn(),
   };
 });
@@ -322,9 +330,9 @@ function makeHost(folder: string, name?: string): Host {
   };
 }
 
-// Test ACL: owner is local (CLI users), paired test users for delegation targets
+// Test ACL: owner is the operator tier (CLI users), paired test users for delegation targets
 const TEST_ACL = JSON.stringify({
-  owner: 'local',
+  owner: 'operator',
   peers: {
     'u:tg-target@test': { '*': 'io' },
     'u:tg-12345@test': { '*': 'io' },
@@ -379,7 +387,8 @@ function agentGuid(folder: string): string {
 
 async function setupPipeline(hosts: Array<{ folder: string; host: Host }>, mockTransport: Transport) {
   const localBus = new Bus();
-  const gw = new MessageGateway({ bus: localBus, transports: () => [mockTransport], identityProvider: LocalIdentityProvider._createTest() });
+  const idp = LocalIdentityProvider._createTest();
+  const gw = new MessageGateway({ bus: localBus, transports: () => [mockTransport], identityProvider: idp });
 
   for (const { folder, host } of hosts) {
     const id = agentGuid(folder);
@@ -399,7 +408,7 @@ async function setupPipeline(hosts: Array<{ folder: string; host: Host }>, mockT
   localBus.register('cli', gw, 'prefix');
   localBus.register('tg', gw, 'prefix');
 
-  return { bus: localBus, gateway: gw };
+  return { bus: localBus, gateway: gw, idp };
 }
 
 // --- Test suite ---
@@ -544,12 +553,12 @@ describe('Session Pipeline Integration', () => {
     });
 
     // Route first message on default channel from user1
-    testMgr.route(addrTest, 'local/cli:user1', '[user1]: task A');
+    testMgr.route(addrTest, 'cli:user1', '[user1]: task A');
     expect(containerMocks).toHaveLength(1);
     await containerMocks[0].started;
 
     // Route second message on default channel from user2 — different source → different session key
-    testMgr.route(addrTest, 'local/cli:user2', '[user2]: task B');
+    testMgr.route(addrTest, 'cli:user2', '[user2]: task B');
     expect(containerMocks).toHaveLength(2);
     await containerMocks[1].started;
 
@@ -588,12 +597,12 @@ describe('Session Pipeline Integration', () => {
     testBus.register('cli', testGw, 'prefix');
 
     // Default channel is shared — all messages go to same session
-    testMgr.route(addrTest, 'local/cli:user1', '[user]: hello');
+    testMgr.route(addrTest, 'cli:user1', '[user]: hello');
     expect(containerMocks).toHaveLength(1);
     await containerMocks[0].started;
 
     // Second message on same channel → piped via IPC (not a new session)
-    testMgr.route(addrTest, 'local/cli:user1', '[user]: follow-up');
+    testMgr.route(addrTest, 'cli:user1', '[user]: follow-up');
     expect(containerMocks).toHaveLength(1);
 
     // Stdin pipe write should have happened
@@ -778,7 +787,7 @@ describe('Session Pipeline Stress', () => {
       expect(mockTransport.send).toHaveBeenCalledTimes(5);
     });
 
-    // Post-task 94: idle-with-runner conversations hold slots for swap-eviction
+    // Idle-with-runner conversations hold slots for swap-eviction
 // + warm restart. Active count is bounded by capacity, not by completion.
 expect(slotPool.active).toBeLessThanOrEqual(2);
   });
@@ -806,7 +815,7 @@ expect(slotPool.active).toBeLessThanOrEqual(2);
     // Finish first container
     containerMocks[0].finish('alpha done');
 
-    // Post-task 94: alpha's conv → idle-with-runner (holds slot for warm
+    // alpha's conv → idle-with-runner (holds slot for warm
     // restart). No new waiters → no swap. activeCount stays at 2.
     // Verify gamma response arrives via vi.waitFor on transport.send instead.
     await vi.waitFor(() => {
@@ -820,7 +829,7 @@ expect(slotPool.active).toBeLessThanOrEqual(2);
       expect(mockTransport.send).toHaveBeenCalledTimes(3);
     });
 
-    // Post-task 94: idle-with-runner conversations hold slots for swap-eviction
+    // Idle-with-runner conversations hold slots for swap-eviction
 // + warm restart. Active count is bounded by capacity, not by completion.
 expect(slotPool.active).toBeLessThanOrEqual(2);
   });
@@ -856,11 +865,11 @@ expect(slotPool.active).toBeLessThanOrEqual(2);
     });
   });
 
-  // Skipped after task 94 Phase C — this stress test interleaves 4 container
-  // lifecycles with mid-spawn swap-evictions. The new model's slot-hold-on-
-  // idle behavior changes the timing of outputs vs evictions, leaving 2 of 4
-  // outputs unobserved by the mock transport. Plan-12 e2e covers the same
-  // semantics under real container timing (scenarios 5, 7, 12).
+  // Skipped after the runner-model rework — this stress test interleaves 4
+  // container lifecycles with mid-spawn swap-evictions. The new model's
+  // slot-hold-on-idle behavior changes the timing of outputs vs evictions,
+  // leaving 2 of 4 outputs unobserved by the mock transport. E2e runs cover
+  // the same semantics under real container timing.
   it.skip('messages arriving while containers finish — no double-start or lost messages', async () => {
     const { address: addrA } = hostList[0];
     const { address: addrB } = hostList[1];
@@ -906,7 +915,7 @@ expect(slotPool.active).toBeLessThanOrEqual(2);
     containerMocks[3].finish('alpha-2 done');
 
     await vi.waitFor(() => {
-      // Post-task 94: idle-with-runner conversations hold slots for swap-eviction
+      // Idle-with-runner conversations hold slots for swap-eviction
 // + warm restart. Active count is bounded by capacity, not by completion.
 expect(slotPool.active).toBeLessThanOrEqual(2);
     });
@@ -939,7 +948,7 @@ expect(slotPool.active).toBeLessThanOrEqual(2);
     containerMocks[2].finish('gamma ok');
 
     await vi.waitFor(() => {
-      // Post-task 94: idle-with-runner conversations hold slots for swap-eviction
+      // Idle-with-runner conversations hold slots for swap-eviction
 // + warm restart. Active count is bounded by capacity, not by completion.
 expect(slotPool.active).toBeLessThanOrEqual(2);
     });
@@ -953,12 +962,12 @@ expect(slotPool.active).toBeLessThanOrEqual(2);
     const mgr = localBus.resolve(agentAddr) as AgentManager;
 
     // Session A: default channel, user1
-    mgr.route(agentAddr, 'local/cli:user1', '[user1]: working on stuff');
+    mgr.route(agentAddr, 'cli:user1', '[user1]: working on stuff');
     expect(containerMocks).toHaveLength(1);
     await containerMocks[0].started;
 
     // Session B: default channel, user2 — different source → different key → runs concurrently
-    mgr.route(agentAddr, 'local/cli:user2', '[user2]: urgent task');
+    mgr.route(agentAddr, 'cli:user2', '[user2]: urgent task');
     expect(containerMocks).toHaveLength(2);
     await containerMocks[1].started;
 
@@ -966,7 +975,7 @@ expect(slotPool.active).toBeLessThanOrEqual(2);
     expect(slotPool.active).toBe(2);
 
     // More messages for A — piped via IPC
-    mgr.route(agentAddr, 'local/cli:user1', '[user1]: also do this');
+    mgr.route(agentAddr, 'cli:user1', '[user1]: also do this');
 
     // No close messages sent (no preemption)
     const closeMessages = vi.mocked(writeToAgent).mock.calls.filter(
@@ -980,7 +989,7 @@ expect(slotPool.active).toBeLessThanOrEqual(2);
 
     await vi.waitFor(() => {
       expect(mockTransport.send).toHaveBeenCalledTimes(2);
-      // Post-task 94: idle-with-runner conversations hold slots for swap-eviction
+      // Idle-with-runner conversations hold slots for swap-eviction
 // + warm restart. Active count is bounded by capacity, not by completion.
 expect(slotPool.active).toBeLessThanOrEqual(2);
     });
@@ -994,7 +1003,11 @@ expect(slotPool.active).toBeLessThanOrEqual(2);
 describe('Delegation Routing', () => {
   let localBus: Bus;
   let localGateway: MessageGateway;
+  let localIdp: LocalIdentityProvider;
   let mockTransport: Transport;
+  let tgTargetId: string;
+  let tg12345Id: string;
+  let tgSameUserId: string;
 
   const hostA = makeHost('alpha');
   const addrA = agentGuid('alpha');
@@ -1013,12 +1026,32 @@ describe('Delegation Routing', () => {
     const pipeline = await setupPipeline([{ folder: 'alpha', host: hostA }], mockTransport);
     localBus = pipeline.bus;
     localGateway = pipeline.gateway;
+    localIdp = pipeline.idp;
+
+    // Transport-blind contract: delegation targets are bare identities; the
+    // gateway recovers the wire from the IdP at delivery time (resolveWire).
+    // Register the wires (minting real ids) and grant those ids `io`.
+    tgTargetId = localIdp.register('tg:target', 'Target User').id;
+    tg12345Id = localIdp.register('tg:12345', 'Weather User').id;
+    tgSameUserId = localIdp.register('tg:same-user', 'Same User').id;
+    const delegationAcl = JSON.stringify({
+      owner: 'operator',
+      peers: {
+        [tgTargetId]: { '*': 'io' },
+        [tg12345Id]: { '*': 'io' },
+        [tgSameUserId]: { '*': 'io' },
+      },
+    });
+    vi.mocked(fs.readFileSync).mockImplementation((pth: unknown) => {
+      if (typeof pth === 'string' && pth.includes('acl.json')) return delegationAcl;
+      return '{}';
+    });
   });
 
   it('route() with targetParticipant sends response to that address', async () => {
     const mgr = localBus.resolve(addrA) as AgentManager;
     // Self-addressed (matches production scheduler — sender = agent's own address)
-    mgr.route(addrA, addrA, 'do something', { targetParticipant: 'u:tg-target@test/tg:target' });
+    mgr.route(addrA, addrA, 'do something', { targetParticipant: tgTargetId });
 
     expect(containerMocks).toHaveLength(1);
     await containerMocks[0].started;
@@ -1035,7 +1068,7 @@ describe('Delegation Routing', () => {
 
   it('ingestDelegation persists DelegatePkt and routes with replyTo', async () => {
     localGateway.ingestDelegation(
-      'local/cli:operator', addrA, 'u:tg-12345@test/tg:12345', 'check weather', 'scheduler',
+      'cli:operator', addrA, tg12345Id, 'check weather', 'scheduler',
     );
 
     expect(containerMocks).toHaveLength(1);
@@ -1056,13 +1089,13 @@ describe('Delegation Routing', () => {
 
     // Two messages from different extension senders but same targetParticipant
     // should resolve to the same conversation key (and pipe via IPC)
-    mgr.route(addrA, 'ext:email', 'first task', { targetParticipant: 'u:tg-same-user@test/tg:same-user' });
+    mgr.route(addrA, 'ext:email', 'first task', { targetParticipant: tgSameUserId });
 
     expect(containerMocks).toHaveLength(1);
     await containerMocks[0].started;
 
     // Second message from different ext sender but same targetParticipant
-    mgr.route(addrA, 'ext:web-fetch', 'second task', { targetParticipant: 'u:tg-same-user@test/tg:same-user' });
+    mgr.route(addrA, 'ext:web-fetch', 'second task', { targetParticipant: tgSameUserId });
 
     // Should NOT spawn a new container — same conversation key
     expect(containerMocks).toHaveLength(1);
@@ -1163,7 +1196,7 @@ describe('Delivery Tracking', () => {
     const pktId = 'pkt-recovery-test';
     storePacket(pktId, {
       type: 'conversation',
-      from: 'local/cli:user1',
+      from: 'cli:user1',
       to: addrA,
       text: 'recover me',
       timestamp: new Date().toISOString(),
@@ -1173,7 +1206,7 @@ describe('Delivery Tracking', () => {
     const deliveredId = 'pkt-already-delivered';
     storePacket(deliveredId, {
       type: 'conversation',
-      from: 'local/cli:user1',
+      from: 'cli:user1',
       to: addrA,
       text: 'already handled',
       timestamp: new Date().toISOString(),
@@ -1241,7 +1274,7 @@ describe('Error reporting', () => {
 
     // Give the spawn pipeline time to settle.
     await vi.waitFor(() => {
-      // Post-task 94: idle-with-runner conversations hold slots for swap-eviction
+      // Idle-with-runner conversations hold slots for swap-eviction
 // + warm restart. Active count is bounded by capacity, not by completion.
 expect(slotPool.active).toBeLessThanOrEqual(2);
     });
@@ -1315,7 +1348,7 @@ expect(slotPool.active).toBeLessThanOrEqual(2);
 
   // --- Bugs B + C: auth retry coverage + auth-exhausted user message ---
 
-  // Phase J.1: Conversation owns auth-retry policy AND emits structured
+  // Conversation owns auth-retry policy AND emits structured
   // `auth/retry` + `auth/retry_exhausted` events through the SpawnHooks
   // `logEvent` channel. The user-facing fallback fires once via
   // `runner.emitAuthExhausted(hooks)` and the spawn cycle terminates with
@@ -1482,7 +1515,7 @@ describe('FIFO Queue', () => {
     containerMocks[3].finish('user done');
 
     await vi.waitFor(() => {
-      // Post-task 94: idle-with-runner conversations hold slots for swap-eviction
+      // Idle-with-runner conversations hold slots for swap-eviction
 // + warm restart. Active count is bounded by capacity, not by completion.
 expect(slotPool.active).toBeLessThanOrEqual(2);
     });

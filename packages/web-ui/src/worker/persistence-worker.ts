@@ -58,7 +58,7 @@ import type { Subscription } from './subscription-registry';
 // when the browser fully reloads against a fresh bundle.
 // ---------------------------------------------------------------------------
 
-const WORKER_VERSION = 'phase-3.3-2026-05-15';
+const WORKER_VERSION = 'v0.2.0';
 
 // Wire chat WS handling: any newly-created ConnectionState gets its transport here.
 installChatLifecycle();

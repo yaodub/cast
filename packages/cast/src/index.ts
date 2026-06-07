@@ -95,18 +95,22 @@ aggregateTransportManuals({
 /**
  * Address-prefix list the gateway claims as its routing surface.
  *
- * `u` and `local` are system bus prefixes (resolved-identity routing,
- * agent routing). `cli` and `web` are owned by the always-instantiated
- * bespoke `LocalTransport` / `WebTransport`. Routed-transport prefixes
- * (`tg`, `email`, future) come from the registry — adding a new routed
- * transport requires no edit here.
+ * `u` is the system bus prefix: resolved user identities (`u:guid/handle`)
+ * route to the gateway by it. `cli`, `admin`, and `web` are owned by the
+ * always-instantiated bespoke `LocalTransport` / `ConsoleTransport` /
+ * `WebTransport`. Routed-transport prefixes (`tg`, `email`, future) come from
+ * the registry — adding a new routed transport requires no edit here.
  *
- * `ConsoleTransport` (owns `admin:`) is intentionally NOT in this list:
- * `admin:` is registered separately via the admin-server bootstrap path,
- * not the gateway prefix-routing surface.
+ * `admin` routes here so an agent's reply to the operator (a bare `admin:local`
+ * participant) can prefix-route to the gateway, which fans it out to the
+ * `ConsoleTransport` via `ownsParticipant`. Admin *inbound* is unaffected: it
+ * enters by a direct `ingestInbound('admin:local', …)`, never the bus.
+ *
+ * (The `local` prefix retired with the `local` identity — the operator is
+ * `cli:`/`admin:` now, so nothing addresses `local/…`. Don't re-add it.)
  */
 function busPrefixesForRouting(): string[] {
-  return ['u', 'local', 'cli', 'web', ...getRegisteredAddressPrefixes()];
+  return ['u', 'cli', 'admin', 'web', ...getRegisteredAddressPrefixes()];
 }
 
 /**
@@ -268,24 +272,39 @@ function registerAgent(
     identityProvider: idp,
     agentId: effectiveId,
     watcher: fileWatcher,
-    listSiblingAgents: () =>
-      bus
+    listSiblingAgents: () => {
+      const myChannelConfig = loadChannelsConfig(folder);
+      return bus
         .listEntities({ type: 'agent' })
         .filter((a) => a.id !== effectiveId)
         .map((a) => {
           const channels = getPeerChannels(bus, folder, a.id) ?? [];
           const peerFolder = bus.getMetadata(a.id)?.folderPath;
           const peerChannelConfig = peerFolder ? loadChannelsConfig(peerFolder) : undefined;
+          // ACL channel-namespace duality: in a peer entry, outbound bits
+          // (`q`/`r`) name the PEER's channels while inbound bits (`i`/`a`/`h`)
+          // name MY channels — so the sharded affordance must be resolved
+          // against the config that owns the row's namespace. A mixed-bits row
+          // is ambiguous (one name, two namespaces); skip the flag rather than
+          // guess.
+          const shardedFor = (ch: { name: string; bits: string }): boolean => {
+            const outbound = [...ch.bits].some((b) => 'qr'.includes(b));
+            const inbound = [...ch.bits].some((b) => 'iah'.includes(b));
+            if (outbound === inbound) return false;
+            const config = outbound ? peerChannelConfig : myChannelConfig;
+            return config?.[ch.name]?.use_sharding === true;
+          };
           return {
             canonical: a.id,
             alias: a.label,
             description: a.description,
             channels: channels.map((ch) => ({
               ...ch,
-              ...(peerChannelConfig?.[ch.name]?.use_sharding ? { sharded: true } : {}),
+              ...(shardedFor(ch) ? { sharded: true } : {}),
             })),
           };
-        }),
+        });
+    },
     containerSweep: sweepContainersForFolder,
   });
   bus.register(effectiveId, mgr, 'exact', {
@@ -656,7 +675,7 @@ async function main(): Promise<void> {
   });
 
   // Register gateway for participant prefixes (resolved + raw handles).
-  // System prefixes (`u`, `local`) and bespoke-transport prefixes (`cli`, `web`)
+  // The system prefix (`u`) and bespoke-transport prefixes (`cli`, `admin`, `web`)
   // are static; routed-transport prefixes (`tg`, `email`, future) come from
   // the registry so adding a new transport doesn't require editing this list.
   for (const prefix of busPrefixesForRouting()) {
@@ -729,7 +748,7 @@ async function main(): Promise<void> {
     // ---- Phase A: stop intake (no new traffic lands on draining agents) ----
     // Tells the admin UI a final 'shutdown' frame before closing both the SSE
     // response stream and the WebSocket — clients see a clean signal, not a
-    // TCP RST. Both transports run in parallel during the task-86 migration.
+    // TCP RST. Both transports run in parallel during the SharedWorker migration.
     await timed('close_admin_streams', async () => {
       closeAllAdminEventsStreams('server-shutdown');
       closeAllAdminEventsWebSockets('server-shutdown');
@@ -743,6 +762,12 @@ async function main(): Promise<void> {
           logger.warn({ err, prefix }, 'bus.unregister threw during shutdown');
         }
       }
+    }, logStep, trackStep);
+
+    // Stop the outbound delivery worker before transports go away — retries
+    // against disconnecting transports would only log no-wire noise.
+    await timed('stop_delivery_worker', async () => {
+      gateway.stopDeliveryWorker();
     }, logStep, trackStep);
 
     // Each transport closes its WebSocket clients with code 1001 / its IMAP
@@ -818,7 +843,7 @@ async function main(): Promise<void> {
 
   // Admin events — /api/admin/events path. Same path the SSE handler is
   // mounted on; HTTP-Upgrade vs HTTP-GET differentiates which handler runs.
-  // Both coexist during the web-ui SharedWorker migration (task 86).
+  // Both coexist during the web-ui SharedWorker migration.
   const adminEventsWss = new WebSocketServer({ noServer: true });
   router.addPath('/api/admin/events', adminEventsWss);
   setupAdminEventsWss(adminEventsWss, { bus, consoleTransport });
@@ -931,7 +956,7 @@ async function main(): Promise<void> {
       if (currentSet.has(folder)) continue;
       logger.info({ folder }, 'Agent folder removed from disk — unregistering');
       // unregisterAgent already drops bus + map + knownFolders, then awaits
-      // shutdown (post-Phase-1C ordering). The bus.unregister inside fires
+      // shutdown, in that order. The bus.unregister inside fires
       // a `deregistered` lifecycle event — server-scope consoles pick it
       // up. Fire-and-forget — reconcile is non-blocking; subsequent
       // reconciles are idempotent.
@@ -990,9 +1015,10 @@ async function main(): Promise<void> {
   const reconcileDebounced = createDebounced(reconcileAgentsDir, 250);
   watcher.onDirChange(AGENTS_DIR, () => reconcileDebounced.schedule());
 
-  // Crash recovery: re-deliver any undelivered packets (idempotent)
+  // Inbound crash recovery (idempotent). Outbound retry/expiry lives in the
+  // delivery worker — boot recovery is just its first tick.
   gateway.recoverPending();
-  await gateway.recoverUndeliveredOutbound();
+  gateway.startDeliveryWorker();
 
   // cast-services update check (startup + every 24h). Best-effort; the fetcher
   // falls back to the embedded snapshot on failure, so this never throws.

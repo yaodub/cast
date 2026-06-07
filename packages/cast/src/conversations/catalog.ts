@@ -35,7 +35,7 @@ export interface ConversationCatalogOpts {
   ttl: ConversationTtl;
   /** Single in-process event bus all materialized `Conversation` instances
    *  emit through. Hosts subscribe at scope-registration time and reach
-   *  back into per-host state from the filtered subscriber. Phase H Step 7. */
+   *  back into per-host state from the filtered subscriber. */
   eventBus: ConversationEventBus;
 }
 
@@ -47,7 +47,7 @@ export interface ConversationCatalogOpts {
  *  - `swap` — pool is saturated but an idle-with-runner victim exists; the
  *    catalog will evict it (transient ~ms window). The caller stays in
  *    `idle-no-runner` while awaiting — the bus does NOT emit `queued`
- *    because no FIFO wait is occurring from the operator's POV. Phase L.
+ *    because no FIFO wait is occurring from the operator's POV.
  *  - `queued` — pool is saturated AND no swap victim is available; this is
  *    a genuine FIFO wait. The caller transitions to `awaiting-slot` (which
  *    emits `queued{active:true}` via the bus chokepoint).

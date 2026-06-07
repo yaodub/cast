@@ -210,9 +210,9 @@ export interface ConversationView<TCtx = unknown> {
 
 /** Builds the `SpawnHooks` for a single spawn cycle of a Conversation.
  *
- *  Phase H Step 7 collapsed the per-Conversation observation surface onto
- *  `ConversationEventBus`; Phase I.8 then collapsed the residual
- *  single-field `ConversationCallbacks` interface to a direct function
+ *  The per-Conversation observation surface collapsed onto
+ *  `ConversationEventBus`, and the residual single-field
+ *  `ConversationCallbacks` interface collapsed to a direct function
  *  type. Hosts pass a closure that captures their per-host wiring (bus,
  *  agentDb, store, etc.) and returns the hooks the Conversation hands to
  *  `Runner.spawn`. The TCtx generic flows through so the typed
@@ -234,7 +234,7 @@ export interface ConversationOpts {
   ttl: ConversationTtl;
   buildSpawnHooks: BuildSpawnHooks;
   /** In-process event bus — the sole observation surface for Conversation
-   *  transitions (Phase H Step 7). Required: the legacy `ConversationCallbacks`
+   *  transitions. Required: the legacy `ConversationCallbacks`
    *  observation entries (`onQueued`, `onRunnerRemoved`, `onExpiryComplete`)
    *  were removed and every emit now lands on this bus. */
   eventBus: ConversationEventBus;
@@ -339,7 +339,7 @@ export class Conversation implements ExpirableConversation {
    *  state count without changing the behavioral surface. Env staleness is
    *  genuinely an orthogonal *queryable tag*, not a state. */
   private _envStale = false;
-  /** R4 re-entrance lock for `_teardown` (Phase I.9): the in-flight Promise
+  /** R4 re-entrance lock for `_teardown`: the in-flight Promise
    *  of the active teardown, or null when no teardown is running. Concurrent
    *  callers receive this Promise and await it rather than re-entering the
    *  teardown body. Replaces the previous `_destroying = boolean` pattern —
@@ -390,7 +390,7 @@ export class Conversation implements ExpirableConversation {
   /** Per-conversation spawn context. Set by `deliver(text, opts, ctx)` and
    *  `scheduleTtl(..., ctx)`. The factory closure receives this when
    *  constructing a runner — replaces the side-channel `routeContexts` map
-   *  AgentManager held during Phase C. Stored as `unknown` internally; the
+   *  AgentManager held previously. Stored as `unknown` internally; the
    *  per-scope binding type-checks ctx at the façade boundary. */
   private _ctx: unknown = undefined;
 
@@ -611,8 +611,8 @@ export class Conversation implements ExpirableConversation {
     if (this.runner === null) return;
     // Drain — env-stale invalidation can fire while the runner has an
     // active turn (the deliver that triggered it carries new input).
-    // Immediate SIGTERM here was the trigger of the 696K-iteration
-    // feedback loop incident.
+    // Immediate SIGTERM here would kill an in-flight turn mid-write and
+    // can drive a respawn feedback loop.
     void this._teardown({
       mode: { kind: 'drain', timeoutMs: DEFAULT_DRAIN_TIMEOUT_MS },
       target: 'idle-no-runner',
@@ -745,7 +745,7 @@ export class Conversation implements ExpirableConversation {
    * the slot race to a parallel caller and is now falling through to the
    * FIFO queue. Belatedly transition to `awaiting-slot` so the bus emits
    * `queued{active:true}` and reflects the runtime truth (we are now
-   * genuinely FIFO-queued, not in a transient swap window). Phase L.
+   * genuinely FIFO-queued, not in a transient swap window).
    *
    * Guarded so concurrent shutdown / teardown wins: only fires the
    * transition if we are still in `idle-no-runner` and not terminating.
@@ -903,7 +903,7 @@ export class Conversation implements ExpirableConversation {
       //   operator's POV. If the swap-eviction loses the slot race to a
       //   parallel caller, the catalog calls `markSwapFellThrough()` to
       //   belatedly transition to `awaiting-slot` so the bus event still
-      //   fires for the (now-genuine) FIFO wait. Phase L.
+      //   fires for the (now-genuine) FIFO wait.
       // - queued: pool is saturated AND no swap victim is available. This
       //   is a genuine FIFO wait — transition to `awaiting-slot` up front
       //   (firing `queued{active:true}`), await, then to `running` (firing
@@ -957,9 +957,12 @@ export class Conversation implements ExpirableConversation {
       this.setState('running');
       this.slot = slot;
 
-      // Construct the runner via host-provided factory.
-      const ccSessionId = this.store.getActiveConversation(this.key)?.ccSessionId;
-      const isNewConversation = ccSessionId === undefined;
+      // Construct the runner via host-provided factory. The whole
+      // construction window — store read, factory, hooks — runs guarded:
+      // the slot is already claimed and the state is 'running', so an
+      // uncaught throw here would otherwise escape `void runSpawnCycle()`
+      // as an unhandled rejection, leaving a running/null-runner zombie
+      // holding a pool slot with a never-settling deliver resolver.
       this._envStale = false;
       this.authRetries = 0;
       // Snapshot the ownership generation for this cycle. Captured before the
@@ -968,29 +971,53 @@ export class Conversation implements ExpirableConversation {
       // teardown can intervene between here and the synchronous assignment
       // below, so this is the epoch at which this cycle owns the conversation.
       const epoch = this.spawnEpoch;
-      const runner = this.factory(
-        {
-          scope: this.scope,
-          conversationKey: this.key,
-          ccSessionId,
-          isNewConversation,
-          onIdle: () => this.handleRunnerIdle(epoch),
-          isExpired: () => this.isExpired,
-          requestCleanup: (cleanup) => {
-            // SIDE EFFECT: Fire-and-forget kick into Conversation.expire.
-            // The runner calls this from its single-shot self-expire branch;
-            // we must not await the full cleanup turn here (it runs inside the
-            // same spawn() loop the runner is currently in). Conversation.expire
-            // does its synchronous phase flip + pipe before the first await,
-            // so by the time control returns to the caller, `this.isExpired`
-            // reflects the new state.
-            void this.expire(cleanup);
+      let runner;
+      let hooks;
+      try {
+        const ccSessionId = this.store.getActiveConversation(this.key)?.ccSessionId;
+        const isNewConversation = ccSessionId === undefined;
+        runner = this.factory(
+          {
+            scope: this.scope,
+            conversationKey: this.key,
+            ccSessionId,
+            isNewConversation,
+            onIdle: () => this.handleRunnerIdle(epoch),
+            isExpired: () => this.isExpired,
+            requestCleanup: (cleanup) => {
+              // SIDE EFFECT: Fire-and-forget kick into Conversation.expire.
+              // The runner calls this from its single-shot self-expire branch;
+              // we must not await the full cleanup turn here (it runs inside the
+              // same spawn() loop the runner is currently in). Conversation.expire
+              // does its synchronous phase flip + pipe before the first await,
+              // so by the time control returns to the caller, `this.isExpired`
+              // reflects the new state.
+              void this.expire(cleanup);
+            },
           },
-        },
-        this._ctx,
-      );
-      this.runner = runner;
-      const hooks = this.buildSpawnHooks(this.view());
+          this._ctx,
+        );
+        this.runner = runner;
+        hooks = this.buildSpawnHooks(this.view());
+      } catch (err) {
+        // Construction failed before any container existed. At-most-once:
+        // drop the triggering message rather than letting the teardown kick
+        // re-enter and re-throw on the same poisoned input (a deterministic
+        // construction error would loop until the spawn-rate panic cap).
+        // The caller still observes the failure — the resolver settles
+        // {ok:false} below and push dispatch echoes a <cast:rejection>.
+        const errMsg = err instanceof Error ? err.message : String(err);
+        this.drainMailbox();
+        // Feed the abnormal-exit cap: a factory that throws constructing the
+        // runner is the same failure class as a runner that dies in spawn().
+        // `hooks` may itself be the throw site, so no logEvent is available.
+        this.recordSpawnOutcome(
+          { type: 'terminal-error', error: errMsg, outputSent: false },
+          undefined,
+        );
+        await this.handleTerminalError(errMsg);
+        return;
+      }
 
       // Spawn loop. Drains the mailbox into each prompt; the Conversation
       // drives respawn — the runner does not loop internally (spec D1). Per
@@ -1176,7 +1203,7 @@ export class Conversation implements ExpirableConversation {
    * through this single method. The joint update happens atomically — the
    * synchronous prefix claims state + nulls refs before any await yields.
    *
-   * Re-entrance is structural (Phase I.9): the first caller claims
+   * Re-entrance is structural: the first caller claims
    * `_teardownInFlight` with the in-flight Promise; concurrent callers
    * receive that same Promise back and await it instead of re-entering the
    * body. No double-teardown is possible by construction. Each await of the
@@ -1449,7 +1476,7 @@ export class Conversation implements ExpirableConversation {
    * construction rather than from scattered code paths.
    *
    * Bus emits:
-   * - `queued{active:true}` on entering `'awaiting-slot'`. Per Phase L,
+   * - `queued{active:true}` on entering `'awaiting-slot'`.
    *   `'awaiting-slot'` means FIFO-queued (not "any wait") — the catalog's
    *   swap-eviction path stays in `'idle-no-runner'` while awaiting, so
    *   `queued` does not fire for transient sub-millisecond pressure

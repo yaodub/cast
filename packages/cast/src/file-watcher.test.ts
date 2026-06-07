@@ -141,7 +141,7 @@ describe('FileWatcher.onAnyChange', { retry: 2 }, () => {
 });
 
 /**
- * Phase 2A: onDirChange — subscribe to addDir / unlinkDir events on direct
+ * onDirChange — subscribe to addDir / unlinkDir events on direct
  * children of the watched root. Drives the AGENTS_DIR snapshot reconciler.
  */
 describe('FileWatcher.onDirChange', { retry: 2 }, () => {

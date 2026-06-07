@@ -115,9 +115,6 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.26.0
         version: 1.26.0(zod@3.25.76)
-      dotenv:
-        specifier: ^16.4.7
-        version: 16.6.1
       simple-oauth2:
         specifier: ^5.1.0
         version: 5.1.0

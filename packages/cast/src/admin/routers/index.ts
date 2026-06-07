@@ -9,6 +9,7 @@ import { authRouter } from './auth.js';
 import { routeRouter } from './route.js';
 import { serverRouter } from './server.js';
 import { extensionRouter } from './extension/index.js';
+import { serviceRouter } from './service.js';
 import { mcpServersRouter } from './mcp-servers.js';
 import { hostRouter } from './host.js';
 import { modelsRouter } from './models.js';
@@ -22,6 +23,7 @@ export const appRouter = router({
   route: routeRouter,
   server: serverRouter,
   extension: extensionRouter,
+  service: serviceRouter,
   mcpServers: mcpServersRouter,
   host: hostRouter,
   models: modelsRouter,

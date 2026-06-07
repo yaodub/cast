@@ -1,14 +1,14 @@
 /**
  * ConversationRunner — process/SDK plumbing for a single agent conversation.
  *
- * Two-state machine (post-Phase G collapse):
+ * Two-state machine:
  *
  *   Container state: 'running' (spawn loop active, process alive or
  *                    short-lived gap before/after) → 'closing' (destroy in flight).
  *   Lifecycle phase: new → active → expired (monotone forward).
  *
  * State writes route through `setState()` — the single chokepoint mirrors
- * the D10 discipline `Conversation.setState` enforces. Direct `this._state =`
+ * the discipline `Conversation.setState` enforces. Direct `this._state =`
  * writes are not allowed.
  *
  * The Conversation owns the mailbox, the spawn-cycle driver, the respawn
@@ -36,6 +36,7 @@ import {
   MAX_VALIDATION_FAILURES,
   sessionCastSocketPath,
 } from '../config.js';
+import type { IdentityId } from '../auth/address.js';
 import type { ContainerOutput } from '../container/container-runner.js';
 import {
   getResolvedAuth,
@@ -43,6 +44,7 @@ import {
   runContainerAgent,
   writeToAgent,
 } from '../container/container-runner.js';
+import { applyBuiltinToolPolicy } from '../container/sdk-surface.js';
 import { resolveModel } from '../lib/resolve-model.js';
 import { formatTagAttrs, stripFrameworkTags, validateAgentOutput, type ParsedOutput } from '../lib/format.js';
 import { systemFormatError } from './agent-spawn-hooks.js';
@@ -110,22 +112,6 @@ export function formatFallbackMessage(reason: FallbackReason): string {
   }
 }
 
-/**
- * Built-in WebFetch policy, gated on network egress. The tool fetches
- * client-side from the container, so network mode is its boundary:
- *  - `full`: keep it — the agent can already reach any host (Bash, any MCP
- *    tool), and it's the only fetch path for full-net authoring consoles.
- *  - else: remove it — Cast routes fetching through the host-side web-fetch
- *    extension; under the firewall the built-in only fails or bypasses the gate.
- * Returns the disabled-tools list to send to the runner.
- */
-export function applyWebFetchPolicy(
-  disabledTools: readonly string[],
-  containerNetwork: string | undefined,
-): string[] {
-  return containerNetwork === 'full' ? [...disabledTools] : [...disabledTools, 'WebFetch'];
-}
-
 /** Wait for a child process to exit, up to `timeoutMs`. Resolves `true`
  *  if the process exited within the window, `false` if the timer fired
  *  first. No-op when the process has already exited. Used by `destroy()`
@@ -149,7 +135,7 @@ async function waitForExit(
 }
 
 /**
- * Runner state machine (post-Phase G collapse).
+ * Runner state machine.
  *
  * - `running`: the runner's owning spawn cycle is active. Constructed runners
  *   start here. The process may not yet be alive (between construction and
@@ -320,9 +306,9 @@ export function gateUserHooks(hooks: SpawnHooks, isExpired: () => boolean): Gate
   return gated as GatedSpawnHooks;
 }
 
-// SpawnResult was a flat-interface alias for what `spawn()` returns. J.3b
-// promotes the conversation-side `SpawnOutcome` to a discriminated union;
-// the runner returns that union directly. The intermediate alias is gone.
+// SpawnResult was a flat-interface alias for what `spawn()` returns. The
+// conversation-side `SpawnOutcome` is now a discriminated union; the runner
+// returns that union directly. The intermediate alias is gone.
 
 export interface ConversationRunnerOpts {
   host: Host;
@@ -333,9 +319,10 @@ export interface ConversationRunnerOpts {
   /** Pre-resolved channel config (set by AgentManager). */
   channel: AgentChannel;
   channelName: string;
-  participant?: string;
-  /** Delegation target: when set, outbound responses route to this address instead of participant. */
-  replyTo?: string;
+  /** Branded — validated at the route chokepoint (or narrowed at a read boundary) before reaching runner construction. */
+  participant?: IdentityId;
+  /** Delegation target: when set, outbound responses route to this address instead of participant. Same brand contract. */
+  replyTo?: IdentityId;
   qualifier?: string;
   /** Seed session ID (overrides DB lookup on first spawn). */
   sessionIdOverride?: string;
@@ -429,8 +416,8 @@ export class ConversationRunner {
   readonly address: string;
   readonly channelName: string;
   readonly channel: AgentChannel;
-  readonly participant: string | undefined;
-  readonly replyTo: string | undefined;
+  readonly participant: IdentityId | undefined;
+  readonly replyTo: IdentityId | undefined;
   readonly qualifier: string | undefined;
   readonly systemPrompt: string | undefined;
 
@@ -572,7 +559,7 @@ export class ConversationRunner {
     return this._state === 'closing';
   }
 
-  /** Whether `destroy()` has been called. Post-G.5 this is folded into state:
+  /** Whether `destroy()` has been called. This is folded into state:
    *  `closing` IS "destroyed." `finishSpawnResult` reads this to skip post-
    *  spawn teardown when the catalog's swap-evict already handled it. */
   get isDestroyed(): boolean {
@@ -648,7 +635,7 @@ export class ConversationRunner {
    * pipe accepted it, `false` if the container can't take it (state is
    * `closing`, auth-error fence is up, or the underlying write failed).
    *
-   * Post-G.5: this is the only message-delivery surface on the runner. The
+   * This is the only message-delivery surface on the runner. The
    * Conversation owns queueing — on `false`, it falls back to mailbox + a
    * fresh spawn cycle via `handleRunnerDiedInline`.
    *
@@ -845,8 +832,9 @@ export class ConversationRunner {
       });
       const containerAttachments = toContainerAttachments(allAttachments);
 
-      // Disable built-in WebFetch except on full-network spawns (see applyWebFetchPolicy).
-      const disabledTools = applyWebFetchPolicy(this.disabledTools, this.containerNetwork);
+      // Merge the unconditional built-in disallow list, plus WebFetch except on
+      // full-network spawns (see applyBuiltinToolPolicy).
+      const disabledTools = applyBuiltinToolPolicy(this.disabledTools, this.containerNetwork);
 
       const output = await runContainerAgent(
         host,
@@ -865,6 +853,7 @@ export class ConversationRunner {
           workdir: this.workdir,
           containerNetwork: this.containerNetwork,
           channelName: this.channelName,
+          participant: this.participant,
           phase: this.isExpired ? 'cleanup' : undefined,
         },
         (proc, containerName) => {
@@ -908,7 +897,7 @@ export class ConversationRunner {
         }
       }
 
-      // Auth-error replay is now Conversation-side (spec G.4). Conversation
+      // Auth-error replay is now Conversation-side. Conversation
       // tracks piped messages in `pipedThisSpawn` and re-queues them to its
       // mailbox on abnormal end; the runner no longer carries a parallel
       // replay buffer.
@@ -961,7 +950,7 @@ export class ConversationRunner {
         this.mcpCloser = null;
       }
 
-      // Container has exited. Two cases (post-G.5):
+      // Container has exited. Two cases:
       // - closing (destroy/close): state is 'closing'. Conversation already
       //   knows to drop us. No-op.
       // - running: runner is dropped by its owning Conversation when it sees
@@ -996,7 +985,7 @@ export class ConversationRunner {
    * `destroy(mode)` (which optionally drains with a bounded await + SIGTERM
    * fallback) instead — `close()` exists only for internal callers that
    * need to signal close without owning teardown (single-shot finalization
-   * inside the runner). See incident: the prior `_teardown(graceful: true)`
+   * inside the runner). The prior `_teardown(graceful: true)`
    * path called `close()` then immediately `destroy()` with no await,
    * making the "graceful" label inaccurate; now folded into
    * `destroy({kind:'drain'})`.
@@ -1013,7 +1002,7 @@ export class ConversationRunner {
 
   /**
    * Notify the Conversation that the agent-runner emitted `lifecycle/idle`.
-   * Post-G.5: the runner's own state stays `'running'` — the "between turns"
+   * The runner's own state stays `'running'` — the "between turns"
    * notion is Conversation-side (`idle-with-runner`). We just fire the hook.
    *
    * Single-shot and expired paths skip — their containers exit instead of
@@ -1027,8 +1016,8 @@ export class ConversationRunner {
   }
 
   /**
-   * The single write site for `_state`. Mirrors `Conversation.setState`
-   * (the D10 pattern). Self-transitions short-circuit; the union is
+   * The single write site for `_state`. Mirrors `Conversation.setState`.
+   * Self-transitions short-circuit; the union is
    * monotone-forward (`running → closing` is the only legal edge).
    */
   private setState(target: ContainerState): void {
@@ -1046,7 +1035,7 @@ export class ConversationRunner {
   /**
    * Tear down the live process and MCP socket.
    *
-   * Post-G.5: the quiesce rule lives at the Conversation layer — destroy is
+   * The quiesce rule lives at the Conversation layer — destroy is
    * only called when Conversation state is `'idle-with-runner'`
    * (see `Conversation.yieldSlot`). The runner just enforces idempotence
    * here: if already `'closing'`, no-op.
@@ -1503,9 +1492,21 @@ export class ConversationRunner {
   // Private helpers
   // =========================================================================
 
-  /** The participant address for outbound routing. Uses replyTo (delegation target) if set. */
+  /**
+   * The participant address for outbound routing and message-log writes.
+   * Uses replyTo (delegation target) if set.
+   *
+   * Structurally-valid-by-construction: `buildRunnerOpts` feeds this exact
+   * expression (`replyTo || participant`, agent-manager.ts) through the
+   * `isParticipantAddress` guard in prompt assembly BEFORE any Runner is
+   * constructed — a runner only exists if the guard passed. So this value is
+   * always a bare participant (user identity / agent / operator surface),
+   * never a compound or raw wire; downstream writers trust it without
+   * re-validating (validate at the edge, trust inside). Keep the expression
+   * in lockstep with the guard input — divergence reopens the gap.
+   */
   private get participantAddress(): string {
-    const addr = this.replyTo ?? this.participant;
+    const addr = this.replyTo || this.participant;
     if (!addr) {
       throw new Error(`No participant for conversation ${this.conversationKey}`);
     }

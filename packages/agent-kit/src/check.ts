@@ -9,6 +9,7 @@ import {
   CapabilitiesSchema,
   McpServerSecretsSchema,
   ProvisionsSchema,
+  ServiceManifestSchema as BaseServiceManifestSchema,
   isUnlocked,
 } from '@getcast/agent-schema/v1';
 
@@ -18,14 +19,15 @@ import { computeTemplateServiceChecksum } from './build-service.js';
 
 const TemplateManifestSchema = z.object({ version: z.string().optional() }).passthrough();
 
-const ServiceManifestSchema = z.object({
-  entry: z.string().optional(),
+// Shared base contract (entry, name, version, secrets) + the skeleton's job
+// declarations, which are an agent-kit concern rather than part of the spec.
+const ServiceManifestSchema = BaseServiceManifestSchema.extend({
   jobs: z.array(z.object({
     name: z.string(),
     schedule: z.string(),
     script: z.string(),
   })).default([]),
-}).passthrough();
+});
 
 export async function checkAgentTemplate(templateName: string, agentsDir = DEFAULT_AGENTS_DIR): Promise<void> {
   const templateDir = path.join(AGENT_TEMPLATES_DIR, templateName);

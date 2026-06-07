@@ -504,7 +504,7 @@ describe('FileWatchService — boot persistence', () => {
   });
 });
 
-describe('FileWatchService — TTL prune + restore re-anchor (Phase 5)', () => {
+describe('FileWatchService — TTL prune + restore re-anchor', () => {
   it('prunes expired entries at boot and re-persists registry', async () => {
     const { memoryDir } = setupAgentLayout();
     appendFeedRow(path.join(memoryDir, 'live.jsonl'), 'k', {});

@@ -47,11 +47,13 @@ output. The ACL reference Configure reads is
 `/ref/manuals/console/cross-agent-acl.md`.
 
 `show_co_participants` is not part of edge wiring. It's a
-`channel.json` flag about an agent's awareness of *its own*
-participants — it neither opens nor blocks a cross-agent edge, and a
-receiver hosting many callers sets it on the receiving channel
-independent of any grant. See `primitives.md` § Co-participant
-visibility.
+`channel.json` flag that enables or disables whether a channel's own
+members see and reach each other — it neither opens nor blocks a
+cross-agent edge. The connection to ACL is one step removed: the `a`
+grant places the peer on the channel, and this flag then governs
+whether the members placed there are open to one another. A receiver
+hosting many callers sets it on the receiving channel independent of
+any single grant. See `primitives.md` § Co-participant visibility.
 
 ## The three files that must agree
 
@@ -292,8 +294,10 @@ aliases at lookup time and they stay valid across key rotation.
 
 For a `p/h` push, also name the **pairing step** the operator owes:
 *"Each user must pair with billing on its `support` channel via
-/pair before pushes from triage will land."* Configure does not write
-the user-side `i` grant; the pairing flow does.
+/pair before pushes from triage will land."* The user-side `i` grant
+comes from that pairing, not from composing the edge. How Configure
+consolidates it with the `h` host grant is a Configure mechanic (see
+`/ref/manuals/console/cross-agent-acl.md` § The p/h merge gotcha).
 
 Do not propose the ACL JSON yourself. The bit pair, the directional
 rule, and the worked JSON examples live in

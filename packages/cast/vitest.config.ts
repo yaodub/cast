@@ -16,6 +16,7 @@ export default defineConfig({
     include: [
       'src/**/*.test.ts',
       '../agent-runner/src/**/*.test.ts',
+      '../agent-service-base/src/**/*.test.ts',
       '../ext-whatsapp/src/**/*.test.ts',
       '../ext-calendar/src/**/*.test.ts',
       '../ext-email/src/**/*.test.ts',

@@ -40,7 +40,7 @@ import { appendFeedRow } from '../lib/feed-format.js';
 import { readAgentConfig } from '../container/container-runner.js';
 import type { ResourceEntry } from '@getcast/agent-schema/v1';
 
-import { isUser } from '../auth/address.js';
+import { isParticipantAddress, isReadTier, isSystemContext } from '../auth/address.js';
 import { guardsForActor, intraAgentInfraGuard } from '../console/shared/delegation-guards.js';
 import { parseChannelString, parseOperatorChannel } from '../conversations/parse-channel.js';
 import type { LocalPushActor, PushActor } from './push-actor.js';
@@ -107,12 +107,48 @@ export type DeliverToAgent = (
 
 type RejectionHandler = (requestId: string, returnToAgent: string, returnToChannel: string, returnToParticipant: string, reason: string) => Promise<void>;
 
+/** One row of `listChannelsFor` — a room joined with the caller's standing. */
+export interface ChannelStandingRow {
+  name: string;
+  /** The caller's placement bits, or the literal 'owner' for read-tier rows
+   *  (read-tier standing is the tier itself, not a placement). */
+  bits: string;
+  sharded?: boolean;
+  /** `show_co_participants !== false` on this channel. */
+  postureOpen: boolean;
+  /** Placement names a channel with no config dir — operator-authored ACL
+   *  intent, surfaced for debugging rather than silently dropped. */
+  missingConfig?: boolean;
+}
+
+/**
+ * Result of `listRoomMembers`. `scope: 'registry'` is the read-tier flat view
+ * (channel omitted — exact timestamps, scheduler back-compat); `scope: 'room'`
+ * renders recency at day granularity (presence-oracle trim). The deny arm
+ * carries wording byte-identical to the push verdict's channel denial —
+ * channel existence is not an oracle.
+ */
+export type RoomMembersResult =
+  | {
+      ok: true;
+      scope: 'room' | 'registry';
+      members: { identity: string; kind: 'user' | 'peer'; lastActive?: string }[];
+      /** Policy-keyed, population-blind posture note. */
+      postureNote?: string;
+    }
+  | { ok: false; reason: string };
+
 export interface McpServerDeps {
   /** Same-agent cross-channel delivery (fire-and-forget). */
   deliverToChannel?: DeliverToChannel;
   /** Cross-agent delivery via bus (fire-and-forget). */
   deliverToAgent?: DeliverToAgent;
-  listParticipants?: () => { address: string; last_active: string }[];
+  /** Rooms the caller is placed in (read tier: every user channel). */
+  listChannelsFor?: (caller: string | null) => ChannelStandingRow[];
+  /** Members of one room, scoped by the caller's standing — mirrors the push
+   *  verdict (`auth/conversation-context.ts`): read tier unfiltered, members
+   *  see their own rooms, everyone else gets the uniform denial. */
+  listRoomMembers?: (caller: string | null, channel: string | null) => RoomMembersResult;
   resolveAgentByLabel?: (label: string) => string | undefined;
   /** Route a rejection for a closed inbound request. */
   routeRejection?: RejectionHandler;
@@ -223,28 +259,31 @@ function handleConversationListSummaries(channel: string | undefined, ctx: ToolC
   const channels = channel ? [channel] : undefined;
   let rows = ctx.store.getConversationsWithSummaries(channels, 7 * 86400_000) ?? [];
 
-  // In user-facing context, only show the caller's own conversations
-  if (ctx.participant && isUser(ctx.participant)) {
+  // Outside the read tier (system/self ∥ machine-trusted operator surface),
+  // only show the caller's own conversations. A peer agent cell is NOT read
+  // tier (it carries a *different* agent's address), so it falls here and no
+  // longer reads other participants' summaries — closing the M2 leak. A
+  // configured `u:` owner is member-tier for reads (read ⊂ write).
+  const readTier = isReadTier(ctx.participant, ctx.agentId);
+  if (!readTier) {
     rows = rows.filter((r) => !r.participant || r.participant === ctx.participant);
   }
 
-  // Co-participant visibility: drop other participants' rows on any channel whose
-  // `show_co_participants` is off. The caller's own rows are always kept. This is a
-  // visibility control, not isolation — conversations stay per-participant regardless.
+  // No posture filter here: `show_co_participants` is a member↔member control,
+  // and the member-tier filter above already reduces the result to the caller's
+  // own rows — there is no co-participant row left for posture to drop. The
+  // read tier (the agent hosting the room, the machine-trusted operator) is not
+  // a co-participant and is deliberately exempt. Posture's live homes are the
+  // push verdict, the discovery deps, and prompt assembly.
   const channelsConfig = loadChannelsConfig(ctx.agentFolder);
-  rows = rows.filter((r) => {
-    const isOwn = !r.participant || r.participant === ctx.participant;
-    if (isOwn) return true;
-    const ch = channelsConfig[r.channel_name];
-    return ch ? ch.show_co_participants !== false : true;
-  });
 
   // Static policy note when the *current* channel hides co-participants. Keyed on
   // policy, not population, so it never reveals whether other participants exist —
   // and scoped to "this channel" rather than the whole result, since rows from
-  // other (flag-on) channels can still legitimately appear.
+  // other (flag-on) channels can still legitimately appear. Read-tier callers are
+  // exempt from the filter, so the note would be false for them — skip it.
   const currentChannelHides =
-    !!ctx.channelName && channelsConfig[ctx.channelName]?.show_co_participants === false;
+    !readTier && !!ctx.channelName && channelsConfig[ctx.channelName]?.show_co_participants === false;
   const visibilityNote =
     "Co-participant visibility is disabled on this channel; other participants' conversations on it are not shown.";
 
@@ -354,7 +393,7 @@ async function handlePushToChannel(opts: {
       callerChannel, callerParticipant, qualifier, callerQualifier,
     );
     if (!result.ok) return textResult(`Push failed: ${result.reason}`, true);
-    return textResult(`Pushed to ${args.channel} for ${callerParticipant}. id: ${result.requestId}.`);
+    return textResult(`Queued for delivery to ${args.channel}. id: ${result.requestId}. Delivery is asynchronous and at-most-once; if it fails, a cast:rejection notice referencing this id arrives on a later turn.`);
   }
   if (!deliverToAgent) return textResult('Cross-agent push is not configured.', true);
   const result = await deliverToAgent(
@@ -363,7 +402,7 @@ async function handlePushToChannel(opts: {
   );
   if (!result.ok) return textResult(`Push failed: ${result.reason}`, true);
   const viaLabel = args.target_agent ?? resolvedTarget;
-  return textResult(`Pushed to ${args.channel} for ${callerParticipant} via ${viaLabel}. id: ${result.requestId}.`);
+  return textResult(`Queued for delivery to ${args.channel} via ${viaLabel}. id: ${result.requestId}. Delivery is asynchronous and at-most-once; if it fails, a cast:rejection notice referencing this id arrives on a later turn.`);
 }
 
 /**
@@ -388,7 +427,7 @@ export function registerPushToChannelTool(
 ): void {
   server.tool(
     'conversation__push_to_channel',
-    `Push a turn into a different channel for the current participant. Opens or continues a parallel conversation for the same user; the target conversation may be cold or active. The target's runner picks up the new turn.`,
+    `Push a turn into a different channel for the current participant. Opens or continues a parallel conversation for the same user; the target conversation may be cold or active. Delivery is asynchronous and at-most-once: the tool returns once the turn is queued, not after the target processes it. If delivery fails, a cast:rejection notice referencing the returned id arrives on a later turn.`,
     {
       channel: z.string().describe('Target channel name (e.g., "default"). For sharded channels, use "name~qualifier" to address a specific sub-conversation (e.g., "research~daily").'),
       text: z.string().describe('Message content for the target channel conversation'),
@@ -458,6 +497,14 @@ async function handlePushToParticipant(opts: {
   if (!parsed.ok) return textResult(parsed.reason, true);
   const { channel, qualifier } = parsed.parsed;
 
+  // Shape gate at the tool edge: only structurally valid participant
+  // addresses proceed. Handler-level (not zod .refine) so the surfaced
+  // string is exactly this — it states the expected form and nothing about
+  // what the rejected value contained.
+  if (!isParticipantAddress(args.target_participant)) {
+    return textResult('Invalid target_participant. Use a participant identity as returned by agent__list_participants, e.g. u:abc@srv.', true);
+  }
+
   // Intra-agent only — push_to_participant has no `target_agent` argument.
   // Cross-agent + cross-participant is not a single-step primitive; use
   // r/a (request) and let the receiver's own logic decide whether to push
@@ -480,18 +527,66 @@ async function handlePushToParticipant(opts: {
     callerQualifier,
   );
   if (!result.ok) return textResult(`Push failed: ${result.reason}`, true);
-  return textResult(`Pushed to ${args.channel} for ${args.target_participant}. id: ${result.requestId}.`);
+  return textResult(`Queued for delivery to ${args.channel}. id: ${result.requestId}. Delivery is asynchronous and at-most-once; if it fails, a cast:rejection notice referencing this id arrives on a later turn.`);
+}
+
+function handleListChannels(
+  listFn: NonNullable<McpServerDeps['listChannelsFor']>,
+  ctx: ToolCtx,
+): ToolResult {
+  const rows = listFn(ctx.participant);
+  if (rows.length === 0) return textResult('No channels to list.');
+  const lines = rows.map((r) => {
+    const name = r.sharded ? `${r.name}~*` : r.name;
+    const standing = r.bits === 'owner' ? '' : ` — your access: ${r.bits}`;
+    const posture = r.postureOpen ? '' : ' [co-participant visibility off]';
+    const missing = r.missingConfig ? ' [no channel config]' : '';
+    return `- ${name}${standing}${posture}${missing}`;
+  });
+  return textResult(
+    `Channels:\n${lines.join('\n')}\n\nUse agent__list_participants with a channel name to see who is reachable there.`,
+  );
 }
 
 function handleListParticipants(
-  listFn: () => { address: string; last_active: string }[],
+  listFn: NonNullable<McpServerDeps['listRoomMembers']>,
+  ctx: ToolCtx,
+  channelArg: string | undefined,
 ): ToolResult {
-  const participants = listFn();
-  if (participants.length === 0) return textResult('No participants found.');
-  const formatted = participants
-    .map((p) => `- ${p.address} (last active: ${p.last_active})`)
-    .join('\n');
-  return textResult(`Participants:\n${formatted}`);
+  let channel: string | null;
+  if (channelArg !== undefined) {
+    const parsed = parseChannelString(channelArg);
+    if (!parsed.ok) return textResult(parsed.reason, true);
+    // Qualifier accepted and dropped — shards share the room's membership.
+    channel = parsed.parsed.channel;
+  } else {
+    // Omitted: the current channel for member-tier callers; the registry
+    // (null) for the read tier. A self-fire's cell carries a channel, but
+    // the scheduler's notify flows discover recipients beyond the firing
+    // channel's membership — "omitted = current" would blind them.
+    channel = isReadTier(ctx.participant, ctx.agentId) ? null : ctx.channelName;
+  }
+  const result = listFn(ctx.participant, channel);
+  if (!result.ok) return textResult(result.reason, true);
+
+  if (result.scope === 'registry') {
+    // Read-tier flat view — today's rendering, pinned for scheduler flows.
+    if (result.members.length === 0) return textResult('No participants found.');
+    const formatted = result.members
+      .map((p) => `- ${p.identity} (last active: ${p.lastActive})`)
+      .join('\n');
+    return textResult(`Participants:\n${formatted}`);
+  }
+
+  const lines = result.members.map((m) => {
+    if (m.kind === 'peer') return `- ${m.identity} — peer agent (request counterparty, not a push target)`;
+    const recency = m.lastActive ? `last active: ${m.lastActive}` : 'no session yet';
+    return `- ${m.identity} (${recency})`;
+  });
+  const body = lines.length === 0
+    ? `No participants are placed on channel "${channel}".`
+    : `Members of "${channel}":\n${lines.join('\n')}`;
+  return textResult(result.postureNote ? `${body}\n\n${result.postureNote}` : body);
 }
 
 
@@ -850,9 +945,9 @@ export function registerTools(server: McpServer, ctx: McpAgentContext, deps: Mcp
     };
     server.tool(
       'conversation__push_to_participant',
-      `Push a turn into another participant's conversation on this agent. The target participant's runner sees it as a new turn (intra-agent only — no target_agent option).`,
+      `Push a turn into another participant's conversation on this agent. The target participant's runner sees it as a new turn (intra-agent only — no target_agent option). Delivery is asynchronous and at-most-once: the tool returns once the turn is queued, not after the target processes it. If delivery fails, a cast:rejection notice referencing the returned id arrives on a later turn.`,
       {
-        target_participant: z.string().describe('Target participant address (use agent__list_participants to enumerate)'),
+        target_participant: z.string().describe('Target participant identity as returned by agent__list_participants (e.g. `u:abc@srv`)'),
         channel: z.string().describe('Target channel name. For sharded channels, use "name~qualifier" to address a specific sub-conversation.'),
         text: z.string().describe('Message content for the target participant conversation'),
       },
@@ -952,19 +1047,38 @@ export function registerTools(server: McpServer, ctx: McpAgentContext, deps: Mcp
 
   registerAgentPeerTools(server, ctx, deps);
 
-  // Available in two contexts: (1) system runners (no user participant) get
-  // the full participant list for service operations; (2) user runners on
-  // channels with `push_to_participant` enabled need it to discover valid
-  // target_participant values for the push tool.
-  const systemContext = !ctx.participant || !isUser(ctx.participant);
-  if (deps.listParticipants && !disabled('agent__list_participants')
-      && (systemContext || pushToParticipantEnabled)) {
-    const listFn = deps.listParticipants;
+  // Discovery tools — registration is capability-wide (every conversation
+  // cell, including peer cells, plus owner-context sockets); SCOPING lives in
+  // the deps, which mirror the push verdict's caller standing
+  // (`auth/conversation-context.ts`). A peer cell registers and sees exactly
+  // its own rooms — the M1 roster-leak closure is scope, not absence.
+  // Cell-side `disabled_tools` disarms a cell wholesale; room-side posture
+  // (`show_co_participants`) hides a room's members from member-tier callers
+  // everywhere — two different switches, both honored through the dep.
+  const systemContext = isSystemContext(ctx.participant, ctx.agentId);
+  const discoveryContext = Boolean(ctx.participant) || systemContext;
+
+  if (deps.listChannelsFor && !disabled('agent__list_channels') && discoveryContext) {
+    const listFn = deps.listChannelsFor;
+    server.tool(
+      'agent__list_channels',
+      'List the channels (rooms) on this agent where you are placed — where conversation__push_to_participant can land. Sharded channels render as `name~*`; substitute a qualifier (e.g. `name~daily`) to address a sub-conversation.',
+      {},
+      async () => handleListChannels(listFn, toolCtx),
+    );
+  }
+
+  if (deps.listRoomMembers && !disabled('agent__list_participants') && discoveryContext) {
+    const listFn = deps.listRoomMembers;
     server.tool(
       'agent__list_participants',
-      'List all participants who have previously interacted with this agent. Returns addresses and last activity timestamps.',
-      {},
-      async () => handleListParticipants(listFn),
+      'List the members of a channel you are placed in — identities in the exact form conversation__push_to_participant accepts, with last-activity recency. Omit `channel` for the current channel (the agent itself and operator surfaces get the agent-wide registry).',
+      {
+        channel: z.string().optional().describe(
+          'Channel name. Accepts `name~qualifier`; the qualifier is ignored — shards share the room\'s membership. Defaults to the current channel.',
+        ),
+      },
+      async (args) => handleListParticipants(listFn, toolCtx, args.channel),
     );
   }
 

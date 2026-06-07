@@ -147,7 +147,7 @@ export function ApiTools() {
           { value: 'Push failed: REASON', when: 'sync validation fails' },
           { value: '<cast:rejection request="ID">REASON</cast:rejection>', when: 'delivery rejected asynchronously; arrives on a later turn' },
         ]}
-        notes="Cross-agent pushes require an ACL grant from the target agent. Passing your own alias is equivalent to omitting."
+        notes="Cross-agent pushes hand the originating user to a peer agent and land only if that peer has granted the user a host-push grant. Passing your own alias is equivalent to omitting."
       />
 
       <ToolDoc
@@ -163,7 +163,7 @@ export function ApiTools() {
           { value: 'Push failed: REASON', when: 'sync validation fails' },
           { value: '<cast:rejection request="ID">REASON</cast:rejection>', when: 'delivery rejected asynchronously' },
         ]}
-        notes="Intra-agent only — no target_agent option. ACL-gated by the channel's push permissions."
+        notes="Intra-agent only, no target_agent option. The target must be a user who has paired into the target channel, and the channel must let co-participants reach each other."
       />
 
       <H2>Peer dialogue</H2>
@@ -230,12 +230,26 @@ export function ApiTools() {
       />
 
       <ToolDoc
-        name="agent__list_participants"
-        summary="List all participants who have interacted with this agent. Returns addresses and last-activity timestamps. Available to system runners and to user runners on channels where push_to_participant is enabled."
+        name="agent__list_channels"
+        summary="List the channels where this conversation's participant is placed — the rooms conversation__push_to_participant can land in. The agent itself and operator surfaces see every configured channel. Sharded channels render as name~*."
         returns={[
-          { value: 'Participants:', when: 'header line' },
-          { value: '- ADDRESS (last active: ISO_TIMESTAMP)', when: 'one per participant' },
-          { value: 'No participants found.', when: 'no participants' },
+          { value: '- CHANNEL[~*] — your access: BITS', when: 'one per placed channel; markers for visibility-off and missing config' },
+          { value: 'No channels to list.', when: 'caller is placed nowhere' },
+        ]}
+      />
+
+      <ToolDoc
+        name="agent__list_participants"
+        summary="List the members of a channel you are placed in, as identities in the exact form push_to_participant accepts, with day-level recency. Scoped by caller standing: a cell can list exactly what the push gate would let it reach, and a query outside its rooms is denied without revealing whether the channel exists. The agent itself and operator surfaces get unfiltered views — and the agent-wide registry when no channel is in play."
+        args={[
+          { name: 'channel', type: 'string', desc: 'Optional. Accepts name~qualifier (qualifier ignored — shards share membership). Omitted: the current channel for members, the registry for the agent itself and operator surfaces.' },
+        ]}
+        returns={[
+          { value: 'Members of "CHANNEL":', when: 'room view header' },
+          { value: '- IDENTITY (last active: YYYY-MM-DD | no session yet)', when: 'one per user member' },
+          { value: '- IDENTITY — peer agent (request counterparty, not a push target)', when: 'one per placed peer agent' },
+          { value: '- IDENTITY (last active: ISO_TIMESTAMP)', when: 'registry view rows (under a Participants: header)' },
+          { value: 'You are not authorized on channel "CHANNEL".', when: 'caller not placed there — same wording whether or not the channel exists' },
         ]}
       />
 

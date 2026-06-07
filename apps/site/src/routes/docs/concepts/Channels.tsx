@@ -12,7 +12,7 @@ export function ConceptsChannels() {
       lede="A channel is a named surface where conversations open. With more than one, the same agent can be approached in more than one way."
       toc={[
         { label: 'One agent, many hats' },
-        { label: "A friend's channel" },
+        { label: 'A friends channel' },
         { label: 'A peer-query endpoint' },
         { label: 'A reflection channel that runs on its own' },
         { label: "What's in a channel definition" },
@@ -21,14 +21,16 @@ export function ConceptsChannels() {
     >
       <H2>One agent, many hats</H2>
       <p style={proseP}>
-        Same identity, same memory — but a different hat on each channel. On a friend's
-        channel, a guarded second entrypoint. On a peer's, a one-shot endpoint for
-        another agent. On a scheduled channel, a quiet reflection. What varies per
-        channel: lifetime, tools, prompt, boundary scripts, model, and who can reach it.
-        The three patterns below make this concrete.
+        The agent has a single identity and memory, but it is able to wear a different
+        "hat" on each entrypoint to the agent. For example, a <code>friends</code> channel
+        can be a guarded way for friends to contact your agent. A <code>peer-query</code> channel
+        can be a one-shot communication endpoint for another agent. A{' '}
+        <code>reflection</code> channel can be a quiet space where the agent works on
+        itself on a schedule. Each channel has its own lifetime, tools, prompt, boundary
+        scripts, model, and who can reach it. The three patterns below make this concrete.
       </p>
 
-      <H2>A friend's channel</H2>
+      <H2>A friends channel</H2>
       <p style={proseP}>
         You might want to let a friend talk to your personal agent — get help with
         something, ask a question — without giving them the same surface you use
@@ -41,13 +43,13 @@ export function ConceptsChannels() {
         when to push a question back to you.
       </p>
 
-      <Code lang="bash" title="channel: friend">{`# blueprint/channels/friend/channel.json
+      <Code lang="bash" title="channel: friends">{`# blueprint/channels/friends/channel.json
 {
   "idle_timeout": 1800000,
   "lifecycle": "full"
 }
 
-# blueprint/channels/friend/prompt.md
+# blueprint/channels/friends/prompt.md
 You're talking to one of my friends, not me. Be helpful and warm.
 You can share what I've marked as shareable in /memory/; otherwise
 default to private — answer in general terms or politely decline.
@@ -62,7 +64,7 @@ my reply before answering.`}</Code>
 
       <Callout kind="security">
         <strong>Soft partition, not a security boundary.</strong> The agent on the
-        friend channel is the same agent that knows everything you know — the prompt
+        friends channel is the same agent that knows everything you know — the prompt
         above is a behavioral instruction the LLM follows, not enforced isolation. A
         persuasive friend can still talk the agent into sharing things you wouldn't
         want shared. For real isolation (different memory, different identity), run a
@@ -157,7 +159,7 @@ decisions made, surprises, anything worth remembering next time.
         <tbody>
           <tr>
             <td style={proseTd}>Lifetime</td>
-            <td style={proseTd}><code>channel.json :: idle_timeout</code></td>
+            <td style={proseTd}><code>channel.json</code> <code>idle_timeout</code></td>
             <td style={proseTd}>
               Persistent (positive integer = milliseconds of idle before close) or
               single-shot (<code>null</code>).
@@ -165,7 +167,7 @@ decisions made, surprises, anything worth remembering next time.
           </tr>
           <tr>
             <td style={proseTd}>Lifecycle</td>
-            <td style={proseTd}><code>channel.json :: lifecycle</code></td>
+            <td style={proseTd}><code>channel.json</code> <code>lifecycle</code></td>
             <td style={proseTd}>
               Which boundary scripts fire: <code>none</code>,{' '}
               <code>bootstrap-only</code>, <code>cleanup-only</code>, or{' '}
@@ -174,7 +176,7 @@ decisions made, surprises, anything worth remembering next time.
           </tr>
           <tr>
             <td style={proseTd}>Tool narrowing</td>
-            <td style={proseTd}><code>channel.json :: disabled_tools</code></td>
+            <td style={proseTd}><code>channel.json</code> <code>disabled_tools</code></td>
             <td style={proseTd}>
               Tool names or globs (e.g. <code>task__*</code>) removed from this
               channel's surface.
@@ -182,24 +184,25 @@ decisions made, surprises, anything worth remembering next time.
           </tr>
           <tr>
             <td style={proseTd}>Logging</td>
-            <td style={proseTd}><code>channel.json :: log_messages</code></td>
+            <td style={proseTd}><code>channel.json</code> <code>log_messages</code></td>
             <td style={proseTd}>
               Whether turns on this channel are recorded in the message log.
             </td>
           </tr>
           <tr>
             <td style={proseTd}>Sharding</td>
-            <td style={proseTd}><code>channel.json :: use_sharding</code></td>
+            <td style={proseTd}><code>channel.json</code> <code>use_sharding</code></td>
             <td style={proseTd}>
               Enables sub-conversations within the channel.
             </td>
           </tr>
           <tr>
             <td style={proseTd}>Co-participant visibility</td>
-            <td style={proseTd}><code>channel.json :: show_co_participants</code></td>
+            <td style={proseTd}><code>channel.json</code> <code>show_co_participants</code></td>
             <td style={proseTd}>
               Whether the agent is aware of other participants on this channel
-              (default on). Off hides them — for specialist or private channels.
+              and can push messages to them (default on). Off hides them — for
+              specialist or private channels.
             </td>
           </tr>
           <tr>
@@ -228,7 +231,7 @@ decisions made, surprises, anything worth remembering next time.
           </tr>
           <tr>
             <td style={proseTd}>Model</td>
-            <td style={proseTd}><code>config/agent.json :: modelOverrides</code></td>
+            <td style={proseTd}><code>config/agent.json</code> <code>modelOverrides</code></td>
             <td style={proseTd}>
               Operator-set per-channel model override. The agent has a default model;
               individual channels can swap it.

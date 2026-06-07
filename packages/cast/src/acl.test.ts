@@ -36,7 +36,8 @@ vi.mock('fs', async () => {
 });
 
 import fs from 'fs';
-import { checkAcl, gateInbound, getPeerChannels, hasBit, lookupDescriptorAcl, pickVerb } from './auth/acl.js';
+import { checkAcl, gateInbound, getPeerChannels, hasBit, isOperatorOrOwner, listChannelMembers, listPlacedChannels, lookupDescriptorAcl, membershipBits, pickVerb } from './auth/acl.js';
+import { isReadTier } from './auth/address.js';
 import {
   STRICT_OUTBOUND_ACLS,
   NORMAL_OUTBOUND_ACLS,
@@ -184,8 +185,8 @@ describe('gateInbound', () => {
 // ---------------------------------------------------------------------------
 
 describe('checkAcl (peers format)', () => {
-  it('allows local identity always with full bits', () => {
-    const result = checkAcl(emptyBus(), 'test-agent', 'local/cli:alice');
+  it('allows the operator tier always with full bits', () => {
+    const result = checkAcl(emptyBus(), 'test-agent', 'cli:alice');
     expect(result.bits).toBe('ioaqrph');
   });
 
@@ -520,6 +521,46 @@ describe('AclSchema — agent-identity bit restriction', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Agent-bit restriction via alias — loophole closure. The
+// parse-time superRefine sees RAW keys, so a config alias that resolves to an
+// agent (`billing` → a:<guid>) escapes it. `resolveMergedPeers` re-applies the
+// restriction AFTER normalization, failing the file closed — the same outcome
+// a canonical-keyed violation gets at parse, just via a different mechanism.
+// ---------------------------------------------------------------------------
+
+describe('AclSchema — agent-bit restriction via alias (loophole closure)', () => {
+  it('reject: alias-keyed agent `h` grant fails post-normalization → deny-all', () => {
+    // `billing` passes parse (not an `a:` key), then resolves to an agent at
+    // runtime; the post-normalization check catches the forbidden `h`.
+    mockAclFile({ peers: { 'billing': { 'support': 'h' } } });
+    const bus = busWith([{ alias: 'billing', canonical: 'a:bill01@srv' }]);
+    expect(checkAcl(bus, 'test-agent', 'a:bill01@srv', 'support').bits).toBe('');
+  });
+
+  it('parity: canonical-keyed agent `h` grant also denies (parse-time)', () => {
+    // Same outcome as the alias case above, different mechanism — proves alias
+    // and canonical forms reject identically.
+    mockAclFile({ peers: { 'a:bill01@srv': { 'support': 'h' } } });
+    expect(checkAcl(emptyBus(), 'test-agent', 'a:bill01@srv', 'support').bits).toBe('');
+  });
+
+  it('allow: alias-keyed agent `qra` grant resolves cleanly (no over-block)', () => {
+    mockAclFile({ peers: { 'billing': { 'support': 'qra' } } });
+    const bus = busWith([{ alias: 'billing', canonical: 'a:bill01@srv' }]);
+    expect(checkAcl(bus, 'test-agent', 'a:bill01@srv', 'support').bits).toBe('qra');
+  });
+
+  it('reject: alias-keyed agent `i` cannot make a peer a room member (membershipBits)', () => {
+    // The security-relevant case: without the loophole closure an alias-keyed
+    // `i` would slip through and membershipBits would report the agent as a
+    // member, subverting the membership model. The file fails closed.
+    mockAclFile({ peers: { 'billing': { 'room': 'i' } } });
+    const bus = busWith([{ alias: 'billing', canonical: 'a:bill01@srv' }]);
+    expect(membershipBits(bus, 'test-agent', 'a:bill01@srv', 'room')).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // System-owned infra channels — code-declared grants
 // ---------------------------------------------------------------------------
 
@@ -732,5 +773,304 @@ describe('getPeerChannels — alias-keyed peers resolved via bus', () => {
     const bus = busWith([{ alias: 'my-agent', canonical: 'a:fam001@ca3aaa' }]);
     const channels = getPeerChannels(bus, 'test-agent', 'a:fam001@ca3aaa');
     expect(channels).toEqual([{ name: '*', bits: 'ioaqrph' }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// membershipBits — concrete per-channel room placement. Reads the SAME merged
+// table as checkAcl, but omits every widening rule (no `*` fallback, no
+// local/owner ALL_BITS short-circuit, no prefix-glob). Both branches per the
+// security-gate test discipline. F1 (wildcard) and F2 (operator) are the
+// regression-critical cases — driven at the real fs boundary, since what they
+// assert is the ABSENCE of a rule that a stub could never prove.
+// ---------------------------------------------------------------------------
+
+describe('membershipBits', () => {
+  it('returns the concrete named-channel grant (allow branch)', () => {
+    mockAclFile({ peers: { 'u:abc@test': { 'default': 'io', 'focus': 'io' } } });
+    expect(membershipBits(emptyBus(), 'test-agent', 'u:abc@test/tg:1', 'default')).toBe('io');
+    expect(membershipBits(emptyBus(), 'test-agent', 'u:abc@test/tg:1', 'focus')).toBe('io');
+  });
+
+  it('returns empty for a room the identity is not placed in (reject branch)', () => {
+    mockAclFile({ peers: { 'u:abc@test': { 'default': 'io' } } });
+    expect(membershipBits(emptyBus(), 'test-agent', 'u:abc@test/tg:1', 'focus')).toBe('');
+  });
+
+  it('places an agent peer via the a bit on its named channel', () => {
+    mockAclFile({ peers: { 'a:peer@srv': { 'room': 'a' } } });
+    expect(membershipBits(emptyBus(), 'test-agent', 'a:peer@srv', 'room')).toBe('a');
+    expect(membershipBits(emptyBus(), 'test-agent', 'a:peer@srv', 'other')).toBe('');
+  });
+
+  // F1 — the `*` channel wildcard confers AUTHORIZATION but not PLACEMENT.
+  // checkAcl falls back to `*`; membershipBits must not. This is the hole that
+  // once made "member of this room" mean "is paired at all".
+  it('F1: does NOT honour the `*` channel wildcard (config peers)', () => {
+    mockAclFile({ peers: { 'u:abc@test': { '*': 'io' } } });
+    // checkAcl still authorizes via the wildcard…
+    expect(checkAcl(emptyBus(), 'test-agent', 'u:abc@test/tg:1', 'default').bits).toBe('io');
+    // …but membership requires a concrete named grant.
+    expect(membershipBits(emptyBus(), 'test-agent', 'u:abc@test/tg:1', 'default')).toBe('');
+  });
+
+  it('F1: does NOT honour the `*` wildcard from paired-users (the production case)', () => {
+    // paired-users.json holding { '*': 'io' } is exactly what the pairing-grant migration narrows.
+    mockAclAndPairedUsers({ peers: {} }, { 'u:abc@test': { '*': 'io' } });
+    expect(checkAcl(emptyBus(), 'test-agent', 'u:abc@test/tg:1', 'default').bits).toBe('io');
+    expect(membershipBits(emptyBus(), 'test-agent', 'u:abc@test/tg:1', 'default')).toBe('');
+  });
+
+  it('places a concrete paired-users grant', () => {
+    mockAclAndPairedUsers({ peers: {} }, { 'u:abc@test': { 'default': 'io' } });
+    expect(membershipBits(emptyBus(), 'test-agent', 'u:abc@test/tg:1', 'default')).toBe('io');
+  });
+
+  // F2 — the operator tier and the owner get ALL_BITS from checkAcl, but are
+  // members of nothing: standing alone is authorization, not placement.
+  it('F2: the operator tier is a member of nothing despite ALL_BITS authorization', () => {
+    mockAclFile({ peers: { 'u:abc@test': { 'default': 'io' } } });
+    expect(membershipBits(emptyBus(), 'test-agent', 'cli:alice', 'default')).toBe('');
+  });
+
+  it('F2: the owner is a member of nothing despite ALL_BITS authorization', () => {
+    mockAclFile({ owner: 'u:owner@test', peers: {} });
+    expect(checkAcl(emptyBus(), 'test-agent', 'u:owner@test/tg:1', 'default').bits).toBe('ioaqrph');
+    expect(membershipBits(emptyBus(), 'test-agent', 'u:owner@test/tg:1', 'default')).toBe('');
+  });
+
+  // A glob is a capability grant, not a concrete placement.
+  it('does NOT expand the a:* prefix-glob into membership', () => {
+    mockAclFile({ peers: { 'a:*': { 'default': 'a' } } });
+    expect(checkAcl(emptyBus(), 'test-agent', 'a:sales01@srv', 'default').bits).toBe('a');
+    expect(membershipBits(emptyBus(), 'test-agent', 'a:sales01@srv', 'default')).toBe('');
+  });
+
+  it('returns empty when there is no acl.json (member of nothing by default)', () => {
+    expect(membershipBits(emptyBus(), 'test-agent', 'u:abc@test/tg:1', 'default')).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// listPlacedChannels / listChannelMembers — membershipBits' two inversions
+// (which rooms is X in? / who is in room Y?). Same merged table, same
+// exclusions: no `*` expansion, no prefix-glob keys, no `__*` rows, no
+// operator/owner god-mode. Driven at the real fs boundary like membershipBits
+// — what they assert is the ABSENCE of widening rules, which a stub could
+// never prove.
+// ---------------------------------------------------------------------------
+
+describe('listPlacedChannels', () => {
+  it('returns the concrete placements for one identity (allow branch)', () => {
+    mockAclFile({ peers: { 'u:abc@test': { 'default': 'io', 'focus': 'ioh' } } });
+    expect(listPlacedChannels(emptyBus(), 'test-agent', 'u:abc@test/tg:1')).toEqual([
+      { channel: 'default', bits: 'io' },
+      { channel: 'focus', bits: 'ioh' },
+    ]);
+  });
+
+  it('returns empty for an unplaced identity (reject branch)', () => {
+    mockAclFile({ peers: { 'u:abc@test': { 'default': 'io' } } });
+    expect(listPlacedChannels(emptyBus(), 'test-agent', 'u:other@test/tg:2')).toEqual([]);
+  });
+
+  it('reads placements from both sources (config peers + paired users)', () => {
+    mockAclAndPairedUsers(
+      { peers: { 'a:peer@srv': { 'room': 'a' } } },
+      { 'u:abc@test': { 'default': 'io' } },
+    );
+    expect(listPlacedChannels(emptyBus(), 'test-agent', 'u:abc@test/tg:1')).toEqual([
+      { channel: 'default', bits: 'io' },
+    ]);
+    expect(listPlacedChannels(emptyBus(), 'test-agent', 'a:peer@srv')).toEqual([
+      { channel: 'room', bits: 'a' },
+    ]);
+  });
+
+  it('config rows replace paired-users rows for the same identity (merge is identity-level)', () => {
+    mockAclAndPairedUsers(
+      { peers: { 'u:abc@test': { 'focus': 'io' } } },
+      { 'u:abc@test': { 'default': 'io' } },
+    );
+    expect(listPlacedChannels(emptyBus(), 'test-agent', 'u:abc@test/tg:1')).toEqual([
+      { channel: 'focus', bits: 'io' },
+    ]);
+  });
+
+  it('excludes the `*` channel wildcard while keeping concrete rows', () => {
+    mockAclFile({ peers: { 'u:abc@test': { '*': 'io', 'default': 'io' } } });
+    expect(listPlacedChannels(emptyBus(), 'test-agent', 'u:abc@test/tg:1')).toEqual([
+      { channel: 'default', bits: 'io' },
+    ]);
+  });
+
+  it('excludes `__*` infra rows', () => {
+    mockAclFile({ peers: { 'u:abc@test': { '__design': 'h', 'default': 'io' } } });
+    expect(listPlacedChannels(emptyBus(), 'test-agent', 'u:abc@test/tg:1')).toEqual([
+      { channel: 'default', bits: 'io' },
+    ]);
+  });
+
+  it('excludes empty-bits rows (no standing, no placement)', () => {
+    mockAclFile({ peers: { 'u:abc@test': { 'default': '', 'focus': 'io' } } });
+    expect(listPlacedChannels(emptyBus(), 'test-agent', 'u:abc@test/tg:1')).toEqual([
+      { channel: 'focus', bits: 'io' },
+    ]);
+  });
+
+  it('operator tier is placed nowhere unless concretely placed', () => {
+    mockAclFile({ peers: { 'u:abc@test': { 'default': 'io' } } });
+    expect(listPlacedChannels(emptyBus(), 'test-agent', 'cli:alice')).toEqual([]);
+  });
+
+  it('operator tier with a concrete row gets exactly that row (no ALL_BITS widening)', () => {
+    mockAclFile({ peers: { 'cli:alice': { 'ops': 'io' } } });
+    expect(listPlacedChannels(emptyBus(), 'test-agent', 'cli:alice')).toEqual([
+      { channel: 'ops', bits: 'io' },
+    ]);
+  });
+
+  it('the owner field alone places the owner nowhere', () => {
+    mockAclFile({ owner: 'u:owner@test', peers: {} });
+    expect(checkAcl(emptyBus(), 'test-agent', 'u:owner@test/tg:1', 'default').bits).toBe('ioaqrph');
+    expect(listPlacedChannels(emptyBus(), 'test-agent', 'u:owner@test/tg:1')).toEqual([]);
+  });
+
+  it('does NOT expand a prefix-glob into placements', () => {
+    mockAclFile({ peers: { 'a:*': { 'default': 'a' } } });
+    expect(checkAcl(emptyBus(), 'test-agent', 'a:sales01@srv', 'default').bits).toBe('a');
+    expect(listPlacedChannels(emptyBus(), 'test-agent', 'a:sales01@srv')).toEqual([]);
+  });
+
+  it('returns empty when there is no acl.json', () => {
+    expect(listPlacedChannels(emptyBus(), 'test-agent', 'u:abc@test/tg:1')).toEqual([]);
+  });
+
+  it('consistency: every enumerated row is confirmed by membershipBits', () => {
+    mockAclAndPairedUsers(
+      { peers: { 'u:cfg@test': { '*': 'io', 'default': 'io', 'focus': 'ah' } } },
+      { 'u:paired@test': { 'default': 'ioph' } },
+    );
+    for (const addr of ['u:cfg@test/tg:1', 'u:paired@test/tg:2']) {
+      const rows = listPlacedChannels(emptyBus(), 'test-agent', addr);
+      expect(rows.length).toBeGreaterThan(0);
+      for (const row of rows) {
+        expect(membershipBits(emptyBus(), 'test-agent', addr, row.channel)).toBe(row.bits);
+      }
+    }
+  });
+});
+
+describe('listChannelMembers', () => {
+  it('returns the concrete members of one channel from both sources (allow branch)', () => {
+    mockAclAndPairedUsers(
+      { peers: { 'a:peer@srv': { 'room': 'a' } } },
+      { 'u:abc@test': { 'room': 'io', 'other': 'io' } },
+    );
+    expect(listChannelMembers(emptyBus(), 'test-agent', 'room')).toEqual([
+      { identity: 'u:abc@test', bits: 'io' },
+      { identity: 'a:peer@srv', bits: 'a' },
+    ]);
+  });
+
+  it('returns empty for a channel no one is placed in (reject branch)', () => {
+    mockAclFile({ peers: { 'u:abc@test': { 'default': 'io' } } });
+    expect(listChannelMembers(emptyBus(), 'test-agent', 'empty-room')).toEqual([]);
+  });
+
+  it('a `*` wildcard row does not make an identity a member of a named channel', () => {
+    mockAclFile({ peers: { 'u:abc@test': { '*': 'io' } } });
+    expect(checkAcl(emptyBus(), 'test-agent', 'u:abc@test/tg:1', 'default').bits).toBe('io');
+    expect(listChannelMembers(emptyBus(), 'test-agent', 'default')).toEqual([]);
+  });
+
+  it('skips prefix-glob peer keys (capability grants, not placements)', () => {
+    mockAclFile({ peers: {
+      'a:*': { 'room': 'a' },
+      'console:*': { 'room': 'i' },
+      'u:abc@test': { 'room': 'io' },
+    } });
+    expect(listChannelMembers(emptyBus(), 'test-agent', 'room')).toEqual([
+      { identity: 'u:abc@test', bits: 'io' },
+    ]);
+  });
+
+  it('`__*` infra channels enumerate as empty even with explicit rows', () => {
+    mockAclFile({ peers: { 'u:abc@test': { '__design': 'h' } } });
+    expect(listChannelMembers(emptyBus(), 'test-agent', '__design')).toEqual([]);
+  });
+
+  it('the `*` channel name itself enumerates as empty', () => {
+    mockAclFile({ peers: { 'u:abc@test': { '*': 'io' } } });
+    expect(listChannelMembers(emptyBus(), 'test-agent', '*')).toEqual([]);
+  });
+
+  it('operator and owner appear only when concretely placed', () => {
+    mockAclFile({ owner: 'u:owner@test', peers: {
+      'cli:alice': { 'room': 'io' },
+      'u:member@test': { 'room': 'i' },
+    } });
+    // cli:alice is placed by its concrete row; u:owner@test (owner field only) is absent.
+    expect(listChannelMembers(emptyBus(), 'test-agent', 'room')).toEqual([
+      { identity: 'cli:alice', bits: 'io' },
+      { identity: 'u:member@test', bits: 'i' },
+    ]);
+  });
+
+  it('alias-keyed peers surface as canonical identities (the addressable form)', () => {
+    mockAclFile({ peers: { 'sales': { 'room': 'a' } } });
+    const bus = busWith([{ alias: 'sales', canonical: 'a:sales01@ca3aaa' }]);
+    expect(listChannelMembers(bus, 'test-agent', 'room')).toEqual([
+      { identity: 'a:sales01@ca3aaa', bits: 'a' },
+    ]);
+  });
+
+  it('returns empty when there is no acl.json', () => {
+    expect(listChannelMembers(emptyBus(), 'test-agent', 'room')).toEqual([]);
+  });
+
+  it('consistency: every member row is confirmed by membershipBits', () => {
+    mockAclAndPairedUsers(
+      { peers: { 'a:peer@srv': { 'room': 'a' }, 'u:cfg@test': { 'room': 'ih', '*': 'io' } } },
+      { 'u:paired@test': { 'room': 'io' } },
+    );
+    const members = listChannelMembers(emptyBus(), 'test-agent', 'room');
+    expect(members).toHaveLength(3);
+    for (const m of members) {
+      expect(membershipBits(emptyBus(), 'test-agent', m.identity, 'room')).toBe(m.bits);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Read tier ⊂ write tier — structural subset pin. The read tier
+// (`isReadTier`: system context ∥ operator tier) gates enumeration; the write
+// tier (`isOperatorOrOwner`: operator tier ∥ configured owner) gates the push
+// verdict's god-mode arm. Every read-tier caller must pass the write tier;
+// the configured `u:` owner is the deliberate asymmetry — write without read.
+// Pinned at the fs boundary so a future edit to either side trips it.
+// ---------------------------------------------------------------------------
+
+describe('read tier ⊂ write tier', () => {
+  const OWN = 'a:self@srv';
+
+  it('every non-system read-tier caller passes the write tier', () => {
+    mockAclFile({ owner: 'u:owner@test', peers: {} });
+    for (const operator of ['cli:alice', 'admin:local']) {
+      expect(isReadTier(operator, OWN)).toBe(true);
+      expect(isOperatorOrOwner(emptyBus(), 'test-agent', operator)).toBe(true);
+    }
+  });
+
+  it('the configured u: owner gets write without read — the deliberate asymmetry', () => {
+    mockAclFile({ owner: 'u:owner@test', peers: {} });
+    expect(isOperatorOrOwner(emptyBus(), 'test-agent', 'u:owner@test/tg:1')).toBe(true);
+    expect(isReadTier('u:owner@test/tg:1', OWN)).toBe(false);
+  });
+
+  it('member-tier callers pass neither', () => {
+    mockAclFile({ peers: { 'u:abc@test': { 'default': 'io' } } });
+    expect(isReadTier('u:abc@test/tg:1', OWN)).toBe(false);
+    expect(isOperatorOrOwner(emptyBus(), 'test-agent', 'u:abc@test/tg:1')).toBe(false);
   });
 });

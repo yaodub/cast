@@ -11,8 +11,8 @@
  *     and the entry is reused (no WS bounce on tab refresh).
  *   - If the timer fires, `dispose()` is called and the entry is dropped.
  *
- * Phase 1.1 builds the refcount lifecycle with empty state slots; Phase 2.1
- * adds WS attachment and chat ingest.
+ * The refcount lifecycle starts with empty state slots; WS attachment and
+ * chat ingest are layered on top.
  */
 
 import { BoundedSet } from './lib/bounded-set';
@@ -55,7 +55,7 @@ export class ConnectionState {
   /** Pending teardown timer; cancelled if a fresh acquire arrives within the grace window. */
   private teardownTimer: ReturnType<typeof setTimeout> | null = null;
 
-  /** WS transport — null until Phase 2.1 wires it up via `attachTransport`. */
+  /** WS transport — null until `attachTransport` wires it up. */
   transport: CastTransport | null = null;
 
   /** Recently-seen server packet IDs, for dedup against drain-replays. */

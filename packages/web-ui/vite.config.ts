@@ -17,8 +17,8 @@ const env = EnvSchema.parse(process.env);
 const proxy = {
   '/api': {
     target: `http://127.0.0.1:${env.CAST_PORT}`,
-    // `ws: true` covers the admin events WebSocket at `/api/admin/events`
-    // (Task 86 Phase 3.1). Without this, Vite hands the upgrade request
+    // `ws: true` covers the admin events WebSocket at `/api/admin/events`.
+    // Without this, Vite hands the upgrade request
     // to the SPA fallback and the WS never connects — the agent's replies
     // never reach the worker, even though cast emits them server-side.
     ws: true,

@@ -13,6 +13,7 @@ import { randomInt } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
+import { ServiceManifestSchema } from '@getcast/agent-schema/v1';
 import { z } from 'zod';
 
 import { ADMIN_SOCKET_NAME, CAST_PORT, agentPath } from '../config.js';
@@ -22,10 +23,6 @@ import type { LogEventFn } from './agent-db.js';
 import { RestartBreaker } from './restart-breaker.js';
 
 // --- Schemas ---
-
-const ServiceManifestSchema = z.object({
-  entry: z.string().optional(),
-}).passthrough();
 
 const ServiceIpcMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('ready') }),
@@ -44,7 +41,13 @@ const ServiceIpcMessageSchema = z.discriminatedUnion('type', [
 
 const MIN_BACKOFF = 1_000;
 const MAX_BACKOFF = 30_000;
-const SHUTDOWN_TIMEOUT = 5_000;
+/** Patience before SIGKILL on stop(). Deliberately ABOVE the 5s grace the
+ *  agent-service-base shutdown handler takes before process.exit(0) — equal
+ *  timers made every graceful exit race the kill, a coin flip per stop. */
+const SHUTDOWN_TIMEOUT = 7_000;
+/** After SIGKILL, how long to wait for the close event before giving up —
+ *  guards stop() against a pathologically unkillable (D-state) child. */
+const POST_KILL_TIMEOUT = 2_000;
 const STABLE_UPTIME = 30_000;
 
 /** RestartBreaker thresholds. Five crashes in five minutes is unambiguously
@@ -264,8 +267,8 @@ export class AgentService {
       if (text) logger.debug({ agentFolder: this.folder, source: 'service-stdout' }, text);
     });
     proc.on('message', (raw: unknown) => this.handleIpcMessage(proc, raw));
-    proc.on('close', (code, signal) => this.handleProcessClose(code, signal));
-    proc.on('error', (err) => this.handleProcessError(err));
+    proc.on('close', (code, signal) => this.handleProcessClose(proc, code, signal));
+    proc.on('error', (err) => this.handleProcessError(proc, err));
 
     return new Promise<void>((resolve, reject) => {
       this.state = {
@@ -314,15 +317,25 @@ export class AgentService {
     try { proc.send({ type: 'shutdown' }); } catch { /* already dead */ }
 
     return new Promise<void>((resolve) => {
+      // Resolve ONLY on the actual close event — never at kill time. Resolving
+      // right after SIGKILL let restart() spawn the successor while the old
+      // process was still dying, and its late close event (code=null,
+      // signal=SIGKILL) was then misattributed to the brand-new `starting`
+      // state: "exited before ready", orphaning the live successor.
+      let killFallback: ReturnType<typeof setTimeout> | null = null;
       const timer = setTimeout(() => {
         logger.warn({ agentFolder: this.folder }, 'Agent service did not exit in time, killing');
         this.logEvent('warn', 'service', 'shutdown_timeout', 'Agent service did not exit in time, killing');
         try { proc.kill('SIGKILL'); } catch { /* already dead */ }
-        resolve();
+        killFallback = setTimeout(() => {
+          logger.error({ agentFolder: this.folder }, 'Agent service did not close even after SIGKILL — proceeding');
+          resolve();
+        }, POST_KILL_TIMEOUT);
       }, SHUTDOWN_TIMEOUT);
 
       proc.on('close', () => {
         clearTimeout(timer);
+        if (killFallback) clearTimeout(killFallback);
         resolve();
       });
     });
@@ -395,7 +408,14 @@ export class AgentService {
     }
   }
 
-  private handleProcessClose(code: number | null, signal: string | null): void {
+  private handleProcessClose(proc: ChildProcess, code: number | null, signal: string | null): void {
+    // Stale-event guard: only the CURRENT state's process may mutate state.
+    // A close from a predecessor (e.g. its SIGKILL'd exit landing after
+    // restart() already spawned the successor) or from a process the state
+    // no longer tracks (stopped/idle/restarting/failed) is ignored — stop()
+    // observes those closes through its own listener.
+    if (this.process !== proc) return;
+
     // Stable-uptime reset: a service that ran ≥ STABLE_UPTIME before crashing
     // counts as healthy enough to reset both the backoff and the breaker.
     // Without this, a chronically flaky service that recovers for a while in
@@ -460,7 +480,9 @@ export class AgentService {
     this.state = { status: 'restarting', timer };
   }
 
-  private handleProcessError(err: Error): void {
+  private handleProcessError(proc: ChildProcess, err: Error): void {
+    // Same stale-event guard as handleProcessClose.
+    if (this.process !== proc) return;
     logger.error({ agentFolder: this.folder, err }, 'Agent service spawn error');
     if (this.state.status === 'starting') {
       const { rejectReady } = this.state;

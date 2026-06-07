@@ -123,7 +123,7 @@ describe('handleBusMessage — intent-driven verb selection', () => {
   // pushes on the disk-ACL lane (manager consoles into user channels).
   it('allows conversation when sender has `i` on channel', async () => {
     const folder = 'r-conv-allow';
-    mockAclFile({ owner: 'local', peers: { 'console:sender': { '*': 'io' } }, reject_message: null }, folder);
+    mockAclFile({ owner: 'operator', peers: { 'console:sender': { '*': 'io' } }, reject_message: null }, folder);
     const deps = makeDeps(folder);
 
     await handleBusMessage(deps, 'console:sender', deps.agentId, {
@@ -141,7 +141,7 @@ describe('handleBusMessage — intent-driven verb selection', () => {
     // verb is bus-payload-type-driven, not channel-class-driven. Denied
     // push routes a `type: 'rejection'` back carrying the correlation id.
     const folder = 'r-deleg-deny';
-    mockAclFile({ owner: 'local', peers: { 'console:sender': { '*': 'io' } }, reject_message: null }, folder);
+    mockAclFile({ owner: 'operator', peers: { 'console:sender': { '*': 'io' } }, reject_message: null }, folder);
     const deps = makeDeps(folder);
 
     await handleBusMessage(deps, 'console:sender', deps.agentId, {
@@ -166,7 +166,7 @@ describe('handleBusMessage — intent-driven verb selection', () => {
     // push is denied even when the sender-level check passes.
     const folder = 'r-push-allow';
     mockAclFile({
-      owner: 'local',
+      owner: 'operator',
       peers: {
         'console:sender': { '*': 'ioh' },
         'u:alice@idp': { '*': 'io' },
@@ -186,7 +186,7 @@ describe('handleBusMessage — intent-driven verb selection', () => {
 
     expect(deps.calls.route).toBe(1);
     // Cross-sender push → kind='push'; tier attrs identify the foreign sender
-    // and the originating user (Phase 7 — colleague trust posture). Note:
+    // and the originating user (colleague trust posture). Note:
     // `fromChannel` now populates uniformly because `returnToChannel`
     // travels on the payload (bonus side-effect of the type promotion).
     expect(deps.routeArgs[0]!.kind).toBe('push');
@@ -200,7 +200,7 @@ describe('handleBusMessage — intent-driven verb selection', () => {
   it('non-push (conversation) routes without kind/attrs (no tier tagging)', async () => {
     const folder = 'r-conv-no-kind';
     mockAclFile({
-      owner: 'local',
+      owner: 'operator',
       peers: { 'console:sender': { '*': 'io' } },
       reject_message: null,
     }, folder);
@@ -223,7 +223,7 @@ describe('handleBusMessage — intent-driven verb selection', () => {
     // cross-sender push routes a rejection back with the requestId.
     const folder = 'r-push-user-deny';
     mockAclFile({
-      owner: 'local',
+      owner: 'operator',
       peers: {
         'console:sender': { '*': 'ioh' },
         // No grant for u:alice — they're a stranger to this agent.
@@ -246,13 +246,174 @@ describe('handleBusMessage — intent-driven verb selection', () => {
     expect(deps.calls.rejection).toBe(1);
   });
 
+  // --- Agent-sender push ---
+  // For an agent sender (a pure conduit that cannot hold `h`), gate 2 reads
+  // the originating USER's `h`, not the sending agent's bits. The agent's
+  // own grant is irrelevant to host authorization. Console/user senders
+  // (covered above) are unchanged — they hold `h` themselves.
+
+  it('allows agent-sent push when the originating user holds `h`+`i` (sender absent from ACL)', async () => {
+    // The discriminating case: the old code read the sending agent's bits at
+    // gate 2 (absent → deny). The re-key reads the user (`ioh` → allow). The
+    // sending agent holds nothing — it is a pure conduit.
+    const folder = 'r-agent-push-allow';
+    mockAclFile({
+      owner: 'operator',
+      peers: { 'u:alice@idp': { 'default': 'ioh' } },
+      reject_message: null,
+    }, folder);
+    const deps = makeDeps(folder);
+
+    await handleBusMessage(deps, 'a:sender@srv', deps.agentId, {
+      type: 'push',
+      text: 'handing alice over',
+      requestId: 'req-agent-1',
+      returnToParticipant: 'u:alice@idp',
+      returnToChannel: 'origin',
+      routing: { channel: 'default' },
+    });
+
+    expect(deps.calls.route).toBe(1);
+    expect(deps.calls.rejection).toBe(0);
+  });
+
+  it('allows agent-sent push regardless of the sending agent\'s own bits', async () => {
+    // Same verdict as above with the sender carrying its full legal grant
+    // (`qra`) — proof the sending agent's bits never affect host authorization.
+    const folder = 'r-agent-push-sender-irrelevant';
+    mockAclFile({
+      owner: 'operator',
+      peers: {
+        'a:sender@srv': { 'default': 'qra' },
+        'u:alice@idp': { 'default': 'ioh' },
+      },
+      reject_message: null,
+    }, folder);
+    const deps = makeDeps(folder);
+
+    await handleBusMessage(deps, 'a:sender@srv', deps.agentId, {
+      type: 'push',
+      text: 'handing alice over',
+      requestId: 'req-agent-2',
+      returnToParticipant: 'u:alice@idp',
+      returnToChannel: 'origin',
+      routing: { channel: 'default' },
+    });
+
+    expect(deps.calls.route).toBe(1);
+    expect(deps.calls.rejection).toBe(0);
+  });
+
+  it('denies agent-sent push when the originating user lacks `h` (gate 2)', async () => {
+    // User is a member (`io`) but the operator never conferred `h`, the
+    // cross-agent host grant. Gate 2 denies even though gate 3 (`i`) would pass.
+    const folder = 'r-agent-push-no-h';
+    mockAclFile({
+      owner: 'operator',
+      peers: { 'u:alice@idp': { 'default': 'io' } },
+      reject_message: null,
+    }, folder);
+    const deps = makeDeps(folder);
+
+    await handleBusMessage(deps, 'a:sender@srv', deps.agentId, {
+      type: 'push',
+      text: 'handing alice over',
+      requestId: 'req-agent-3',
+      returnToParticipant: 'u:alice@idp',
+      returnToChannel: 'origin',
+      routing: { channel: 'default' },
+    });
+
+    expect(deps.calls.route).toBe(0);
+    expect(deps.calls.rejection).toBe(1);
+  });
+
+  it('denies agent-sent push when the originating user lacks `i` (gate 3)', async () => {
+    // User holds the host grant `h` but is not a member of the channel (`i`
+    // absent) — gate 3 still blocks introducing a non-member user.
+    const folder = 'r-agent-push-no-i';
+    mockAclFile({
+      owner: 'operator',
+      peers: { 'u:alice@idp': { 'default': 'h' } },
+      reject_message: null,
+    }, folder);
+    const deps = makeDeps(folder);
+
+    await handleBusMessage(deps, 'a:sender@srv', deps.agentId, {
+      type: 'push',
+      text: 'handing alice over',
+      requestId: 'req-agent-4',
+      returnToParticipant: 'u:alice@idp',
+      returnToChannel: 'origin',
+      routing: { channel: 'default' },
+    });
+
+    expect(deps.calls.route).toBe(0);
+    expect(deps.calls.rejection).toBe(1);
+  });
+
+  it('denies agent-sent push carrying the OPERATOR with no concrete placement (god-mode is not membership)', async () => {
+    // The conduit hole this gate closes: a relaying/compromised agent names the
+    // operator as the originating user. `checkAcl` god-modes the operator to
+    // full bits on every channel, so gate 2 (`h`) passes — but gate 3 reads
+    // `membershipBits`, which treats the operator tier as a member of nothing.
+    // With no concrete placement the push is refused, so an agent cannot puppet
+    // the operator's reach into a channel the operator never joined. (Before the
+    // membershipBits gate, gate 3's checkAcl god-moded the operator → allow.)
+    const folder = 'r-agent-push-operator-no-placement';
+    mockAclFile({
+      owner: 'operator',
+      peers: {}, // operator carries no disk grant; it god-modes checkAcl only
+      reject_message: null,
+    }, folder);
+    const deps = makeDeps(folder);
+
+    await handleBusMessage(deps, 'a:sender@srv', deps.agentId, {
+      type: 'push',
+      text: 'handing the operator over',
+      requestId: 'req-agent-operator-deny',
+      returnToParticipant: 'admin:local',
+      returnToChannel: 'origin',
+      routing: { channel: 'default' },
+    });
+
+    expect(deps.calls.route).toBe(0);
+    expect(deps.calls.rejection).toBe(1);
+  });
+
+  it('allows agent-sent push carrying the operator when the operator IS concretely placed', async () => {
+    // The fix is consistency, not a blanket operator ban: an explicit
+    // per-channel placement (the "explicit in the right places" model the
+    // console managers already follow) restores the ferry. membershipBits reads
+    // the concrete `ioh`, so gate 3 passes.
+    const folder = 'r-agent-push-operator-placed';
+    mockAclFile({
+      owner: 'operator',
+      peers: { 'admin:local': { 'default': 'ioh' } },
+      reject_message: null,
+    }, folder);
+    const deps = makeDeps(folder);
+
+    await handleBusMessage(deps, 'a:sender@srv', deps.agentId, {
+      type: 'push',
+      text: 'handing the operator over',
+      requestId: 'req-agent-operator-allow',
+      returnToParticipant: 'admin:local',
+      returnToChannel: 'origin',
+      routing: { channel: 'default' },
+    });
+
+    expect(deps.calls.route).toBe(1);
+    expect(deps.calls.rejection).toBe(0);
+  });
+
   // Removed: "denies push when replyTo is missing (malformed payload)".
   // With the `type: 'push'` schema, `returnToParticipant` is required —
   // a payload without it fails at Zod parse, not at the ACL gate.
 
   it('denies conversation when sender has only `h` (push grant alone is not a conversation grant)', async () => {
     const folder = 'r-conv-deny';
-    mockAclFile({ owner: 'local', peers: { 'console:sender': { '*': 'h' } }, reject_message: null }, folder);
+    mockAclFile({ owner: 'operator', peers: { 'console:sender': { '*': 'h' } }, reject_message: null }, folder);
     const deps = makeDeps(folder);
 
     await handleBusMessage(deps, 'console:sender', deps.agentId, {
@@ -266,7 +427,7 @@ describe('handleBusMessage — intent-driven verb selection', () => {
 
   it('defaults missing intent to conversation (Zod default)', async () => {
     const folder = 'r-default-conv';
-    mockAclFile({ owner: 'local', peers: { 'console:sender': { '*': 'io' } }, reject_message: null }, folder);
+    mockAclFile({ owner: 'operator', peers: { 'console:sender': { '*': 'io' } }, reject_message: null }, folder);
     const deps = makeDeps(folder);
 
     await handleBusMessage(deps, 'console:sender', deps.agentId, {
@@ -285,7 +446,7 @@ describe('handleBusMessage — draft-mode auto-reply', () => {
     // the agent is in draft. The bounce uses the conversation reply path so
     // the sender sees a human-readable explanation rather than silence.
     const folder = 'd-msg-bounce';
-    mockAclFile({ owner: 'local', peers: { 'u:sender@srv': { '*': 'io' } }, reject_message: null }, folder);
+    mockAclFile({ owner: 'operator', peers: { 'u:sender@srv': { '*': 'io' } }, reject_message: null }, folder);
     const deps = makeDeps(folder, { draft: true });
 
     await handleBusMessage(deps, 'u:sender@srv', deps.agentId, {
@@ -302,7 +463,7 @@ describe('handleBusMessage — draft-mode auto-reply', () => {
     // Draft is a "not ready for the world" signal, not a kill switch — the
     // operator must still be able to exercise the agent during composition.
     const folder = 'd-admin-bypass';
-    mockAclFile({ owner: 'local', peers: { 'admin:local': { '*': 'io' } }, reject_message: null }, folder);
+    mockAclFile({ owner: 'operator', peers: { 'admin:local': { '*': 'io' } }, reject_message: null }, folder);
     const deps = makeDeps(folder, { draft: true });
 
     await handleBusMessage(deps, 'admin:local', deps.agentId, {
@@ -322,7 +483,7 @@ describe('handleBusMessage — draft-mode auto-reply', () => {
     // Agent senders carry `q` legitimately under the agent-identity bit
     // restriction; we drop the i/o bits this test never relied on.
     const folder = 'd-req-bounce';
-    mockAclFile({ owner: 'local', peers: { 'a:sender@srv': { '*': 'q' } }, reject_message: null }, folder);
+    mockAclFile({ owner: 'operator', peers: { 'a:sender@srv': { '*': 'q' } }, reject_message: null }, folder);
     const deps = makeDeps(folder, { draft: true });
 
     await handleBusMessage(deps, 'a:sender@srv', deps.agentId, {
@@ -344,10 +505,11 @@ describe('handleBusMessage — draft-mode auto-reply', () => {
     // The whole point of draft is "compose the agent" — and Design Manager
     // is the tool that composes. Bouncing its pushes makes the very tool
     // meant for drafts unusable on drafts. Authoring envelope includes
-    // operator + `console:*` (see isAuthoringSender).
+    // operator + `console:*` (see isAuthoringSender); every `console:*`
+    // manager (Config Manager included) rides this same arm.
     const folder = 'd-design-manager-bypass';
     mockAclFile({
-      owner: 'local',
+      owner: 'operator',
       peers: { 'console:design-manager': { '__design': 'ioh' } },
       reject_message: null,
     }, folder);
@@ -357,33 +519,9 @@ describe('handleBusMessage — draft-mode auto-reply', () => {
       type: 'push',
       text: 'brief',
       requestId: 'req-dm-1',
-      returnToParticipant: 'local/admin:local',
+      returnToParticipant: 'admin:local',
       returnToChannel: '__design-manager',
       routing: { channel: '__design' },
-    });
-
-    expect(deps.calls.rejection).toBe(0);
-    expect(deps.calls.route).toBe(1);
-  });
-
-  it('lets Config Manager (console:config-manager) reach a draft agent', async () => {
-    // Parity with Design Manager — any `console:*` address is part of the
-    // authoring envelope and bypasses draft on the same axis.
-    const folder = 'd-config-manager-bypass';
-    mockAclFile({
-      owner: 'local',
-      peers: { 'console:config-manager': { '__configure': 'ioh' } },
-      reject_message: null,
-    }, folder);
-    const deps = makeDeps(folder, { draft: true });
-
-    await handleBusMessage(deps, 'console:config-manager', deps.agentId, {
-      type: 'push',
-      text: 'configure',
-      requestId: 'req-cm-1',
-      returnToParticipant: 'local/admin:local',
-      returnToChannel: '__config-manager',
-      routing: { channel: '__configure' },
     });
 
     expect(deps.calls.rejection).toBe(0);
@@ -399,7 +537,7 @@ describe('handleBusMessage — draft-mode auto-reply', () => {
     // path rather than failing at the schema layer.
     const folder = 'd-peer-still-bounced';
     mockAclFile({
-      owner: 'local',
+      owner: 'operator',
       peers: { 'a:sibling@srv': { 'default': 'q' } },
       reject_message: null,
     }, folder);
@@ -478,7 +616,7 @@ describe('handleBusMessage — q/r split on reply delivery', () => {
   it('delivers response when sender holds `q` on target channel', async () => {
     const folder = 'rq-deliver';
     mockAclFile({
-      owner: 'local',
+      owner: 'operator',
       peers: { 'a:sender@srv': { 'default': 'q' } },
       reject_message: null,
     }, folder);
@@ -501,7 +639,7 @@ describe('handleBusMessage — q/r split on reply delivery', () => {
     // sender's session, so a compromised peer cannot prompt-inject the asker.
     const folder = 'rq-suppress';
     mockAclFile({
-      owner: 'local',
+      owner: 'operator',
       peers: { 'a:sender@srv': { 'default': 'r' } },
       reject_message: null,
     }, folder);
@@ -527,7 +665,7 @@ describe('handleBusMessage — q/r split on reply delivery', () => {
     // no derived state caches the original grant, so the new posture applies.
     const folder = 'rq-revoked';
     mockAclFile({
-      owner: 'local',
+      owner: 'operator',
       peers: { 'a:sender@srv': { 'default': '' } },
       reject_message: null,
     }, folder);
@@ -547,7 +685,7 @@ describe('handleBusMessage — q/r split on reply delivery', () => {
   it('suppresses rejection too (same q/r split applies to the rejection path)', async () => {
     const folder = 'rq-reject-suppress';
     mockAclFile({
-      owner: 'local',
+      owner: 'operator',
       peers: { 'a:sender@srv': { 'default': 'r' } },
       reject_message: null,
     }, folder);
@@ -568,7 +706,7 @@ describe('handleBusMessage — q/r split on reply delivery', () => {
   it('delivers rejection when sender holds `q`', async () => {
     const folder = 'rq-reject-deliver';
     mockAclFile({
-      owner: 'local',
+      owner: 'operator',
       peers: { 'a:sender@srv': { 'default': 'q' } },
       reject_message: null,
     }, folder);
@@ -595,7 +733,7 @@ describe('handleBusMessage — q/r split on reply delivery', () => {
     // tag today), so assertions match the escaped form the LLM will actually see.
     const folder = 'rq-reject-tag-shape';
     mockAclFile({
-      owner: 'local',
+      owner: 'operator',
       peers: { 'a:sender@srv': { 'default': 'q' } },
       reject_message: null,
     }, folder);
@@ -623,7 +761,7 @@ describe('handleBusMessage — q/r split on reply delivery', () => {
   it('response delivered as structured <cast:answer> tag (unchanged behavior)', async () => {
     const folder = 'rq-answer-tag-shape';
     mockAclFile({
-      owner: 'local',
+      owner: 'operator',
       peers: { 'a:sender@srv': { 'default': 'q' } },
       reject_message: null,
     }, folder);
@@ -694,7 +832,7 @@ describe('handleBusMessage — answer-path qualifier inheritance', () => {
   it('threads originQualifier into the reply routing on response', async () => {
     const folder = 'reply-qual-response';
     mockAclFile({
-      owner: 'local',
+      owner: 'operator',
       peers: { 'a:sender@srv': { 'default': 'q' } },
       reject_message: null,
     }, folder);
@@ -720,7 +858,7 @@ describe('handleBusMessage — answer-path qualifier inheritance', () => {
   it('omits qualifier from reply routing when originQualifier is absent (un-qualified caller)', async () => {
     const folder = 'reply-qual-absent';
     mockAclFile({
-      owner: 'local',
+      owner: 'operator',
       peers: { 'a:sender@srv': { 'default': 'q' } },
       reject_message: null,
     }, folder);
@@ -745,7 +883,7 @@ describe('handleBusMessage — answer-path qualifier inheritance', () => {
   it('threads originQualifier into the reply routing on rejection (symmetric with response)', async () => {
     const folder = 'reply-qual-rejection';
     mockAclFile({
-      owner: 'local',
+      owner: 'operator',
       peers: { 'a:sender@srv': { 'default': 'q' } },
       reject_message: null,
     }, folder);
@@ -766,5 +904,71 @@ describe('handleBusMessage — answer-path qualifier inheritance', () => {
       qualifier: 'daily-standup',
       targetParticipant: 'u:alice@idp',
     });
+  });
+});
+
+describe('pairing — per-turn source wire (transport-blind ferry)', () => {
+  // Above the gateway the from-address is the bare identity, so the wire a
+  // pairing code binds to rides as explicit payload metadata (`sourceHandle`).
+  it('binds the pairing code to the payload sourceHandle, not the from-address', async () => {
+    const folder = 'r-pair-wire';
+    const deps = makeDeps(folder);
+    const pairSpy = vi.fn((handle: string, _code: string) => ({
+      success: true,
+      message: `paired ${handle}`,
+    }));
+    deps.idp = {} as never;
+    deps.pair = pairSpy as never;
+
+    await handleBusMessage(deps, 'u:abc@srv', deps.agentId, {
+      type: 'pairing',
+      code: 'C0DE',
+      sourceHandle: 'tg:42',
+    });
+
+    expect(pairSpy).toHaveBeenCalledWith('tg:42', 'C0DE');
+  });
+
+  it('falls back to the from-address wire when no sourceHandle rides the payload', async () => {
+    // Legacy producer shape — the gateway always stamps sourceHandle now, but
+    // a raw-wire from-address (pre-resolution sender) still pairs.
+    const folder = 'r-pair-wire-fallback';
+    const deps = makeDeps(folder);
+    const pairSpy = vi.fn((handle: string, _code: string) => ({
+      success: true,
+      message: `paired ${handle}`,
+    }));
+    deps.idp = {} as never;
+    deps.pair = pairSpy as never;
+
+    await handleBusMessage(deps, 'tg:42', deps.agentId, {
+      type: 'pairing',
+      code: 'C0DE',
+    });
+
+    expect(pairSpy).toHaveBeenCalledWith('tg:42', 'C0DE');
+  });
+});
+
+describe('per-turn wire containment — sourceHandle dies at the bus-handler boundary', () => {
+  it('an ingested payload with sourceHandle delivers with no trace of the wire in any route() argument', async () => {
+    // Blindness is total: the wire is pairing-only metadata. Nothing routed
+    // into a runner — text, routing, attrs — may carry it.
+    const folder = 'r-wire-containment';
+    mockAclFile({ owner: 'operator', peers: { 'u:remote@idp': { '*': 'io' } }, reject_message: null }, folder);
+    const deps = makeDeps(folder);
+
+    await handleBusMessage(deps, 'u:remote@idp', deps.agentId, {
+      type: 'ingested',
+      text: 'hello there',
+      declaredName: 'Remote',
+      routing: { channel: 'default' },
+      sourceHandle: 'tg:424242',
+    });
+
+    expect(deps.calls.route).toBe(1);
+    const routeMock = deps.route as unknown as { mock: { calls: unknown[][] } };
+    const allArgs = JSON.stringify(routeMock.mock.calls);
+    expect(allArgs).not.toContain('tg:424242');
   });
 });

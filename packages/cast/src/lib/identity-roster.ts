@@ -2,7 +2,10 @@
  * Identity roster — tracks known identities per agent.
  *
  * Stores a JSON file at `state/identity-roster.json` that maps identity IDs
- * to their display name, handles, and type. Updated after successful pairing.
+ * to their display name and type. Updated after successful pairing.
+ *
+ * Transport-blind: handles are an IdP concern (`handle_mappings`), not duplicated
+ * here. The roster is a per-agent display name book keyed by bare identity.
  */
 import fs from 'fs';
 import { z } from 'zod';
@@ -14,7 +17,6 @@ import { writeAtomic } from './utils.js';
 
 const RosterEntrySchema = z.object({
   name: z.string(),
-  handles: z.array(z.string()),
   type: z.string().optional(),
 });
 
@@ -38,16 +40,9 @@ export function updateRoster(agentFolder: string, identity: ResolvedIdentity): v
   const existing = roster[identity.id];
 
   if (existing) {
-    // Update name, merge handles
     existing.name = identity.declaredName;
-    if (!existing.handles.includes(identity.handle)) {
-      existing.handles.push(identity.handle);
-    }
   } else {
-    roster[identity.id] = {
-      name: identity.declaredName,
-      handles: [identity.handle],
-    };
+    roster[identity.id] = { name: identity.declaredName };
   }
 
   const rosterPath = agentPath(agentFolder, 'state', 'identity-roster.json');

@@ -1,6 +1,6 @@
 /**
  * Unit tests for `AgentManager.pair` — the per-agent pairing flow that
- * replaced the `tryPairing` free function (deleted in task 88 phase 3.3).
+ * replaced the `tryPairing` free function (since deleted).
  *
  * Uses an `Object.create` prototype harness rather than constructing a
  * full `AgentManager`: the method depends only on `this.folder`,
@@ -50,7 +50,7 @@ const mockExistsSync = vi.mocked(fs.existsSync);
 const mockReadFileSync = vi.mocked(fs.readFileSync);
 const mockWriteFileSync = vi.mocked(fs.writeFileSync);
 
-const MINIMAL_ACL = { owner: 'local', peers: {} };
+const MINIMAL_ACL = { owner: 'operator', peers: {} };
 
 function mockWithCodes(codes: Record<string, object>): void {
   mockExistsSync.mockImplementation((p: unknown) => {
@@ -153,7 +153,9 @@ describe('AgentManager.pair', () => {
     expect(result.identity).toBeDefined();
 
     const users = getWrittenFile('paired-users.json');
-    expect(users[result.identity!.id]).toEqual({ '*': 'io' });
+    // Concrete per-channel grant — a code with no channel narrows to
+    // `default` via the schema default, replacing the old wholesale `*: io`.
+    expect(users[result.identity!.id]).toEqual({ 'default': 'io' });
 
     const codes = getWrittenFile('pairing-codes.json');
     expect((codes['secret'] as { consumed: boolean }).consumed).toBe(true);
@@ -164,6 +166,16 @@ describe('AgentManager.pair', () => {
     expect(aclWrites).toHaveLength(0);
 
     expect(busUpdate).toHaveBeenCalledWith('a:test@d9c1e2', 'acl-changed');
+  });
+
+  it('grants io on the code\'s explicit channel, not the default', () => {
+    mockWithCodes({ scoped: { for_handle: 'tg:12345', channel: 'focus' } });
+    idp.register('tg:12345', 'tg:12345');
+    const result = manager.pair('tg:12345', 'scoped');
+    expect(result.success).toBe(true);
+
+    const users = getWrittenFile('paired-users.json');
+    expect(users[result.identity!.id]).toEqual({ 'focus': 'io' });
   });
 
   it('marks code as consumed (single-use)', () => {

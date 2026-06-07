@@ -33,7 +33,7 @@ import type { ConversationEventBus, ConversationEventKind } from './event-bus.js
 
 export interface ConversationScopeBinding<TCtx = unknown> {
   factory: RunnerFactory<TCtx>;
-  /** Per-spawn hooks factory. Phase I.8 collapsed the prior
+  /** Per-spawn hooks factory. Collapsed from the prior
    *  `ConversationCallbacks` interface (which carried only this field) into
    *  a direct function type. Observation lives on the event bus —
    *  hosts subscribe via `Conversations.subscribeScope`. */
@@ -55,7 +55,7 @@ export interface ConversationScopeHandlers<TCtx> {
 export interface Conversations {
   /** Process-wide event bus for transition observation. Hosts subscribe with
    *  a `scope` filter at scope-register time and dispose at scope-unregister.
-   *  Phase H Step 7 made this the sole observation surface for queue UX,
+   *  This is the sole observation surface for queue UX,
    *  runner removal, and expiry side-effects. */
   readonly eventBus: ConversationEventBus;
 
@@ -67,7 +67,7 @@ export interface Conversations {
    *  the bus `kinds` filter from which handlers are populated, narrows views
    *  to `ConversationView<TCtx>` once at the façade boundary, and returns a
    *  disposer the host calls at shutdown. Closes the duplication between the
-   *  three host bus subscriptions that ship the same shape post-Phase-H. */
+   *  three host bus subscriptions that ship the same shape. */
   subscribeScope<TCtx>(
     scope: string,
     handlers: ConversationScopeHandlers<TCtx>,

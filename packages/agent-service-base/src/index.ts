@@ -17,7 +17,10 @@
  * ```
  */
 export { createService, ServiceConfigSchema } from './service.js';
-export type { Service, ServiceConfig, ServiceOptions, AdminRequest, AdminResponse } from './service.js';
+export type {
+  Service, ServiceConfig, ServiceOptions, AdminRequest, AdminResponse,
+  ServiceToolApproval, ServiceToolResult, ServiceCallMeta, ServiceToolRegistrar,
+} from './service.js';
 export type { PromptManager } from './prompt.js';
 export { routeMessage, log, sendIpc } from './ipc.js';
 export type { IpcOutMessage } from './ipc.js';

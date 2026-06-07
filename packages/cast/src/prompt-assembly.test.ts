@@ -36,7 +36,7 @@ function baseOpts(overrides?: Partial<PromptAssemblyOpts>): PromptAssemblyOpts {
   return {
     agentFolder: 'test-agent',
     agentName: 'test',
-    participant: 'local/cli:alice',
+    participant: 'cli:alice',
     channel: { idle_timeout: 86400000, bootstrapEnabled: false, cleanupEnabled: false, log_messages: true, use_sharding: false, disabled_tools: [] },
     channelName: 'default',
     ...overrides,
@@ -134,16 +134,28 @@ describe('assembleSystemPrompt', () => {
     expect(result).toContain('Weather: Sunny 72F');
   });
 
-  it('includes conversation context with participant info', () => {
-    const result = assembleSystemPrompt(baseOpts({ participant: 'u:abc123@srv/tg:12345' }));
+  it('includes conversation context with the bare participant identity (transport-blind)', () => {
+    const result = assembleSystemPrompt(baseOpts({ participant: 'u:abc123@srv' }));
     expect(result).toContain('<conversation-context>');
     expect(result).toContain('id="u:abc123@srv"');
-    expect(result).toContain('handle="tg:12345"');
+    // The transport handle is stripped at the gateway and never reaches the prompt.
+    expect(result).not.toContain('handle=');
     expect(result).toContain('name="default"');
   });
 
-  it('throws on unresolved participant address', () => {
-    expect(() => assembleSystemPrompt(baseOpts({ participant: 'tg:12345' }))).toThrow('Unresolved participant');
+  it('throws on a raw transport handle', () => {
+    expect(() => assembleSystemPrompt(baseOpts({ participant: 'tg:12345' }))).toThrow('Invalid participant');
+  });
+
+  it('throws on a compound participant — the wire never rides the participant above the gateway', () => {
+    expect(() => assembleSystemPrompt(baseOpts({ participant: 'u:abc123@srv/tg:12345' }))).toThrow('Invalid participant');
+  });
+
+  it('accepts a bare user identity on a cold spawn (push/scheduler targeting form)', () => {
+    // Regression: pre-108 the guard demanded the compound, so push- and
+    // scheduler-originated cold spawns (which carry the bare identity) threw.
+    const result = assembleSystemPrompt(baseOpts({ participant: 'u:f9a68fcd75@a9bdb7' }));
+    expect(result).toContain('id="u:f9a68fcd75@a9bdb7"');
   });
 
   it('skips empty files', () => {
@@ -169,8 +181,8 @@ describe('assembleSystemPrompt', () => {
   });
 
   it('escapes XML special characters in participant IDs', () => {
-    const result = assembleSystemPrompt(baseOpts({ participant: 'local/cli:<script>' }));
-    expect(result).toContain('handle="cli:&lt;script&gt;"');
+    const result = assembleSystemPrompt(baseOpts({ participant: 'u:a<script>@srv' }));
+    expect(result).toContain('id="u:a&lt;script&gt;@srv"');
   });
 
   it('strips HTML comments from file contents', () => {

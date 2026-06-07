@@ -12,8 +12,8 @@
  *     over a single WS instead of per-event-name SSE frames. Worker validates
  *     with Zod at the boundary.
  *
- * Both handlers can run in parallel during the web-ui SharedWorker migration
- * (task 86); the SSE handler is removed after Phase 3 verifies WS works.
+ * Both handlers can run in parallel during the web-ui SharedWorker migration;
+ * the SSE handler is removed once the WS path is verified.
  */
 import type { WebSocket, WebSocketServer } from 'ws';
 

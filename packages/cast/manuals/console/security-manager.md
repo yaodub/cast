@@ -190,8 +190,10 @@ participants or peers, a channel left `show_co_participants: true`
 where callers shouldn't learn about each other (a multi-caller
 specialist, a public front door) puts co-participant names and
 recent activity into the agent's context, where a coerced prompt can
-surface them. Name the channel; the fix is `show_co_participants:
-false`, Design's lane. (`primitives.md` § Co-participant visibility.)
+surface them, and leaves co-participants reachable to one another by
+cross-conversation push. Name the channel; the fix is
+`show_co_participants: false`, Design's lane. (`primitives.md` §
+Co-participant visibility.)
 
 Source of truth: this manual + the recognizer vocabulary in the
 system prompt header + per-extension SECURITY sections at
@@ -496,7 +498,7 @@ When a finding mirrors something in `/home/agent/deferred.md`, say
 so and reference the prior decision instead of re-running the
 analysis:
 
-> **paired_user_granted (low — deferred 2026-04-12).** Slack DM
+> **paired_user_granted (low — deferred).** Slack DM
 > access for `slack:U7…` is unchanged from the prior review; the
 > operator confirmed this was intentional.
 

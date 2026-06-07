@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { asIdentityId } from './auth/address.js';
 import path from 'path';
 
 vi.mock('./config.js', () => ({
@@ -39,50 +40,37 @@ describe('readRoster', () => {
     expect(readRoster('test')).toEqual({});
   });
 
-  it('parses existing roster file', () => {
-    const roster = { 'u:abc@srv': { name: 'Alice', handles: ['tg:12345'] } };
+  it('parses existing roster file, dropping legacy handles', () => {
+    // Old files may still carry a `handles` array; the transport-blind roster
+    // strips it on read (handles are an IdP concern, not duplicated per-agent).
+    const onDisk = { 'u:abc@srv': { name: 'Alice', handles: ['tg:12345'] } };
     mockReadFileSync.mockImplementation((p: unknown) => {
-      if (String(p).endsWith('identity-roster.json')) return JSON.stringify(roster);
+      if (String(p).endsWith('identity-roster.json')) return JSON.stringify(onDisk);
       throw new Error('not found');
     });
-    expect(readRoster('test')).toEqual(roster);
+    expect(readRoster('test')).toEqual({ 'u:abc@srv': { name: 'Alice' } });
   });
 });
 
 describe('updateRoster', () => {
   it('creates new entry for unknown identity', () => {
-    updateRoster('test', { id: 'u:abc@srv', declaredName: 'Alice', handle: 'tg:12345' });
+    updateRoster('test', { id: asIdentityId('u:abc@srv'), declaredName: 'Alice', handle: 'tg:12345' });
 
     expect(mockWriteFileSync).toHaveBeenCalled();
     const written = JSON.parse(mockWriteFileSync.mock.calls[0]![1] as string);
-    expect(written['u:abc@srv']).toEqual({ name: 'Alice', handles: ['tg:12345'] });
+    expect(written['u:abc@srv']).toEqual({ name: 'Alice' });
   });
 
-  it('updates existing entry, merges handles', () => {
-    const existing = { 'u:abc@srv': { name: 'Alice', handles: ['tg:12345'] } };
+  it('updates the display name of an existing entry (no handles stored)', () => {
+    const existing = { 'u:abc@srv': { name: 'Alice' } };
     mockReadFileSync.mockImplementation((p: unknown) => {
       if (String(p).endsWith('identity-roster.json')) return JSON.stringify(existing);
       throw new Error('not found');
     });
 
-    updateRoster('test', { id: 'u:abc@srv', declaredName: 'Alicia', handle: 'tg:67890' });
+    updateRoster('test', { id: asIdentityId('u:abc@srv'), declaredName: 'Alicia', handle: 'tg:67890' });
 
     const written = JSON.parse(mockWriteFileSync.mock.calls[0]![1] as string);
-    expect(written['u:abc@srv'].name).toBe('Alicia');
-    expect(written['u:abc@srv'].handles).toContain('tg:12345');
-    expect(written['u:abc@srv'].handles).toContain('tg:67890');
-  });
-
-  it('does not duplicate existing handles', () => {
-    const existing = { 'u:abc@srv': { name: 'Alice', handles: ['tg:12345'] } };
-    mockReadFileSync.mockImplementation((p: unknown) => {
-      if (String(p).endsWith('identity-roster.json')) return JSON.stringify(existing);
-      throw new Error('not found');
-    });
-
-    updateRoster('test', { id: 'u:abc@srv', declaredName: 'Alice', handle: 'tg:12345' });
-
-    const written = JSON.parse(mockWriteFileSync.mock.calls[0]![1] as string);
-    expect(written['u:abc@srv'].handles).toEqual(['tg:12345']);
+    expect(written['u:abc@srv']).toEqual({ name: 'Alicia' });
   });
 });

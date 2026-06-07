@@ -184,12 +184,15 @@ export function setDeps(d: AdminDeps): void {
   deps = d;
 }
 
-export function createContext({ req }: CreateExpressContextOptions) {
+export function createContext({ req, res }: CreateExpressContextOptions) {
   const token = extractToken(req.headers.authorization);
   if (!deps) throw new Error('Admin deps not initialized — setDeps() must be called before accepting requests');
   return {
     session: isValidSession(token) ? { token: token! } : null, // token is non-null when isValidSession returns true
     deps,
+    // Express response — for the rare procedure that sets a cookie (e.g.
+    // service.adminPageUrl's path-scoped page session).
+    res,
   };
 }
 

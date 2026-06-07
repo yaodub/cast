@@ -10,7 +10,8 @@
  * Composed by `AgentManager`. Shares the agent-level services (bus, store,
  * AgentDb, spawn hooks) via its constructor opts.
  */
-import { isSystemSender } from '../auth/address.js';
+import { isParticipantAddress, isSystemSender } from '../auth/address.js';
+import type { IdentityId } from '../auth/address.js';
 import { logger } from '../logger.js';
 import { readAgentConfig } from '../container/container-runner.js';
 import { resolveConversationKey, serializeConversationKey } from '../conversations/resolve-key.js';
@@ -45,8 +46,8 @@ export interface ConsoleSpawnContext {
   address: string;
   channelName: string;
   channel: AgentChannel;
-  participant: string;
-  replyTo: string | undefined;
+  participant: IdentityId;
+  replyTo: IdentityId | undefined;
   qualifier: string | undefined;
 }
 
@@ -108,7 +109,7 @@ export class ConsoleManager {
   readonly scope: string;
   /** Disposer for this manager's `ConversationEventBus` subscription. Set
    *  in the constructor right after `conversations.registerScope`, called
-   *  on shutdown. Phase H Step 7. */
+   *  on shutdown. */
   private conversationEventDispose: (() => void) | null = null;
 
   constructor(opts: ConsoleManagerOpts) {
@@ -120,13 +121,13 @@ export class ConsoleManager {
       store: opts.store,
     });
 
-    // Phase H Step 7 — one bus subscription per scope. The snapshot cleanup
+    // One bus subscription per scope. The snapshot cleanup
     // is the load-bearing reaction (strategies stash blueprint snapshots
     // per-runner; without prompt cleanup on runner removal they leak across
     // sessions). Routing it through the bus instead of inline callbacks
     // keeps the fire site tied to the state transition by construction.
     //
-    // `subscribeScope` (Phase I.7) is the typed chokepoint — `expiry-complete`
+    // `subscribeScope` is the typed chokepoint — `expiry-complete`
     // is a no-op for console traffic (transient authoring surfaces with no
     // agent.db / state to wipe), so it's omitted and the bus skips dispatch.
     this.conversationEventDispose = conversations.subscribeScope<ConsoleSpawnContext>(
@@ -183,7 +184,15 @@ export class ConsoleManager {
         'Attachments on console channel are dropped (console sessions do not persist attachments)',
       );
     }
-    const participant = routing?.targetParticipant || senderId;
+    const rawParticipant = routing?.targetParticipant || senderId;
+    // Validate-then-brand: console route entry is a boundary (operator
+    // surfaces, delegating consoles). Downstream spawn context trusts the brand.
+    if (!isParticipantAddress(rawParticipant)) {
+      throw new Error(
+        `Invalid participant address: "${rawParticipant}" — expected a bare identity (u:…@issuer), an agent (a:…@issuer), or an operator/console surface`,
+      );
+    }
+    const participant = rawParticipant;
     // Register the participant so onDelegate's security gate recognises
     // this session. See ConsoleManagerOpts.upsertParticipant for rationale.
     this.opts.upsertParticipant(participant);
@@ -197,7 +206,8 @@ export class ConsoleManager {
       channelName,
       channel,
       participant,
-      replyTo: routing?.targetParticipant,
+      // When targetParticipant was set it equals the validated participant.
+      replyTo: routing?.targetParticipant ? participant : undefined,
       qualifier: routing?.qualifier,
     };
 
@@ -275,9 +285,9 @@ export class ConsoleManager {
   /** Per-spawn hooks for this manager's scope. Mirrors AgentManager: the
    *  spawn-hooks shim routes follow-up deliveries (retry-push, lifecycle,
    *  query-push) back through the View, so the hook plumbing never needs a
-   *  raw ConversationRunner reference. After Phase H Step 7 this is the
+   *  raw ConversationRunner reference. This is the
    *  only host-supplied function — transition observation flows through
-   *  the event-bus subscription wired in the constructor. Phase I.8
+   *  the event-bus subscription wired in the constructor. A later change
    *  collapsed the prior single-field `ConversationCallbacks` interface to
    *  a direct `BuildSpawnHooks` function type. */
   private buildSpawnHooks: BuildSpawnHooks<ConsoleSpawnContext> = (conv) =>
@@ -328,8 +338,8 @@ export class ConsoleManager {
     address: string;
     conversationKey: string;
     channelName: string;
-    participant?: string;
-    replyTo?: string;
+    participant?: IdentityId;
+    replyTo?: IdentityId;
     qualifier?: string;
     sessionIdOverride?: string;
     isNewConversation: boolean;

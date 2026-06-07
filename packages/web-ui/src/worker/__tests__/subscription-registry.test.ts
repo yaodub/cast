@@ -1,7 +1,7 @@
 /**
  * SubscriptionRegistry — coverage for the per-(port, scope) idempotency
  * semantics that gate the worker's connection refcount. The test surface
- * mirrors the bug fix in Phase 3.3: tabs frequently subscribe to the same
+ * mirrors the bug fix: tabs frequently subscribe to the same
  * scope from multiple hooks, so `add` must distinguish first-time from
  * repeat so handleSubscribe only acquires once per port-scope pair.
  */

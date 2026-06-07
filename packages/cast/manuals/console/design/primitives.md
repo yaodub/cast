@@ -146,7 +146,8 @@ these dimensions, *and* the difference matters for behavior or safety:
 6. **Sharding** — within-channel qualifier dimension for parallel
    sub-conversations
 7. **Participant visibility** — `show_co_participants` flag: whether
-   the agent is aware of others on the channel
+   co-participants are visible and reachable to each other on the
+   channel
 
 If two candidate channels share all seven, merge them. If one channel
 is doing two channels' work — a hostile-input subscription handler
@@ -181,13 +182,26 @@ verbs are even present here).
 
 ### Co-participant visibility (`show_co_participants`)
 
-`channel.json: show_co_participants: false` hides the *other people
-on this channel* from the agent. Default `true`. Governs the agent's
-awareness that co-participants exist — not whether conversations are
-isolated (that's structural and always on, § *Memory*). When off, the
-`<other-participants>` line in `<conversation-context>` becomes an
-explicit disabled marker and `conversation__list_summaries` drops
-other participants' rows (§ *Recall*).
+A channel is a cross-participant surface. Its members are the
+identities placed on it: a user by pairing, a peer agent by the
+answer grant it holds here. Members are the channel's co-participants,
+and `show_co_participants` enables or disables whether they see and
+reach each other.
+
+`channel.json: show_co_participants: false` isolates the *other people
+on this channel* from each other. Default `true`. One flag, two
+consequences: it gates whether the agent is aware co-participants
+exist, and whether they can reach each other by cross-conversation
+push. When off, the `<other-participants>` line in
+`<conversation-context>` becomes an explicit disabled marker, the
+channel's members are hidden from member-tier
+`agent__list_participants` callers (own row plus a population-blind
+note, queried from any room), and `conversation__push_to_participant`
+from one co-participant to another is refused. The flag does not touch
+per-participant conversation keying. Each conversation is separately
+keyed regardless, structurally and always (§ *Memory*). What the flag
+switches is reach and visibility between participants, not the
+isolation of one conversation's transcript.
 
 Use this to:
 
@@ -671,14 +685,17 @@ previous-session summaries into the conversation context on every
 turn, scoped to the current `(channel, participant)` key, no tool
 call required.
 
-`show_co_participants: false` (§ *Co-participant visibility*) narrows
-`list_summaries` further: other participants' rows are dropped for
-any channel whose flag is off — the caller's own rows always remain —
-and a static policy note replaces them, keyed on policy not
-population so it never reveals whether others exist. This is the
-clean control for the multi-caller-specialist case; disabling the
-tool via `disabled_tools` only closes the tool, leaving the
-`<other-participants>` prompt layer still naming co-participants.
+`list_summaries` is already caller-scoped: a participant sees only
+its own conversations' rows, never a co-participant's, regardless of
+any flag. `show_co_participants: false` (§ *Co-participant
+visibility*) adds a static policy note on the hiding channel, keyed
+on policy not population so it never reveals whether others exist.
+The flag remains the clean control for the multi-caller-specialist
+case — it closes the `<other-participants>` prompt layer, the
+channel's member rows in `agent__list_participants`, and
+cross-conversation push; disabling a tool via `disabled_tools` only
+closes that tool, leaving the prompt layer still naming
+co-participants.
 
 When a channel wants information from earlier conversations on
 *other* channels — common in scheduled maintenance fires — neither

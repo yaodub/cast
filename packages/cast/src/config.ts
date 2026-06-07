@@ -194,6 +194,31 @@ export const MAX_OUTPUT_BYTES_DEFAULT = 32_768;
  */
 export const CONFIG_RELOAD_DEBOUNCE_MS = 15_000;
 
+/**
+ * Outbound delivery — undelivered packets older than this are marked failed
+ * (terminal, never delivered). Chat replies decay fast: with live sends
+ * draining a recipient's backlog first, anything still pending at this age is
+ * genuinely orphaned, and a reply landing later with no marker reads as a
+ * glitch, not a delivery.
+ */
+export const OUTBOUND_DELIVERY_TTL_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Retry backoff for failed outbound sends, indexed by attempt count; the last
+ * entry repeats until `OUTBOUND_DELIVERY_TTL_MS` expires the packet.
+ */
+export const OUTBOUND_RETRY_BACKOFF_MS = [5_000, 30_000, 120_000, 600_000];
+
+/**
+ * Re-send window for packets sent over a deferred-ack transport (web) whose
+ * client never acked. Safe to re-send: the web client dedups by packet id and
+ * re-acks duplicates, so a lost ack self-heals on the next attempt.
+ */
+export const OUTBOUND_ACK_REDUE_MS = 600_000;
+
+/** Delivery-worker tick — how often pending outbound packets are re-checked. */
+export const OUTBOUND_WORKER_TICK_MS = 30_000;
+
 /** Socket filename for the service admin HTTP server. */
 export const ADMIN_SOCKET_NAME = 'admin.sock';
 

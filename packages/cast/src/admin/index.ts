@@ -40,8 +40,15 @@ export async function startAdminServer(port: number, deps: AdminDeps): Promise<R
   const app = express();
   // Localhost only — admin API is not designed for public-facing deployment.
   app.use(cors({ origin: /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/, credentials: true }));
-  app.use(express.json({ limit: '100kb' }));
   app.use(cookieParser());
+
+  // --- Service admin reverse-proxy ---
+  // Mounted BEFORE express.json: the proxy streams request bodies through to
+  // the service socket (`req.pipe`), and a body parser ahead of it would
+  // consume JSON POSTs, piping nothing. Needs cookieParser (browser sessions).
+  app.use('/agents', createProxyRouter(deps));
+
+  app.use(express.json({ limit: '100kb' }));
 
   // --- Session auth (plain Express, handles cookies) ---
   app.use('/api/auth/session', sessionRouter);
@@ -85,9 +92,6 @@ export async function startAdminServer(port: number, deps: AdminDeps): Promise<R
     bus: deps.bus,
     gateway: deps.gateway,
   });
-
-  // --- Service admin reverse-proxy ---
-  app.use('/agents', createProxyRouter(deps));
 
   const server = await new Promise<ReturnType<typeof app.listen>>((resolve, reject) => {
     const srv = app.listen(actualPort, '127.0.0.1', () => {

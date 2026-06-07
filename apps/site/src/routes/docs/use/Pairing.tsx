@@ -13,7 +13,7 @@ export function UsePairing() {
       toc={[
         { label: 'How pairing works' },
         { label: 'Pairing yourself' },
-        { label: 'Narrowing access' },
+        { label: 'Channel access' },
         { label: 'Transports you can pair to' },
       ]}
     >
@@ -53,15 +53,18 @@ export function UsePairing() {
         step because you're ferrying between your own tabs.
       </p>
 
-      <H2>Narrowing access</H2>
+      <H2>Channel access</H2>
       <p style={proseP}>
-        A default pairing grants full conversation on every channel the agent has. To
-        narrow that, replace the all-channel grant with one (or a few) specific channel
-        names — tell <ConsoleChip kind="configure" />:
+        You pair with one channel at a time. Pairing into a channel makes you a member of
+        it, so the agent can see you alongside anyone else there and carry messages between
+        you, if the channel's configuration allows it. To reach a second channel, you pair
+        into that one too, and the grants accumulate instead of replacing each other. To
+        scope a person to certain channels, or move them off one, tell{' '}
+        <ConsoleChip kind="configure" />:
       </p>
 
       <AskConsole kind="configure">
-        Narrow Sam's access — they should only reach the briefings channel, nothing else.
+        Scope Sam to the briefings channel only, nothing else.
       </AskConsole>
 
       <p style={proseP}>

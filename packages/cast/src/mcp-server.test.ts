@@ -7,7 +7,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
 import type { McpServerDeps, McpAgentContext } from './agent/mcp-server.js';
 import { registerTools } from './agent/mcp-server.js';
-import { makeTestCtx, makeTestDeps } from './test-helpers.js';
+import { makeStubStore, makeTestCtx, makeTestDeps } from './test-helpers.js';
 import { feedAppendEvents, type FeedAppendEvent } from './lib/feed-format.js';
 import { DEFAULT_CHANNEL, type AgentChannel } from './conversations/types.js';
 import { agentPath } from './config.js';
@@ -82,7 +82,7 @@ describe('task__schedule', () => {
 // stub bus + stub agent DB. Both-branches discipline
 // for tests of security gates: `participantExists`, `gateInbound`, and the
 // guard composers are gates that must be tested at the real boundary; mocking
-// them at the handler level let the Task-69-era `participantExists` bug
+// them at the handler level let the original `participantExists` bug
 // (and our own variant of it) ship. The old test cases here mocked
 // `deliverToChannel`/`deliverToAgent` and thus exercised zero coverage of
 // those gates.
@@ -430,5 +430,177 @@ describe('file__watch_feed / file__unwatch / file__list_watches', () => {
     expect(names).not.toContain('file__list_watches');
     // file__append_feed stays — it doesn't depend on FileWatchService.
     expect(names).toContain('file__append_feed');
+  });
+});
+
+// --- conversation__list_summaries — read-tier matrix ---
+//
+// The own-rows filter exempts the READ TIER (system context ∥ operator
+// surface), never the member tier; the old posture filter is deleted as
+// provably dead (member tier only ever holds its own rows after the first
+// filter). Matrix pins every caller class, including the configured `u:`
+// owner, who is deliberately member-tier for reads (read ⊂ write).
+
+const SUMMARIES_FOLDER = 'cast-test-summaries';
+const SUMMARIES_AGENT_ID = 'a:self@test';
+
+function summariesRows() {
+  const now = new Date().toISOString();
+  return [
+    { conversation_key: 'open|u:alice@srv', channel_name: 'open', participant: 'u:alice@srv', status: 'active', last_active: now, summary: 'alice-open-summary', message_count: 1 },
+    { conversation_key: 'quiet|u:bob@srv', channel_name: 'quiet', participant: 'u:bob@srv', status: 'active', last_active: now, summary: 'bob-quiet-summary', message_count: 1 },
+    { conversation_key: 'open|self', channel_name: 'open', participant: null, status: 'active', last_active: now, summary: 'self-row-summary', message_count: 1 },
+  ];
+}
+
+function summariesCtx(participant: string | null, channelName: string | null = 'default'): McpAgentContext {
+  return makeTestCtx({
+    agentFolder: SUMMARIES_FOLDER,
+    agentId: SUMMARIES_AGENT_ID,
+    participant,
+    channelName,
+    store: makeStubStore({ getConversationsWithSummaries: () => summariesRows() }),
+  });
+}
+
+describe('conversation__list_summaries — read-tier matrix', () => {
+  beforeEach(() => {
+    // Real channel config on disk: `quiet` hides co-participants.
+    const quietDir = agentPath(SUMMARIES_FOLDER, 'blueprint', 'channels', 'quiet');
+    fs.mkdirSync(quietDir, { recursive: true });
+    fs.writeFileSync(path.join(quietDir, 'channel.json'), JSON.stringify({ idle_timeout: null, show_co_participants: false }));
+  });
+  afterEach(() => {
+    fs.rmSync(agentPath(SUMMARIES_FOLDER), { recursive: true, force: true });
+  });
+
+  async function summariesText(participant: string | null, channelName: string | null = 'default'): Promise<string> {
+    const client = await createTestClient(summariesCtx(participant, channelName), makeTestDeps());
+    const r = await client.callTool({ name: 'conversation__list_summaries', arguments: {} });
+    expect(r.isError).toBeFalsy();
+    return resultText(r);
+  }
+
+  it('system context (agent-self) sees every row, including posture-off channels', async () => {
+    const text = await summariesText(null);
+    expect(text).toContain('alice-open-summary');
+    expect(text).toContain('bob-quiet-summary');
+    expect(text).toContain('self-row-summary');
+  });
+
+  it('operator surface is read tier — exempt from the own-rows filter', async () => {
+    const text = await summariesText('cli:operator');
+    expect(text).toContain('alice-open-summary');
+    expect(text).toContain('bob-quiet-summary');
+  });
+
+  it('member tier sees only its own rows plus agent-self rows', async () => {
+    const text = await summariesText('u:alice@srv');
+    expect(text).toContain('alice-open-summary');
+    expect(text).toContain('self-row-summary');
+    expect(text).not.toContain('bob-quiet-summary');
+  });
+
+  it('a configured u: owner is NOT read tier — member-scoped reads (read ⊂ write)', async () => {
+    // The handler computes the tier from the participant string alone; no acl
+    // owner config can widen it. u:owner@srv stands in for a configured owner.
+    const text = await summariesText('u:owner@srv');
+    expect(text).not.toContain('alice-open-summary');
+    expect(text).not.toContain('bob-quiet-summary');
+    expect(text).toContain('self-row-summary');
+  });
+
+  it('peer agent cell sees only agent-self rows (M2 closure unchanged)', async () => {
+    const text = await summariesText('a:peer@srv');
+    expect(text).not.toContain('alice-open-summary');
+    expect(text).not.toContain('bob-quiet-summary');
+    expect(text).toContain('self-row-summary');
+  });
+
+  it('posture note renders for member tier on a hiding channel, not for the read tier', async () => {
+    const memberText = await summariesText('u:alice@srv', 'quiet');
+    expect(memberText).toContain('Co-participant visibility is disabled on this channel');
+    const operatorText = await summariesText('cli:operator', 'quiet');
+    expect(operatorText).not.toContain('Co-participant visibility is disabled on this channel');
+  });
+});
+
+describe('conversation__push_to_participant — target shape gate', () => {
+  function pushDeps(): { deps: McpServerDeps; calls: unknown[][] } {
+    const calls: unknown[][] = [];
+    const deps = makeTestDeps({
+      deliverToChannel: async (...args: unknown[]) => {
+        calls.push(args);
+        return { ok: true as const, requestId: 'req-test-1' };
+      },
+    });
+    return { deps, calls };
+  }
+
+  const REJECTION = 'Invalid target_participant. Use a participant identity as returned by agent__list_participants, e.g. u:abc@srv.';
+
+  it('accepts a bare user identity', async () => {
+    const { deps, calls } = pushDeps();
+    const client = await createTestClient(makeTestCtx(), deps);
+    const r = await client.callTool({
+      name: 'conversation__push_to_participant',
+      arguments: { target_participant: 'u:abc@srv', channel: 'side', text: 'hi' },
+    });
+    expect(resultText(r)).not.toContain('Invalid target_participant');
+    expect(calls).toHaveLength(1);
+  });
+
+  it('accepts agent and operator forms', async () => {
+    const { deps, calls } = pushDeps();
+    const client = await createTestClient(makeTestCtx(), deps);
+    for (const target of ['a:peer@srv', 'cli:alice', 'admin:local']) {
+      const r = await client.callTool({
+        name: 'conversation__push_to_participant',
+        arguments: { target_participant: target, channel: 'side', text: 'hi' },
+      });
+      expect(resultText(r)).not.toContain('Invalid target_participant');
+    }
+    expect(calls).toHaveLength(3);
+  });
+
+  it('rejects a compound target before dispatch', async () => {
+    const { deps, calls } = pushDeps();
+    const client = await createTestClient(makeTestCtx(), deps);
+    const r = await client.callTool({
+      name: 'conversation__push_to_participant',
+      arguments: { target_participant: 'u:abc@srv/tg:123', channel: 'side', text: 'hi' },
+    });
+    expect(r.isError).toBe(true);
+    expect(resultText(r)).toBe(REJECTION);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('rejects an unknown-prefix target before dispatch', async () => {
+    const { deps, calls } = pushDeps();
+    const client = await createTestClient(makeTestCtx(), deps);
+    const r = await client.callTool({
+      name: 'conversation__push_to_participant',
+      arguments: { target_participant: 'tg:12345', channel: 'side', text: 'hi' },
+    });
+    expect(r.isError).toBe(true);
+    expect(resultText(r)).toBe(REJECTION);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('rejection text is transport-blind: states the expected form only', async () => {
+    // Blindness is total — the rejection must not echo the rejected value,
+    // name handles/transports, or reference the retired compound format.
+    const { deps } = pushDeps();
+    const client = await createTestClient(makeTestCtx(), deps);
+    const r = await client.callTool({
+      name: 'conversation__push_to_participant',
+      arguments: { target_participant: 'u:abc@srv/tg:123', channel: 'side', text: 'hi' },
+    });
+    const text = resultText(r);
+    expect(text).not.toContain('tg:123');
+    expect(text).not.toContain('/');
+    expect(text.toLowerCase()).not.toContain('handle');
+    expect(text.toLowerCase()).not.toContain('transport');
+    expect(text.toLowerCase()).not.toContain('compound');
   });
 });

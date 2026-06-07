@@ -20,7 +20,7 @@ const DEBOUNCE_MS = 1000;
 // "Waking up…" debris above an unprompted reply.
 const RECENT_USER_ACTIVITY_WINDOW_MS = 60_000;
 // Preview streams that go this long without an edit are GC'd. Load-bearing
-// for Phase 1 refinements 4+5 (producer leaks past container kill or
+// for the producer-leak guards (producer leaks past container kill or
 // participant disconnect): the host stops the actual frame flow long before
 // 60s, so any entry stale this long is a dead bubble we should release. The
 // seal-edit code path also drops the entry on its own — this only catches

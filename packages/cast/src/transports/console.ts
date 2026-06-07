@@ -116,7 +116,7 @@ export class ConsoleTransport implements Transport {
     // Per-channel scoping: lifecycle events also carry a channel since
     // a single agent host can have multiple console subscribers (e.g.
     // `__design` + `__configure`) and a fresh-conversation / bootstrap
-    // for one shouldn't cross-fan to the other. `channelOf` (Phase I.10)
+    // for one shouldn't cross-fan to the other. `channelOf`
     // consumes the discriminated `Evt` union exhaustively — adding a new
     // event kind forces a compile-time decision there.
     const eventChannel = channelOf(evt);

@@ -2,14 +2,18 @@
  * Identity provider — resolves transport handles to stable identities.
  *
  * LocalIdentityProvider stores identities in a SQLite database (identities.db).
- * CLI handles (`cli:*`) always resolve to the special `local` identity.
- * Telegram and other handles require explicit registration (via pairing).
+ * Operator handles (`cli:*`/`admin:*`) bypass the IdP — the self-identifying
+ * handle IS the identity (a machine-trust tier, not an IdP record). Telegram
+ * and other handles require explicit registration (via pairing).
  */
 import Database from 'better-sqlite3';
 import { createHash, createPublicKey, createPrivateKey, randomBytes } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { z } from 'zod';
+import { isOperatorHandle } from './address.js';
+import { asIdentityId } from './address.js';
+import type { IdentityId } from './address.js';
 import { queryAll, queryOne } from '../lib/db-query.js';
 import { logger } from '../logger.js';
 
@@ -19,6 +23,7 @@ import { logger } from '../logger.js';
 
 const ServerIdRow = z.object({ server_id: z.string() });
 const IdentityRow = z.object({ id: z.string(), declared_name: z.string() });
+const HandleRow = z.object({ handle: z.string() });
 const IdentityWithHandleRow = z.object({
   id: z.string(),
   declared_name: z.string(),
@@ -40,8 +45,10 @@ const AgentRegistrationRow = z.object({
 // ---------------------------------------------------------------------------
 
 export interface ResolvedIdentity {
-  /** Identity ID — "u:a7f3k9x2" or "local". */
-  id: string;
+  /** Identity ID — bare `u:<guid>@<issuer>`, or a self-identifying operator
+   *  surface (`cli:…`/`admin:…`). Branded: the IdP is the minting boundary
+   *  for identity ids — consumers trust the brand without re-validating. */
+  id: IdentityId;
   /** User-chosen display name. */
   declaredName: string;
   /** The transport handle that was resolved. */
@@ -76,6 +83,8 @@ export interface IdentityProvider {
   register(handle: string, declaredName: string, pairedVia?: string): ResolvedIdentity;
   updateDeclaredName(identityId: string, name: string): void;
   getIdentity(identityId: string): IdentityRecord | null;
+  /** Handles owned by an identity (reverse of `resolve`). List-typed: today 0..1, multi-transport-ready. `local` → []. */
+  getHandlesForIdentity(identityId: string): string[];
   linkHandle(identityId: string, handle: string): void;
   verifyAgent(alias: string, keyPem: string): AgentVerifyResult;
   listIdentities(): IdentityRecord[];
@@ -156,17 +165,16 @@ export class LocalIdentityProvider implements IdentityProvider {
   }
 
   resolve(handle: string): ResolvedIdentity | null {
-    // Operator-class transports (CLI, admin console) always resolve to the
-    // `local` sentinel identity. Both transports bind to localhost only —
-    // physical-machine access is the trust boundary. See ACL fast-path in
-    // `auth/acl.ts:67` (`identity === 'local'` → full access).
-    if (handle.startsWith('cli:')) {
-      const name = handle.slice(4); // "cli:alice" → "alice"
-      return { id: 'local', declaredName: name, handle };
-    }
-    if (handle.startsWith('admin:')) {
-      const name = handle.slice(6); // "admin:3fa8c210" → "3fa8c210"
-      return { id: 'local', declaredName: name, handle };
+    // Operator transports (CLI, admin console) bypass the IdP entirely: the
+    // self-identifying handle IS the identity — there is no `local` sentinel.
+    // Both bind to localhost only, so machine access is the trust boundary;
+    // `isOperatorTier` (`auth/address.ts`) recognizes the handle as the operator
+    // tier → ACL full access. (`cli:alice` is to the operator what `u:guid` is
+    // to a user.)
+    if (isOperatorHandle(handle)) {
+      const name = handle.slice(handle.indexOf(':') + 1); // "cli:alice" → "alice"
+      // Brand minted here: the operator surface is its own identity id.
+      return { id: asIdentityId(handle), declaredName: name, handle };
     }
 
     const row = queryOne(this.db.prepare(
@@ -177,7 +185,8 @@ export class LocalIdentityProvider implements IdentityProvider {
     ), IdentityRow, handle);
 
     if (!row) return null;
-    return { id: row.id, declaredName: row.declared_name, handle };
+    // Brand minted here: row.id is an IdP-owned identity PK.
+    return { id: asIdentityId(row.id), declaredName: row.declared_name, handle };
   }
 
   register(handle: string, declaredName: string, pairedVia?: string): ResolvedIdentity {
@@ -195,7 +204,7 @@ export class LocalIdentityProvider implements IdentityProvider {
       ).run(handle, id);
     })();
 
-    return { id, declaredName, handle };
+    return { id: asIdentityId(id), declaredName, handle };
   }
 
   updateDeclaredName(identityId: string, name: string): void {
@@ -205,9 +214,16 @@ export class LocalIdentityProvider implements IdentityProvider {
   }
 
   getIdentity(identityId: string): IdentityRecord | null {
-    // Special case: local identity is virtual (not in DB)
-    if (identityId === 'local') {
-      return { id: 'local', declaredName: 'operator', createdAt: '', pairedVia: null, handles: [] };
+    // Operator handles (cli/admin) are self-identifying and virtual — never in
+    // the DB. The handle IS the id; bypasses the IdP exactly like `resolve()`.
+    if (isOperatorHandle(identityId)) {
+      return {
+        id: identityId,
+        declaredName: identityId.slice(identityId.indexOf(':') + 1),
+        createdAt: '',
+        pairedVia: null,
+        handles: [],
+      };
     }
 
     const rows = queryAll(this.db.prepare(
@@ -227,6 +243,14 @@ export class LocalIdentityProvider implements IdentityProvider {
       pairedVia: first.paired_via,
       handles: rows.flatMap((r) => r.handle ? [r.handle] : []),
     };
+  }
+
+  getHandlesForIdentity(identityId: string): string[] {
+    // Operator handles bypass the IdP — the handle is its own wire, not a mapping.
+    if (isOperatorHandle(identityId)) return [];
+    return queryAll(this.db.prepare(
+      'SELECT handle FROM handle_mappings WHERE identity_id = ?',
+    ), HandleRow, identityId).map((r) => r.handle);
   }
 
   linkHandle(identityId: string, handle: string): void {

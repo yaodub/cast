@@ -3,7 +3,7 @@
  * `LifecyclePhase` → wire-shape mapping (producer side) and the
  * `LifecyclePhase` → user-visible text mapping (consumer side).
  *
- * Before Phase I.1, the producer-side ternary (`phase === 'compacting' ? {…} :
+ * Previously, the producer-side ternary (`phase === 'compacting' ? {…} :
  * phase === 'fresh_conversation' ? {…} : {…}`) lived inline in both
  * `agent-spawn-hooks.ts` and `console/shared/server-scope.ts`, and the
  * consumer-side `if (phase === '…' && active) text = '…'` table lived inline

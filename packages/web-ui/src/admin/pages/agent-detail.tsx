@@ -18,6 +18,7 @@ import { EmailExtensionPage } from './extensions/email';
 import { WebFetchExtensionPage } from './extensions/web-fetch';
 import { CalendarExtensionPage } from './extensions/calendar';
 import { WhatsAppExtensionPage } from './extensions/whatsapp';
+import { ServiceSecretsPage } from './extensions/service';
 import { McpServersPage } from './mcp-servers';
 import { TokensView } from './tokens-view';
 import { AgentAvatar } from '../../lib/components/agent-avatar';
@@ -73,7 +74,7 @@ export const agentAccessManual: PageManualEntry = {
 export const agentCapabilitiesManual: PageManualEntry = {
   purpose: 'External services and tools the agent can use — split into two subtabs: Extensions (email, web-fetch, calendar, whatsapp) and MCP servers. Default subtab is Extensions. Per-extension drill-in: /capabilities/extensions/<ext>.',
   sections: [
-    { anchor: 'extensions', purpose: 'Default subtab. Extensions enabled on this agent. Click into one to manage credentials and config.', actions: [] },
+    { anchor: 'extensions', purpose: 'Default subtab. Extensions enabled on this agent. Click into one to manage credentials and config. A Service card appears when the agent has a service process — it shows the service status, a Restart control, and any declared settings/credentials.', actions: [] },
     { anchor: 'mcp-servers', purpose: 'Subtab. External MCP servers wired into this agent. Operator fills env values for slots declared by the blueprint.', actions: ['Fill a per-server env value (form is the canonical secret-write path, not chat)'] },
   ],
 };
@@ -293,12 +294,7 @@ export function AgentDetailPage() {
   const agent = trpc.agent.get.useQuery({ alias }, { enabled: !!alias });
   const pairingCounts = trpc.agent.pendingPairingCounts.useQuery();
   const accessBadge = pairingCounts.data?.find((r) => r.alias === alias)?.count;
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
   const { sendToSecurityManager } = useChatSelection();
-  const restartService = trpc.agent.restartService.useMutation({
-    onSuccess: () => setMenuOpen(false),
-  });
   const requestReview = trpc.agent.requestReview.useMutation({
     onSuccess: async ({ text }) => {
       await sendToSecurityManager(text);
@@ -319,15 +315,6 @@ export function AgentDetailPage() {
       utils.agent.list.invalidate();
     }
   }, [agent.data?.status, alias, utils]);
-
-  useEffect(() => {
-    if (!menuOpen) return;
-    function handleClick(e: MouseEvent): void {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
-    }
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [menuOpen]);
 
   if (!alias) return <p class="text-gray-500">No agent selected.</p>;
   if (agent.isLoading) return <p class="text-gray-500 text-sm">Loading...</p>;
@@ -379,32 +366,6 @@ export function AgentDetailPage() {
               Click toggles the chat docked/closed; both surfaces
               stay in sync because Layout owns currentChat. */}
           <ChatVerbPills alias={alias} />
-          {/* 3-dot menu */}
-          <div ref={menuRef} class="relative">
-            <button
-              onClick={() => setMenuOpen(!menuOpen)}
-              class="p-2 text-gray-400 hover:text-gray-200 hover:bg-gray-800 rounded-lg transition-colors"
-            >
-              <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
-              </svg>
-            </button>
-            {menuOpen && (
-              <div class="absolute right-0 top-full mt-1 w-48 bg-gray-800 rounded-lg shadow-xl z-20 py-1">
-                <button
-                  onClick={() => {
-                    if (confirm('Restart the agent service process?')) {
-                      restartService.mutate({ alias });
-                    }
-                  }}
-                  disabled={restartService.isPending}
-                  class="w-full text-left px-4 py-2.5 text-sm text-gray-200 hover:bg-gray-700 transition-colors disabled:opacity-50"
-                >
-                  {restartService.isPending ? 'Restarting...' : 'Restart Agent Service'}
-                </button>
-              </div>
-            )}
-          </div>
         </div>
       </div>
 
@@ -1699,12 +1660,16 @@ function AccessTab({ alias }: { alias: string }) {
   );
 }
 
-/** Map extension name → display label. Only extensions with UI components listed here. */
+/** Map extension name → display label. Only extensions with UI components listed here.
+ *  `service` is not an extension — it's the agent's service process, sharing this
+ *  registry for the card grid + drill-in routing (the name is already reserved by
+ *  the config/ext/service namespace, so no extension can collide with it). */
 const EXTENSION_LABELS: Record<string, string> = {
   email: 'Email',
   'web-fetch': 'Web Fetch',
   calendar: 'Calendar',
   whatsapp: 'WhatsApp',
+  service: 'Service',
 };
 
 const EXTENSION_PAGES: Record<string, (props: { alias: string }) => JSX.Element> = {
@@ -1712,16 +1677,24 @@ const EXTENSION_PAGES: Record<string, (props: { alias: string }) => JSX.Element>
   'web-fetch': WebFetchExtensionPage,
   calendar: CalendarExtensionPage,
   whatsapp: WhatsAppExtensionPage,
+  service: ServiceSecretsPage,
 };
 
 function ExtensionsTab({ alias, initialExtension }: { alias: string; initialExtension?: string | null }) {
   const [, navigate] = useLocation();
   const active = initialExtension ?? null;
   const enabled = trpc.extension.shared.listEnabled.useQuery({ alias });
+  // Service card — rendered only when the agent's service manifest declares
+  // something operator-facing: settings, secrets, or an admin page (the
+  // query is cheap: one manifest + two flat-file reads).
+  const serviceConfig = trpc.service.getConfig.useQuery({ alias });
 
   if (enabled.isLoading) return <p class="text-gray-500 text-sm">Loading...</p>;
 
   const enabledList = enabled.data ?? [];
+  // Show the Service card whenever a service exists (to restart it and see its
+  // status), not only when it declares operator-facing settings/secrets/admin.
+  const serviceShown = (serviceConfig.data?.present ?? false) || (serviceConfig.data?.declared ?? false);
 
   if (active) {
     const Page = EXTENSION_PAGES[active];
@@ -1748,12 +1721,21 @@ function ExtensionsTab({ alias, initialExtension }: { alias: string; initialExte
     );
   }
 
-  if (enabledList.length === 0) {
+  if (enabledList.length === 0 && !serviceShown) {
     return <p class="text-gray-500 text-sm">No extensions enabled for this agent.</p>;
   }
 
   return (
     <div class="grid grid-cols-2 gap-3">
+      {serviceShown && (
+        <Link
+          href={`/agents/${alias}/capabilities/extensions/service`}
+          class="bg-gray-900 rounded-lg p-5 text-left hover:bg-gray-800 transition-colors block"
+        >
+          <h3 class="text-base font-medium text-white">Service</h3>
+          <p class="text-sm text-gray-500 mt-1">Process, settings, and credentials</p>
+        </Link>
+      )}
       {enabledList.map(({ name, registered }) => {
         const href = `/agents/${alias}/capabilities/extensions/${name}`;
         const label = EXTENSION_LABELS[name] ?? name;

@@ -50,6 +50,8 @@ import { requestConsoleConversationEnd } from '../tools.js';
 import type { AdminManual } from '@getcast/admin-schema/v1';
 
 import { checkAcl, gateInbound } from '../../auth/acl.js';
+import { isOperatorTier, isParticipantAddress } from '../../auth/address.js';
+import type { IdentityId } from '../../auth/address.js';
 import { hasOutboundBit } from './console-auth.js';
 import { isManagerConsole } from './manager-consoles.js';
 import { OutboundQueryTracker } from './query-round-trip.js';
@@ -118,8 +120,8 @@ export interface ServerScopeDescriptor {
 export interface ServerScopeSpawnContext {
   channelName: string;
   channel: AgentChannel;
-  participant: string;
-  replyTo: string | undefined;
+  participant: IdentityId;
+  replyTo: IdentityId | undefined;
   qualifier: string | undefined;
 }
 
@@ -192,7 +194,7 @@ export class ServerScopeConsole implements BusHandler {
   private readonly queryTracker: OutboundQueryTracker;
   /** Disposer for this console's `ConversationEventBus` subscription. Set
    *  in the constructor right after `conversations.registerScope`, called
-   *  on shutdown. Phase H Step 7. */
+   *  on shutdown. */
   private conversationEventDispose: (() => void) | null = null;
 
   /**
@@ -316,10 +318,10 @@ export class ServerScopeConsole implements BusHandler {
       store: this.store,
     });
 
-    // Phase H Step 7 — one bus subscription per scope. Server-scope consoles
+    // One bus subscription per scope. Server-scope consoles
     // (DM / CM / SM) only react to queued transitions; the manager has no
     // per-runner snapshot or agent.db state to clean on `runner-removed` /
-    // `expiry-complete`. `subscribeScope` (Phase I.7) narrows the view to
+    // `expiry-complete`. `subscribeScope` narrows the view to
     // `<ServerScopeSpawnContext>` once at the façade boundary.
     this.conversationEventDispose = conversations.subscribeScope<ServerScopeSpawnContext>(
       this.scope,
@@ -398,12 +400,11 @@ export class ServerScopeConsole implements BusHandler {
       return;
     }
 
-    // Ingress gate. `local` (the operator) always passes — admin-route
-    // localhost binding + session-token gating is the primary check, this
-    // is the defense-in-depth for anything that slipped through.
+    // Ingress gate. The operator tier always passes — admin-route localhost
+    // binding + session-token gating is the primary check, this is the
+    // defense-in-depth for anything that slipped through.
     const channelName = msg.routing?.channel ?? this.spec.strategy.channelName;
-    const senderIdentity = from.includes('/') ? from.slice(0, from.indexOf('/')) : from;
-    if (senderIdentity !== 'local') {
+    if (!isOperatorTier(from)) {
       const { bits } = checkAcl(this.bus, this.spec.host.folder, from, channelName);
       const op = msg.type === 'push' ? 'push' : 'message';
       const { allowed, verb } = gateInbound(bits, op);
@@ -417,8 +418,19 @@ export class ServerScopeConsole implements BusHandler {
     }
     // For push, the originating-user (returnToParticipant) is the cell
     // contributor; for ingested/message, the sender is the participant.
-    const participant = msg.type === 'push' ? msg.returnToParticipant : from;
+    const rawParticipant = msg.type === 'push' ? msg.returnToParticipant : from;
     const qualifier = msg.type === 'push' ? msg.returnToQualifier : msg.routing?.qualifier;
+    // Validate-then-brand at the bus boundary: payload shape is zod-checked
+    // upstream, but the participant CONTENT is sender-supplied. Drop with a
+    // log on violation, mirroring the invalid-payload handling above.
+    if (!isParticipantAddress(rawParticipant)) {
+      logger.warn(
+        { from, console: this.spec.consoleName, participant: rawParticipant },
+        'ServerScopeConsole: invalid participant address on bus message, dropping',
+      );
+      return;
+    }
+    const participant = rawParticipant;
 
     const conversationKey = serializeConversationKey(
       resolveConversationKey(channelName, this.spec.strategy.channel, participant, qualifier),
@@ -428,7 +440,11 @@ export class ServerScopeConsole implements BusHandler {
       channelName,
       channel: this.spec.strategy.channel,
       participant,
-      replyTo: msg.type === 'push' ? msg.returnToParticipant : msg.routing?.targetParticipant,
+      // push: returnToParticipant IS the validated participant; message/ingested:
+      // targetParticipant, when set, must itself be structurally valid.
+      replyTo: msg.type === 'push'
+        ? participant
+        : (msg.routing?.targetParticipant && isParticipantAddress(msg.routing.targetParticipant) ? msg.routing.targetParticipant : undefined),
       qualifier,
     };
 
@@ -532,8 +548,8 @@ export class ServerScopeConsole implements BusHandler {
   protected buildRunnerOpts(params: {
     conversationKey: string;
     channelName: string;
-    participant: string;
-    replyTo?: string;
+    participant: IdentityId;
+    replyTo?: IdentityId;
     qualifier?: string;
     sessionIdOverride?: string;
     isNewConversation: boolean;

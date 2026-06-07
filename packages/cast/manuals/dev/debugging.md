@@ -104,7 +104,7 @@ For *live* events — typing indicators, message_received, lifecycle phases, pus
 **Gotchas with the dogfood path:**
 
 - `/history` shows post-`validateAgentOutput` text only — `<cast:internal>...</cast:internal>` wrapped output lands in `message_log.internal` or the session JSONL, not here.
-- Operator resolves to identity `local` (owner-equivalent); this path bypasses user-ACL checks you might otherwise see. To exercise real user-ACL paths, use the CLI WebSocket transport (`/cli`) or a configured external transport via real pairing.
+- The operator resolves as an operator-tier surface (a bare `admin:`/`cli:` handle, full bits); this path bypasses user-ACL checks you might otherwise see. To exercise real user-ACL paths, use the CLI WebSocket transport (`/cli`) or a configured external transport via real pairing.
 - SSE-only transports (browser `ui_directive` navigations, transport-specific rendering) aren't exercised — confirm those fired via host logs instead.
 
 ## Where to look (ordered by usefulness)

@@ -177,7 +177,7 @@ export function useServerScopeChat(
             return;
           }
 
-          // `hint` — reserved for Task 171 layout suggestions.
+          // `hint` — reserved for future layout suggestions.
         }
       } catch (err) {
         console.warn('[use-server-scope-chat] handler error', { target, event, err });

@@ -16,6 +16,7 @@ import {
   deriveChannelContract,
   renderContractForPeerListing,
 } from '../auth/channel-contract.js';
+import { isSystemContext, isUser } from '../auth/address.js';
 import { textResult } from '../extensions/registry.js';
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -24,6 +25,17 @@ import type { McpAgentContext, McpServerDeps } from './mcp-server.js';
 export function registerAgentPeerTools(server: McpServer, ctx: McpAgentContext, deps: McpServerDeps): void {
   if (!deps.listPeerAgents) return;
   if (isToolDisabled('agent__list_peers', ctx.disabledTools ?? [])) return;
+  // A peer-agent cell must not enumerate the peer roster — that is cross-agent
+  // reconnaissance, the M1-adjacent leak the four-site masquerade fix leaves
+  // open (a peer carries a non-self `a:` address, so it is neither system
+  // context nor a user). Owner-context (self/scheduler) and user/operator cells
+  // may list peers: the agent discovers who it can route queries to, whether
+  // acting alone or while serving a user. (Peer listing stays agent-level by
+  // design — outbound `q` reach is keyed by target agent on the sender's own
+  // ACL, independent of the serving cell's caller, so caller-scoping this list
+  // would break delegation-on-behalf-of while protecting nothing. The
+  // caller-scoped surfaces are `agent__list_channels` / `agent__list_participants`.)
+  if (!isSystemContext(ctx.participant, ctx.agentId) && !isUser(ctx.participant ?? '')) return;
 
   const listFn = deps.listPeerAgents;
   server.tool(

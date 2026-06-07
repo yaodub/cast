@@ -45,7 +45,7 @@ import { readPairedUsers, writePairedUsers } from './auth/pairing.js';
  * Per-test revoke stub. Mirrors `AgentManager.unpair()` minus the bus
  * emit (we're testing the Configure MCP handler's changelog/error
  * behavior here, not the bus signal). Replaces the deleted free
- * function `revokePairedUser` (task 88 phase 3.3).
+ * function `revokePairedUser`.
  */
 function revokeViaFile(folder: string, identityId: string): { ok: boolean; error?: string } {
   const users = readPairedUsers(folder);
@@ -99,8 +99,8 @@ function firstText(result: { content: { type: string; text: string }[] }): strin
 
 /**
  * Write the smallest fixture that passes validate: manifest + identity files.
- * The unified validator (post-task-78) checks identity-file presence, so the
- * pre-task-78 "manifest only" fixture would now report two problems.
+ * The unified validator checks identity-file presence, so the older
+ * "manifest only" fixture would now report two problems.
  */
 function writeMinimalAgent(folder: string): void {
   const idDir = path.join(TMP_ROOT, folder, 'blueprint', 'identity');

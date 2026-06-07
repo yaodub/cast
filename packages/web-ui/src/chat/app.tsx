@@ -14,8 +14,8 @@ import { ToastStack } from './components/toast-stack';
 //   - The URL → subscribe wiring (`<Sync>` and `<AutoRedirect>`) runs
 //     ALWAYS — it is what kicks the worker into spawning and pulls the
 //     identity-scoped snapshot that flips `phase` to `'main'`. Gating it
-//     behind `phase === 'main'` would be the chicken-and-egg fixed in
-//     Task 86 Phase 2.3 (subscribers never mounted → phase never advanced).
+//     behind `phase === 'main'` would recreate a fixed chicken-and-egg bug
+//     (subscribers never mounted → phase never advanced).
 //   - The phase-driven visible view (`Registration` / connecting spinner /
 //     `MainLayout`) is rendered in a separate region. `<Sync>` returns null,
 //     so the two regions don't compete for space.

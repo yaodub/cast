@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildAddress,
-  buildResolvedParticipant,
   decodeAddressValue,
   encodeAddressValue,
   extractHandle,
@@ -11,11 +10,15 @@ import {
   hasPrefix,
   isAgent,
   isExtAddress,
-  isResolved,
+  isMember,
+  isOperatorTier,
+  isParticipantAddress,
+  isReadTier,
+  isSystemContext,
   isSystemSender,
+  isUser,
   parseAddress,
   parseAgentAddress,
-  parseResolvedParticipant,
 } from './auth/address.js';
 
 describe('parseAddress', () => {
@@ -132,69 +135,56 @@ describe('encodeAddressValue / decodeAddressValue', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Compound address types & parser
+// Participant address validity
 // ---------------------------------------------------------------------------
 
-describe('isResolved', () => {
-  it('returns true for compound addresses', () => {
-    expect(isResolved('u:a7f3k/tg:12345')).toBe(true);
-    expect(isResolved('local/cli:alice')).toBe(true);
+describe('isParticipantAddress', () => {
+  it('returns true for bare user identities', () => {
+    expect(isParticipantAddress('u:a7f3k@srv')).toBe(true);
+    expect(isParticipantAddress('u:f9a68fcd75@a9bdb7')).toBe(true);
   });
 
-  it('returns true for agent addresses (inherently resolved)', () => {
-    expect(isResolved('a:abc123@srv')).toBe(true);
-    expect(isResolved('a:f945514f3a@a5e1f2')).toBe(true);
+  it('returns true for agent addresses', () => {
+    expect(isParticipantAddress('a:abc123@srv')).toBe(true);
+    expect(isParticipantAddress('a:f945514f3a@a5e1f2')).toBe(true);
   });
 
-  it('returns false for unresolved addresses', () => {
-    expect(isResolved('tg:12345')).toBe(false);
-    expect(isResolved('cli:alice')).toBe(false);
-  });
-});
-
-describe('parseResolvedParticipant', () => {
-  it('parses compound address', () => {
-    expect(parseResolvedParticipant('u:a7f3k/tg:12345')).toEqual({
-      identity: 'u:a7f3k',
-      handle: 'tg:12345',
-    });
+  it('returns true for operator surfaces', () => {
+    expect(isParticipantAddress('cli:alice')).toBe(true);
+    expect(isParticipantAddress('admin:local')).toBe(true);
   });
 
-  it('parses local identity', () => {
-    expect(parseResolvedParticipant('local/cli:alice')).toEqual({
-      identity: 'local',
-      handle: 'cli:alice',
-    });
+  it('returns false for compounds — the wire never rides the participant above the gateway', () => {
+    expect(isParticipantAddress('u:a7f3k/tg:12345')).toBe(false);
+    expect(isParticipantAddress('u:a7f3k@srv/tg:12345')).toBe(false);
+    expect(isParticipantAddress('cli:alice/cli:alice')).toBe(false);
   });
 
-  it('throws on unresolved address', () => {
-    expect(() => parseResolvedParticipant('tg:12345')).toThrow('Not a resolved address');
-  });
-});
-
-describe('buildResolvedParticipant', () => {
-  it('builds compound address', () => {
-    expect(buildResolvedParticipant('u:a7f3k', 'tg:12345')).toBe('u:a7f3k/tg:12345');
-    expect(buildResolvedParticipant('local', 'cli:alice')).toBe('local/cli:alice');
+  it('returns false for raw transport handles', () => {
+    expect(isParticipantAddress('tg:12345')).toBe(false);
+    expect(isParticipantAddress('web:abc')).toBe(false);
+    expect(isParticipantAddress('email:x@y.z')).toBe(false);
   });
 });
 
 describe('extractIdentity', () => {
   it('extracts identity from compound address', () => {
     expect(extractIdentity('u:a7f3k/tg:12345')).toBe('u:a7f3k');
-    expect(extractIdentity('local/cli:alice')).toBe('local');
   });
 
-  it('passes through unresolved address', () => {
-    expect(extractIdentity('tg:12345')).toBe('tg:12345');
+  it('passes operator handles through as their own identity (no local sentinel)', () => {
     expect(extractIdentity('cli:alice')).toBe('cli:alice');
+    expect(extractIdentity('admin:local')).toBe('admin:local');
+  });
+
+  it('passes through unresolved transport handles', () => {
+    expect(extractIdentity('tg:12345')).toBe('tg:12345');
   });
 });
 
 describe('extractHandle', () => {
   it('extracts handle from compound address', () => {
     expect(extractHandle('u:a7f3k/tg:12345')).toBe('tg:12345');
-    expect(extractHandle('local/cli:alice')).toBe('cli:alice');
   });
 
   it('passes through unresolved address', () => {
@@ -211,7 +201,6 @@ describe('extractHandle', () => {
 describe('extractHandlePrefix', () => {
   it('extracts prefix from compound address', () => {
     expect(extractHandlePrefix('u:a7f3k/tg:12345')).toBe('tg');
-    expect(extractHandlePrefix('local/cli:alice')).toBe('cli');
   });
 
   it('extracts prefix from unresolved address', () => {
@@ -248,6 +237,105 @@ describe('isSystemSender', () => {
     expect(isSystemSender('tg:12345')).toBe(false);
     expect(isSystemSender('cli:alice')).toBe(false);
     expect(isSystemSender('u:abc/tg:12345')).toBe(false);
+  });
+});
+
+describe('isSystemContext', () => {
+  const OWN = 'a:me@srv';
+
+  it('returns true when there is no participant (system / scheduler fire)', () => {
+    expect(isSystemContext(null, OWN)).toBe(true);
+    expect(isSystemContext(undefined, OWN)).toBe(true);
+  });
+
+  it("returns true when the participant is the agent's own address", () => {
+    expect(isSystemContext(OWN, OWN)).toBe(true);
+  });
+
+  it('returns false for a PEER agent — the masquerade case', () => {
+    expect(isSystemContext('a:other@srv', OWN)).toBe(false);
+  });
+
+  it('returns false for a user participant', () => {
+    expect(isSystemContext('u:abc@srv/tg:12345', OWN)).toBe(false);
+    expect(isSystemContext('admin:local', OWN)).toBe(false);
+  });
+
+  it('is DISTINCT from isSystemSender: a peer is a system *sender* but not system *context*', () => {
+    expect(isSystemSender('a:other@srv')).toBe(true);
+    expect(isSystemContext('a:other@srv', OWN)).toBe(false);
+  });
+});
+
+describe('isOperatorTier', () => {
+  it('returns true for the operator — cli:/admin: handle (bare or the handle part of a compound)', () => {
+    expect(isOperatorTier('cli:alice')).toBe(true);
+    expect(isOperatorTier('admin:local')).toBe(true);
+    expect(isOperatorTier('admin:local/admin:local')).toBe(true);
+  });
+
+  it('returns false for users, agents, services, and routed handles', () => {
+    expect(isOperatorTier('u:abc@srv')).toBe(false);
+    expect(isOperatorTier('u:abc@srv/tg:12345')).toBe(false);
+    expect(isOperatorTier('a:x@srv')).toBe(false);
+    expect(isOperatorTier('ext:email')).toBe(false);
+    expect(isOperatorTier('tg:12345')).toBe(false);
+  });
+});
+
+describe('isUser', () => {
+  it('returns true for u: identities (bare or compound) and the operator', () => {
+    expect(isUser('u:abc@srv')).toBe(true);
+    expect(isUser('u:abc@srv/tg:12345')).toBe(true);
+    expect(isUser('cli:alice')).toBe(true);
+    expect(isUser('admin:local')).toBe(true);
+  });
+
+  it('returns false for agents and services', () => {
+    expect(isUser('a:x@srv')).toBe(false);
+    expect(isUser('ext:email')).toBe(false);
+  });
+});
+
+describe('isReadTier', () => {
+  const OWN = 'a:self@srv';
+
+  it('returns true for system context (null participant or own address)', () => {
+    expect(isReadTier(null, OWN)).toBe(true);
+    expect(isReadTier(undefined, OWN)).toBe(true);
+    expect(isReadTier(OWN, OWN)).toBe(true);
+  });
+
+  it('returns true for operator surfaces — bare cli:/admin: handles', () => {
+    expect(isReadTier('cli:alice', OWN)).toBe(true);
+    expect(isReadTier('admin:local', OWN)).toBe(true);
+  });
+
+  it('returns false for users — including a would-be configured owner identity', () => {
+    // The owner arm lives in the WRITE tier (isOperatorOrOwner), never here:
+    // a u: identity is member-tier for reads regardless of acl owner config.
+    expect(isReadTier('u:abc@srv', OWN)).toBe(false);
+    expect(isReadTier('u:abc@srv/tg:12345', OWN)).toBe(false);
+  });
+
+  it('returns false for peer agents and services — the masquerade case', () => {
+    expect(isReadTier('a:other@srv', OWN)).toBe(false);
+    expect(isReadTier('ext:email', OWN)).toBe(false);
+  });
+});
+
+describe('isMember', () => {
+  it('returns true when the bits include i (user placement) or a (agent placement)', () => {
+    expect(isMember('i')).toBe(true);
+    expect(isMember('a')).toBe(true);
+    expect(isMember('io')).toBe(true);
+    expect(isMember('qra')).toBe(true); // has 'a'
+  });
+
+  it('returns false for empty bits or bits without i/a', () => {
+    expect(isMember('')).toBe(false);
+    expect(isMember('o')).toBe(false);
+    expect(isMember('qr')).toBe(false);
   });
 });
 

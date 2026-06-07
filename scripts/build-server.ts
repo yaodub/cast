@@ -149,7 +149,7 @@ async function main(): Promise<void> {
     console.log(`Copied console manuals → ${manualsDest}/`);
   }
 
-  // Copy the admin page manual (task 63 Phase 4) alongside the bundled server.
+  // Copy the admin page manual alongside the bundled server.
   // resolveAdminManualPath() in packages/cast/src/console/shared/page-manual.ts
   // expects dist/admin-manual.json in prod. The web-ui's vite build emits this
   // via the admin-manual plugin.
@@ -183,13 +183,16 @@ async function main(): Promise<void> {
   }
 
   // Version-tag the agent image alongside :latest, so release artifacts carry
-  // provenance and a future smart-start script can detect "image version !=
-  // bundle version → rebuild." Best-effort: skip silently if the runtime isn't
-  // installed or doesn't have :latest (e.g. fresh deploy machine).
+  // provenance — humans inspecting the store see which release an image
+  // accompanied. Plays no role in staleness detection (that's the
+  // cast-agent:src-<hash> receipt build.mjs staples). Best-effort: skip
+  // silently if the runtime isn't installed or doesn't have :latest (e.g.
+  // fresh deploy machine). Must be `image tag`, not `tag` — Apple Container
+  // has no top-level `tag` command.
   function tagIfPresent(runtime: string, version: string): void {
     try {
       execSync(`${runtime} image inspect cast-agent:latest`, { stdio: 'pipe' });
-      execSync(`${runtime} tag cast-agent:latest cast-agent:${version}`, { stdio: 'pipe' });
+      execSync(`${runtime} image tag cast-agent:latest cast-agent:${version}`, { stdio: 'pipe' });
       console.log(`Tagged cast-agent:${version} on ${runtime}`);
     } catch {
       // runtime missing or :latest not present; nothing to tag

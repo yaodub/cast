@@ -1,7 +1,7 @@
 /**
  * IndexedDB implementation of MessageStore. Owns the `cast-web-client`
  * schema — DB_NAME / DB_VERSION / object stores were originally defined in
- * `lib/db.ts` (deleted in Phase 4.1); the schema and key layout were
+ * `lib/db.ts` (since deleted); the schema and key layout were
  * carried verbatim into this worker module so existing browser data
  * continues to load on first run. IDB is available in Worker globals.
  */

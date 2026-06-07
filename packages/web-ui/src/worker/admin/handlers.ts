@@ -108,7 +108,7 @@ export function rollbackEcho(target: AdminTarget, echoId: string): void {
  * Mark a target read. Worker-side intent: clear any worker-tracked unread
  * counter. Today unread tracking lives entirely tab-side in `chat-unread.ts`
  * (localStorage + storage event); this is a no-op stub kept so the action
- * routes cleanly. Phase 3.3 may move unread into the worker — at which point
+ * routes cleanly. A later change may move unread into the worker — at which point
  * this becomes the mutation site.
  */
 export function markAdminTargetRead(_target: AdminTarget): void {

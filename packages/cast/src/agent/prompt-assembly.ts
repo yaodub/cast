@@ -19,7 +19,7 @@
  *   [9] agent-context.md        — dynamic context from agent service (service/shared/)
  *  [10] <conversation-context>  — per-conversation routing facts
  */
-import { extractHandle, extractIdentity, isResolved } from '../auth/address.js';
+import { extractIdentity, isParticipantAddress } from '../auth/address.js';
 import type { ChannelContract } from '../auth/channel-contract.js';
 import { renderContractForPrompt } from '../auth/channel-contract.js';
 import { agentPath } from '../config.js';
@@ -37,7 +37,7 @@ export interface PromptAssemblyOpts {
   agentFolder: string;
   /** Agent display name (from host registry). */
   agentName: string;
-  /** Participant address (e.g. "local/cli:alice", "u:a7f3k/tg:12345"). */
+  /** Participant address — bare identity or surface (e.g. "u:a7f3k@srv", "cli:alice"). */
   participant: string;
   /** Resolved channel definition. */
   channel: AgentChannel;
@@ -222,14 +222,16 @@ function buildConversationContext(opts: PromptAssemblyOpts): string {
     '<conversation-context>',
   ];
 
-  if (!isResolved(opts.participant)) {
-    throw new Error(`Unresolved participant address: "${opts.participant}" — all participants must be resolved before prompt assembly`);
+  if (!isParticipantAddress(opts.participant)) {
+    throw new Error(
+      `Invalid participant address: "${opts.participant}" — expected a bare identity (u:…@issuer), an agent (a:…@issuer), or an operator/console surface`,
+    );
   }
+  // Transport-blind: the agent sees only the bare identity. The handle is a
+  // gateway-local delivery concern (resolved at the boundary), never ferried inward.
   const identity = extractIdentity(opts.participant);
-  const handle = extractHandle(opts.participant);
   const nameAttr = opts.declaredName ? ` declared-name="${escapeXml(opts.declaredName)}"` : '';
-  const handleAttr = handle ? ` handle="${escapeXml(handle)}"` : '';
-  lines.push(`  <participant id="${escapeXml(identity)}"${handleAttr}${nameAttr} />`);
+  lines.push(`  <participant id="${escapeXml(identity)}"${nameAttr} />`);
 
   lines.push(
     `  <channel name="${escapeXml(opts.channelName)}" />`,

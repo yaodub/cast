@@ -40,6 +40,13 @@ const ContainerInputFields = {
    *  …), not just Cast MCP tools. */
   disabledTools: z.array(z.string()).optional(),
   conversationKey: z.string().optional(),
+  /** The conversation's participant (DM counterparty) and its channel. The host
+   *  stamps these so the runner can attest them onto service tool calls (MCP
+   *  `_meta`), enabling participant-routed approval without trusting the agent.
+   *  Absent for rooms / self turns (no single participant) — approval-gated
+   *  service tools then fail closed. */
+  participant: z.string().optional(),
+  channelName: z.string().optional(),
   agentFolder: z.string(),
   address: z.string(),
   isScheduledTask: z.boolean().optional(),

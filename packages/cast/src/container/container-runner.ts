@@ -43,6 +43,7 @@ import type { Host } from '../types.js';
 import { errorMessage } from '../lib/utils.js';
 
 import { buildVolumeMounts, type VolumeMount } from './container-mounts.js';
+import { SDK_ENV_FLAGS } from './sdk-surface.js';
 
 // SIDE EFFECT: Module-level auth state, set once at startup via setAuth().
 // Required because runContainerAgent needs secrets but shouldn't re-resolve auth each call.
@@ -91,8 +92,6 @@ interface ContainerInput extends SchemaContainerInput {
   workdir?: string;
   /** Override container network policy. Used by console sessions. */
   containerNetwork?: string;
-  /** Channel name for `modelOverrides` resolution. Host-only; stripped before stdin. */
-  channelName?: string;
   /** Lifecycle phase for `modelOverrides` resolution. Host-only; stripped before stdin. */
   phase?: 'cleanup';
 }
@@ -204,6 +203,12 @@ function buildContainerArgs(
   // Container network isolation policy (entrypoint.sh applies iptables rules based on this)
   if (containerNetwork) {
     args.push('-e', `CAST_NETWORK=${containerNetwork}`);
+  }
+  // SDK feature kill-switches — fleet policy on the wire, not baked into the
+  // image (see sdk-surface.ts). The runner's sdkEnv spreads process.env, so
+  // these reach the SDK with no runner-side handling.
+  for (const [key, value] of Object.entries(SDK_ENV_FLAGS)) {
+    args.push('-e', `${key}=${value}`);
   }
   // Additional allowed endpoints for sdk-only mode (comma-separated domain:port pairs)
   if (containerAllowedEndpoints && containerAllowedEndpoints.length > 0) {
@@ -447,15 +452,17 @@ export async function runContainerAgent(
   fs.mkdirSync(logsDir, { recursive: true });
 
   // Inject model from server-only config (agent can't see this).
-  // Strip host-only context fields (channelName, phase) before they reach stdin.
-  const { channelName, phase, ...wireInput } = input;
+  // Strip host-only `phase` before stdin. channelName now rides the wire (the
+  // runner attests it + participant as _meta for approval routing), so it stays
+  // in wireInput; it's still read here for modelOverrides resolution.
+  const { phase, ...wireInput } = input;
   const model =
-    wireInput.model || resolveModel(agentConfig, { channelName, phase });
+    wireInput.model || resolveModel(agentConfig, { channelName: input.channelName, phase });
   // If this spawn includes a bootstrap call, pre-resolve its model separately
   // (phase='bootstrap'). Falls back to the main model in the runner if unset.
   const bootstrapModel =
     wireInput.bootstrap !== undefined
-      ? resolveModel(agentConfig, { channelName, phase: 'bootstrap' })
+      ? resolveModel(agentConfig, { channelName: input.channelName, phase: 'bootstrap' })
       : undefined;
 
   // Resolve secrets before spawning. Pre-spawn null check in conversation-runner

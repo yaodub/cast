@@ -23,9 +23,12 @@ channels at all, so the only `file__*` surface to gate is
 `file__append_feed`.) Set `show_co_participants: false` so callers stay
 invisible to each other: with many callers each granted `q`, the
 flag stops one caller's existence and activity from surfacing in
-another's session — closing both the `<other-participants>` prompt
-layer and the cross-caller rows in `conversation__list_summaries`
-(see `primitives.md` § Co-participant visibility). Disabling
+another's session, closing the `<other-participants>` prompt layer
+and the channel's member rows in `agent__list_participants` (callers'
+summary reads are already scoped to their own conversations).
+The flag also closes cross-conversation push between co-members,
+not visibility alone, so the isolation is structural (see
+`primitives.md` § Co-participant visibility). Disabling
 `list_summaries` via `disabled_tools` alone closes only the tool, not
 the prompt layer; the flag is the complete control. The specialist
 may still record per-query audit notes to

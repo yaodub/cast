@@ -5,7 +5,7 @@ import { ChatMockup } from '../../../components/site/ChatMockup';
 import { ConversationGridFigure } from '../../../components/docs/ConversationGridFigure';
 import { PeerDialogueFigure } from '../../../components/docs/PeerDialogueFigure';
 
-// Colors key a cell to its chat panel — anchored to the conversation, not the
+// Colors key a cell to its chat panel, anchored to the conversation, not the
 // person (so Alice's two channels are two different colors).
 const TEAL = '#115E59'; // alice · default
 const INDIGO = '#3730A3'; // bob · default
@@ -25,7 +25,6 @@ export function ConceptsMultiUser() {
       lede="When friends, teammates, or family share an agent, each person talks to it privately."
       toc={[
         { label: 'Each person has their own cell' },
-        { label: "The agent knows who it's talking to" },
         { label: 'Moving between cells' },
         { label: 'Meeting on shared ground' },
         { label: 'Across agents' },
@@ -34,9 +33,10 @@ export function ConceptsMultiUser() {
     >
       <H2>Each person has their own cell</H2>
       <p style={proseP}>
-        On any channel, every paired person has their own conversation with the agent. Each
-        has its own short-term memory; all of them share the agent's one long-term memory. Lay
-        them on a grid — a row per person, a column per channel — and each cell is one
+        Each person can have multiple private conversations with an agent, one per channel
+        they're paired into. You can visualize this as a grid: for the same agent, one row per
+        person and one
+        column per channel, or <code>[agent, person, channel]</code>. Each cell can hold a
         conversation.
       </p>
 
@@ -48,7 +48,7 @@ export function ConceptsMultiUser() {
           { row: 0, col: 0, color: TEAL },
           { row: 1, col: 0, color: INDIGO },
         ]}
-        caption="one agent, held fixed — each person, their own cell"
+        caption="one agent, held fixed"
       />
 
       <ChatMockup
@@ -59,7 +59,7 @@ export function ConceptsMultiUser() {
           {
             from: 'agent',
             via: 'to alice',
-            text: 'Finish the slide review before your 11am with marketing — you flagged it as the blocker last night.',
+            text: 'Finish the slide review before your 11am with marketing. You flagged it as the blocker last night.',
           },
         ]}
       />
@@ -84,25 +84,17 @@ export function ConceptsMultiUser() {
         moves below.
       </Callout>
 
-      <H2>The agent knows who it's talking to</H2>
-      <p style={proseP}>
-        When it answers someone, the agent knows who's in front of it and uses their name. By
-        default it also knows the other people on the channel — enough to coordinate across
-        them without you wiring anything up. Turn that off per channel when people shouldn't
-        know about each other, like a specialist with separate clients. See{' '}
-        <DocsLink href="/docs/concepts/channels">Channels</DocsLink>.
-      </p>
-
       <H2>Moving between cells</H2>
       <p style={proseP}>
-        The agent in one cell can inject a message into a different cell — another person, or
-        another channel.
+        A conversation cell is able to push messages into a different cell: another person or
+        channel, when the configuration allows for it.
       </p>
 
       <H3>To another person</H3>
       <p style={proseP}>
         The agent sends a message into another person's cell on the same channel. Good for
-        handoffs, status broadcasts, and asking the right person.
+        handoffs, status broadcasts, and asking the right person. Pushing messages between users
+        is enabled or disabled per channel.
       </p>
 
       <ConversationGridFigure
@@ -114,14 +106,14 @@ export function ConceptsMultiUser() {
           { row: 1, col: 0, color: INDIGO },
         ]}
         arrow={{ from: { row: 0, col: 0 }, to: { row: 1, col: 0 } }}
-        caption="down a column — same channel, another person"
+        caption="down a column: same channel, another person"
       />
 
       <ChatMockup
         agentName="agent"
         cell={{ channel: 'default', participant: 'alice', color: TEAL }}
         script={[
-          { from: 'user', via: 'alice', text: 'Looks good — ship it.' },
+          { from: 'user', via: 'alice', text: 'Looks good, ship it.' },
           {
             from: 'agent',
             via: 'to alice',
@@ -139,7 +131,7 @@ export function ConceptsMultiUser() {
             via: 'to bob',
             time: 'moments later',
             text:
-              "Heads up — Alice just approved the launch copy. You're clear to push when ready.",
+              "Heads up, Alice just approved the launch copy. You're clear to push when ready.",
           },
           { from: 'user', via: 'bob', text: 'on it' },
         ]}
@@ -147,9 +139,8 @@ export function ConceptsMultiUser() {
 
       <H3>To another channel</H3>
       <p style={proseP}>
-        The agent can also move someone's conversation into a different channel — carrying a
-        request from the main channel into a side room and working it there. Same person,
-        different cell.
+        The agent can also send a message into the user's conversation on a different channel.
+        In order for this to succeed, the user must be paired into the target channel.
       </p>
 
       <ConversationGridFigure
@@ -161,13 +152,13 @@ export function ConceptsMultiUser() {
           { row: 0, col: 1, color: PLUM },
         ]}
         arrow={{ from: { row: 0, col: 0 }, to: { row: 0, col: 1 } }}
-        caption="across a row — same person, another channel"
+        caption="across a row: same person, another channel"
       />
 
       <H3>To another person on another channel</H3>
       <p style={proseP}>
-        These moves combine. The agent can reach another person on another channel in a single
-        move, choosing both the person and the channel at once.
+        These moves combine. The agent can reach another person on another channel, provided
+        both user and recipient are paired into the target channel.
       </p>
 
       <ConversationGridFigure
@@ -179,15 +170,15 @@ export function ConceptsMultiUser() {
           { row: 1, col: 1, color: AMBER },
         ]}
         arrow={{ from: { row: 0, col: 0 }, to: { row: 1, col: 1 } }}
-        caption="diagonal — another person and another channel, in one move"
+        caption="diagonal: another person and another channel, in one move"
       />
 
       <H2>Meeting on shared ground</H2>
       <p style={proseP}>
-        When several conversations need to track the same changing state — a decision log, a
-        shared backlog, an event stream — they meet on an append-only file. Each writes to it and watches it; a new row wakes whoever's watching. The file is the meeting
-        point: conversations that never talk directly still coordinate through what's written
-        there.
+        Conversations that need to track the same changing state, like a decision log, a shared
+        backlog, or an event stream, meet on an append-only file. Each writes to it and watches
+        it, and a new row wakes whoever is watching. The file is the meeting point:
+        conversations that never talk directly still coordinate through what's written there.
       </p>
 
       <ChatMockup
@@ -230,20 +221,20 @@ export function ConceptsMultiUser() {
       <H3>Ask a peer</H3>
       <p style={proseP}>
         One agent can ask another a question and get an answer back. The two agents talk
-        directly — no person is in between — so a generalist can consult a specialist and use
+        directly (no person is in between), so a generalist can consult a specialist and use
         the reply in its own conversation. The question goes out; the answer comes back on a
         later turn. This is the main way agents work together.
       </p>
 
       <PeerDialogueFigure
-        left={{ agent: '[assistant]', participant: '[research]', channel: 'peers', color: TEAL }}
+        left={{ agent: '[assistant]', participant: 'alice', channel: 'default', color: TEAL }}
         right={{ agent: '[research]', participant: '[assistant]', channel: 'peers', color: GREEN }}
-        caption="each agent is a participant in the other's grid — ask, answer back"
+        caption="the question opens a cell on the peer, and the answer returns to your own conversation"
       />
 
       <H3>Hand off a person</H3>
       <p style={proseP}>
-        One agent can also hand a person off to another agent — same person, different agent.
+        One agent can also hand a person off to another agent: same person, different agent.
         The second agent picks up the conversation and replies to them directly.
       </p>
 
@@ -256,30 +247,28 @@ export function ConceptsMultiUser() {
           { row: 1, col: 0, color: GREEN },
         ]}
         arrow={{ from: { row: 0, col: 0 }, to: { row: 1, col: 0 } }}
-        caption="one person, held fixed — handing them to a peer agent"
+        caption="one person, held fixed: handing them to a peer agent"
       />
 
       <p style={proseP}>
-        Either way, the other agent works under its own access rules, not the sender's. So
-        reaching a different person on a different agent isn't one step: you ask the peer, and
-        it decides who to message.
+        A handoff only lands if the person is paired into the target cell.
       </p>
 
       <H2>What to read next</H2>
       <ul style={proseUl}>
         <li>
-          <DocsLink href="/docs/use/pairing">Pairing</DocsLink> — how a new person joins.
+          <DocsLink href="/docs/use/pairing">Pairing</DocsLink>: how a new person joins.
         </li>
         <li>
-          <DocsLink href="/docs/concepts/channels">Channels</DocsLink> — what shapes the
+          <DocsLink href="/docs/concepts/channels">Channels</DocsLink>: what shapes the
           conversation in each cell.
         </li>
         <li>
-          <DocsLink href="/docs/concepts/triggers">Scheduling &amp; triggers</DocsLink> — what
+          <DocsLink href="/docs/concepts/triggers">Scheduling &amp; triggers</DocsLink>: what
           else opens a conversation, and the shared file in depth.
         </li>
         <li>
-          <DocsLink href="/docs/runtime/wire-format">Wire format</DocsLink> — how agents ask
+          <DocsLink href="/docs/runtime/wire-format">Wire format</DocsLink>: how agents ask
           and answer each other.
         </li>
       </ul>

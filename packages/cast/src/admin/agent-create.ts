@@ -74,7 +74,7 @@ export function createAgentScratch(name: string, description?: string): string {
   writeAtomic(
     path.join(agentDir, 'config', 'acl.json'),
     JSON.stringify({
-      owner: 'local',
+      owner: 'operator',
       peers: {},
       reject_message: 'Not authorized. Use /pair <code> to get access.',
     }, null, 2) + '\n',
@@ -85,8 +85,9 @@ export function createAgentScratch(name: string, description?: string): string {
     JSON.stringify({ backup: { retain: 7, hour: 3 } }, null, 2) + '\n',
   );
 
+  // Service secrets land in config/ext/service/secrets.json, written by the
+  // admin router on first save — only the directory is seeded here.
   fs.mkdirSync(path.join(agentDir, 'config', 'ext', 'service'), { recursive: true });
-  fs.writeFileSync(path.join(agentDir, 'config', 'ext', 'service', '.env'), '');
 
   writeAtomic(
     path.join(agentDir, 'blueprint', 'identity', 'prompt.md'),

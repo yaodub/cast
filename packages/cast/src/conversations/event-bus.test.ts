@@ -1,6 +1,6 @@
 /**
  * ConversationEventBus — unit tests for the typed in-process event bus
- * introduced in Phase H Step 3.
+ * that the conversations layer emits through.
  *
  * Covers subscribe/emit, dispose, filter matching (scope string + RegExp,
  * kinds, combined), multiple-subscribers, throw isolation, and the

@@ -22,11 +22,9 @@ import { z } from 'zod';
 import type { Bus, BusLifecycleEvent } from '../gateway/bus.js';
 import type { MessageGateway } from '../gateway/message-gateway.js';
 import type { AnyPacket } from '../gateway/packets.js';
-import { AnyPacketSchema } from '../gateway/packets.js';
-import { getPendingOutboundForRecipient, markDeliveredIfAddressedTo } from '../gateway/gateway-db.js';
+import { markDeliveredIfAddressedTo } from '../gateway/gateway-db.js';
 import type { IdentityProvider } from '../auth/identity.js';
-import { buildResolvedParticipant, extractHandle } from '../auth/address.js';
-import { persistAttachment, attachmentHostPath } from '../lib/attachment-store.js';
+import { persistAttachment } from '../lib/attachment-store.js';
 import { MAX_ATTACHMENT_BYTES } from '../config.js';
 import { isDeliverablePacket } from './packet-dispatch.js';
 import { logger } from '../logger.js';
@@ -46,12 +44,14 @@ interface PendingAttachment {
   filesize: number;
 }
 
-/** Identity bound to this socket — handle and resolvedParticipant set together. */
+/** Identity bound to this socket — wire handle and bare participant set together. */
 interface WebClientIdentity {
+  /** The socket's wire (`web:abc123`) — delivery-side only. */
   handle: string;
-  /** Resolved participant address (e.g. "web:abc123@identity-uuid"). Used to
-   *  scope drained packets, label outbound events via ACL, and validate acks. */
-  resolvedParticipant: string;
+  /** Bare participant identity (`u:…@issuer`). Used to scope drained packets,
+   *  label outbound events via ACL, and validate acks. Transport-blind: never
+   *  carries the wire. */
+  participant: string;
 }
 
 /**
@@ -188,7 +188,7 @@ export class WebTransport implements Transport {
     if (event.type !== 'updated') return;
     // Only ACL changes affect the per-identity accessible-agents projection.
     // MCP-server reconfiguration doesn't change wire-format `AgentSummary`,
-    // so skip it. Phase I.3 — typed cause replaces the previous
+    // so skip it. The typed cause replaces the previous
     // metadata-re-read filter.
     if (event.cause !== 'acl-changed') return;
     // Defense in depth: only agent handlers project. Service handlers don't
@@ -400,7 +400,7 @@ export class WebTransport implements Transport {
     const resolved = this.deps.idp.register(handleId, name, 'web');
     client.binding = {
       phase: 'bound',
-      identity: { handle: handleId, resolvedParticipant: buildResolvedParticipant(resolved.id, handleId) },
+      identity: { handle: handleId, participant: resolved.id },
     };
     logger.info({ handle: handleId, identity: resolved.id }, 'Web identity registered');
     client.ws.send(JSON.stringify({
@@ -418,8 +418,6 @@ export class WebTransport implements Transport {
       return;
     }
 
-    const resolvedAddr = buildResolvedParticipant(resolved.id, handle);
-
     // Bind identity onto the client; drain any packets queued while they were away.
     // handleAgents is the canonical "I'm back" signal — the client sends it on every
     // successful (re)connect, see packages/web-ui/src/chat/lib/store.ts effect in init.
@@ -428,7 +426,7 @@ export class WebTransport implements Transport {
     const firstBind = wasUnbound || handleChanged;
     client.binding = {
       phase: 'bound',
-      identity: { handle, resolvedParticipant: resolvedAddr },
+      identity: { handle, participant: resolved.id },
     };
     if (firstBind) {
       void this.drainUndelivered(client).catch((err) => {
@@ -501,7 +499,7 @@ export class WebTransport implements Transport {
     const senderName = resolved.declaredName;
     client.binding = {
       phase: 'bound',
-      identity: { handle: data.handle, resolvedParticipant: buildResolvedParticipant(resolved.id, data.handle) },
+      identity: { handle: data.handle, participant: resolved.id },
     };
 
     // Drain stashed attachments matching this agent only
@@ -555,9 +553,8 @@ export class WebTransport implements Transport {
 
     const handle = data.handle;
     const resolved = this.deps.idp.resolve(handle);
-    const participant = resolved
-      ? buildResolvedParticipant(resolved.id, handle)
-      : handle;
+    // Gateway packets are keyed on the bare participant identity.
+    const participant = resolved ? resolved.id : handle;
 
     const raw = this.deps.gateway.getHistory(agentId, participant, { limit: data.limit });
     const HistoryPayloadSchema = z.object({
@@ -593,7 +590,7 @@ export class WebTransport implements Transport {
 
     client.binding = {
       phase: 'bound',
-      identity: { handle: data.handle, resolvedParticipant: buildResolvedParticipant(resolved.id, data.handle) },
+      identity: { handle: data.handle, participant: resolved.id },
     };
 
     this.deps.gateway.ingestApprovalResponse(data.handle, agentId, {
@@ -608,7 +605,7 @@ export class WebTransport implements Transport {
       logger.debug({ pktId }, 'Ignoring ack from unbound client');
       return;
     }
-    const recipient = client.binding.identity.resolvedParticipant;
+    const recipient = client.binding.identity.participant;
     const ok = markDeliveredIfAddressedTo(pktId, recipient);
     if (!ok) {
       logger.debug({ pktId, to: recipient }, 'Ack for unknown or unowned packet');
@@ -616,53 +613,15 @@ export class WebTransport implements Transport {
   }
 
   /**
-   * Drain undelivered outbound packets for this client's identity, oldest first.
-   * Replays them through the same send() path, so live and replayed delivery
-   * are indistinguishable on the wire. Stops on first send failure — the remaining
-   * packets will be picked up on the next reconnect.
+   * Drain undelivered outbound packets for this client's identity — a nudge
+   * into the gateway's delivery worker, which replays through the normal
+   * send() path so live and replayed delivery are indistinguishable on the
+   * wire. delivered_at stays NULL until the client acks — if they disconnect
+   * before acking, the packets resurface on the next reconnect.
    */
   private async drainUndelivered(client: WebClientState): Promise<void> {
     if (client.binding.phase !== 'bound') return;
-    const { handle: clientHandle, resolvedParticipant } = client.binding.identity;
-    const pending = getPendingOutboundForRecipient(resolvedParticipant);
-    if (pending.length === 0) return;
-
-    logger.info(
-      { handle: clientHandle, count: pending.length },
-      'Draining undelivered outbound packets to web client',
-    );
-
-    const handle = extractHandle(resolvedParticipant);
-    if (!handle) return;
-
-    for (const p of pending) {
-      if (client.ws.readyState !== WebSocket.OPEN) break;
-      try {
-        const pkt = AnyPacketSchema.parse(JSON.parse(p.payload));
-
-        // Rehydrate attachment hostPaths — gateway.db payloads don't persist them,
-        // but the content-addressed store keeps the bytes indefinitely by hash.
-        if (pkt.type === 'conversation' && pkt.attachments) {
-          const agentEntity = this.deps.bus.listEntities().find((e) => e.id === p.from_addr);
-          if (agentEntity) {
-            for (const att of pkt.attachments) {
-              if (att.hash && !att.hostPath) {
-                const ext = att.mimeType.split('/')[1] || 'bin';
-                att.hostPath = attachmentHostPath(agentEntity.folderPath, att.hash, ext);
-              }
-            }
-          }
-        }
-
-        const outPkt = { ...pkt, to: handle } as AnyPacket;
-        await this.send(outPkt, { agentAddress: p.from_addr, channel: p.channel ?? undefined });
-        // delivered_at stays NULL until the client acks — if they disconnect
-        // before acking, the packet resurfaces on the next drain.
-      } catch (err) {
-        logger.warn({ pktId: p.id, handle: clientHandle, err }, 'Drain send failed, will retry on reconnect');
-        break;
-      }
-    }
+    await this.deps.gateway.nudgeRecipient(client.binding.identity.participant);
   }
 
   // --- Binary frame handling ---

@@ -4,7 +4,6 @@ import type { AnyPacket } from '../gateway/packets.js';
 import type { Evt } from '../types.js';
 import type { Transport, OutboundContext } from './schema.js';
 import type { IdentityProvider } from '../auth/identity.js';
-import { buildResolvedParticipant } from '../auth/address.js';
 import { setupLocalWss, type WsServer } from '../gateway/ws-server.js';
 import type { WebSocketServer } from 'ws';
 
@@ -83,10 +82,10 @@ export function createLocalTransport(deps: LocalTransportDeps): { transport: Loc
     },
     getHistory: (agentAddress, opts) => {
       const handle = `cli:${opts?.handle || 'user'}`;
+      // Operator surfaces are their own bare identity (`resolve('cli:x').id === 'cli:x'`);
+      // gateway packets are keyed on the bare participant.
       const resolved = deps.idp.resolve(handle);
-      const participant = resolved
-        ? buildResolvedParticipant(resolved.id, handle)
-        : handle;
+      const participant = resolved ? resolved.id : handle;
       return deps.gateway.getHistory(agentAddress, participant, { limit: opts?.limit });
     },
     onApprovalResponse: (agentAddress, handle, id, decision, reason) => {

@@ -473,7 +473,7 @@ export const agentRouter = router({
     .mutation(({ ctx, input }) => {
       const { folder } = requireManager(ctx.deps, input.alias);
       const result = setLifecycle(folder, input.status, {
-        actor: 'local',
+        actor: 'operator',
         via: 'manual_override',
       });
       if ('error' in result) {

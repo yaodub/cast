@@ -11,18 +11,25 @@ export const SERVICE_SKELETON = `\
 import { spawn as childSpawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
 import { CronExpressionParser } from 'cron-parser';
-import dotenv from 'dotenv';
 
-const AGENT_DIR = process.env.CAST_AGENT_DIR;
-const AGENT_ID = process.env.CAST_AGENT_FOLDER;
-const SERVICE_DIR = process.env.SERVICE_DIR;
-
-if (!AGENT_DIR || !AGENT_ID || !SERVICE_DIR) {
-  console.error('Missing required env: CAST_AGENT_DIR, CAST_AGENT_FOLDER, SERVICE_DIR');
+// Config injected by the cast server (SPEC.md §9).
+const cfg = (() => {
+  try { return JSON.parse(process.env.CAST_SERVICE_CONFIG ?? ''); } catch { return null; }
+})();
+if (!cfg?.agentDir || !cfg?.agentFolder) {
+  console.error('Missing or invalid CAST_SERVICE_CONFIG — service must be launched by the cast server');
   process.exit(1);
 }
+const AGENT_DIR = cfg.agentDir;
+const AGENT_ID = cfg.agentFolder;
+
+// Service code dir (manifest.json + job scripts). Stamped bundle: alongside
+// index.js at the service root. Template dev (entry src/index.ts): one level up.
+const ENTRY_DIR = path.dirname(fileURLToPath(import.meta.url));
+const CODE_DIR = fs.existsSync(path.join(ENTRY_DIR, 'manifest.json')) ? ENTRY_DIR : path.resolve(ENTRY_DIR, '..');
 
 const TIMEZONE = process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;
 const POLL_INTERVAL = 60_000;
@@ -37,16 +44,21 @@ function sendIpc(msg) {
 
 function readManifest() {
   try {
-    return JSON.parse(fs.readFileSync(path.join(SERVICE_DIR, 'manifest.json'), 'utf-8'));
+    return JSON.parse(fs.readFileSync(path.join(CODE_DIR, 'manifest.json'), 'utf-8'));
   } catch (err) {
     log(\`Failed to read manifest: \${err.message}\`);
     return { jobs: [] };
   }
 }
 
+// Operator-owned secrets snapshot (config/ext/service/secrets.json). The
+// server restarts this process when the file changes, so a startup read is
+// always current. Missing or invalid file → {} (service starts unconfigured).
 function loadSecrets() {
   try {
-    return dotenv.parse(fs.readFileSync(path.join(SERVICE_DIR, '.env'), 'utf-8'));
+    const parsed = JSON.parse(fs.readFileSync(path.join(AGENT_DIR, 'config', 'ext', 'service', 'secrets.json'), 'utf-8'));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return Object.fromEntries(Object.entries(parsed).filter(([, v]) => typeof v === 'string'));
   } catch { return {}; }
 }
 
@@ -56,7 +68,7 @@ function computeNextRun(cronExpr) {
 
 async function runJob(state, secrets) {
   const { decl } = state;
-  const scriptPath = path.resolve(SERVICE_DIR, decl.script);
+  const scriptPath = path.resolve(CODE_DIR, decl.script);
   if (!fs.existsSync(scriptPath)) {
     sendIpc({ type: 'job-error', name: decl.name, error: \`Script not found: \${decl.script}\` });
     return;

@@ -343,10 +343,10 @@ describe('ConversationCatalog — LRU eviction (pressure path)', () => {
 });
 
 // =============================================================================
-// Phase L — swap-vs-queue discriminant in acquireSlot
+// Swap-vs-queue discriminant in acquireSlot
 // =============================================================================
 
-describe('ConversationCatalog — Phase L swap/queue discriminant', () => {
+describe('ConversationCatalog — swap/queue discriminant', () => {
   it('returns kind:swap when at capacity with an idle-with-runner victim', async () => {
     const f = makeFixture(1);
     const a = f.catalog.getOrCreate({

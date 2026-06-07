@@ -10,7 +10,7 @@
  * unrelated to the ACL gate under test.
  *
  * Replaces `transports/web.test.ts` (which tested the deleted
- * `decideEventDelivery` helper after task 88's follow-up moved
+ * `decideEventDelivery` helper after a later refactor moved
  * event-delivery ACL out of the transport).
  *
  * Both-branches discipline: every ACL-gated
@@ -217,9 +217,10 @@ describe('Bus.projectEventForIdentity — channel-specific ACL', () => {
     expect(decision).toBeNull();
   });
 
-  it('allows local identity on any channel — local has full implicit access', () => {
-    // No ACL file — local short-circuits to full bits before file lookup.
-    const decision = busWithAgent().projectEventForIdentity(typingEvt('__design'), 'local');
+  it('allows the operator on any channel — operator tier has full implicit access', () => {
+    // No ACL file — the operator (resolve().id is the bare handle) short-circuits
+    // to full bits before file lookup.
+    const decision = busWithAgent().projectEventForIdentity(typingEvt('__design'), 'admin:local');
     expect(decision).toEqual({ alias: AGENT_ALIAS, channel: '__design' });
   });
 });

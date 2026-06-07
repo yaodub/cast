@@ -2,14 +2,14 @@
  * Admin event subscription manifest.
  *
  * Declarative source of truth for what the admin SSE + WebSocket connections
- * observe. Before Phase H both `admin/ws-events.ts` and `admin/events-stream.ts`
+ * observe. Originally both `admin/ws-events.ts` and `admin/events-stream.ts`
  * held identical hardcoded `AGENT_CHANNELS = ['__design', '__configure']`
  * arrays — the textbook "Class 2: scope-blind transport observers" symptom.
  * Either file could drift independently;
  * neither knew it should grow when user-channel events became part of the
  * admin UI's surface.
  *
- * After Phase H Step 5:
+ * Today:
  *
  * - `agent.channels: '*'` says "every channel of every registered agent" —
  *   replaces the hardcoded console-only list. `ConsoleTransport.subscribe`

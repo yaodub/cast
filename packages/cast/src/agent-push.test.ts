@@ -5,7 +5,7 @@
  * `participantExists`, `gateInbound`, and the guard composers MUST
  * be exercised at the real boundary. The previous test surface mocked
  * `deliverToChannel`/`deliverToAgent` at the handler level, which is exactly
- * the failure mode that shipped the original Task-69 `participantExists` bug
+ * the failure mode that shipped the original `participantExists` bug
  * and (later) our own `__design`→`__configure` parser regression. Boundary
  * tests use the real `buildAgentMcpDeps` over a real `Bus` + real `AgentDb`
  * + capturing `ctx.route` so every gate runs as it does in production.
@@ -54,9 +54,11 @@ import { _setMockWatcher } from './lib/config-reader.js';
 import { Bus, type BusHandler } from './gateway/bus.js';
 import { AgentDb } from './agent/agent-db.js';
 import { buildAgentMcpDeps, type AgentMcpDepsContext } from './agent/agent-mcp-deps.js';
+import { channelAuthDenial } from './auth/conversation-context.js';
 import { registerPushToChannelTool } from './agent/mcp-server.js';
 import type { LocalPushActor } from './agent/push-actor.js';
 import type { McpServerDeps } from './agent/mcp-server.js';
+import type { RouteResult } from './types.js';
 
 // Real-fs watcher so `checkAcl` can read mocked acl.json from disk (other
 // tests in this repo follow the same pattern).
@@ -72,7 +74,7 @@ const AGENT_ID = 'a:test-agent@srv';
 const AGENT_FOLDER = 'test-agent';
 const OTHER_AGENT_ID = 'a:other@srv';
 const USER_PARTICIPANT = 'u:test-user';
-const ADMIN_PARTICIPANT = 'local/admin:local';
+const ADMIN_PARTICIPANT = 'admin:local';
 
 interface Harness {
   bus: Bus;
@@ -85,6 +87,10 @@ interface Harness {
     routing: unknown;
     kind: unknown;
   }>;
+  /** Scripted per-call route results, consumed in order. An `Error` entry
+   *  makes that call reject; a `RouteResult` resolves as-is. Empty →
+   *  `{ok: true}` (capture-only success, what pre-existing tests rely on). */
+  routeResults: Array<RouteResult | Error>;
   cleanup: () => void;
 }
 
@@ -97,6 +103,7 @@ function buildHarness(): Harness {
   bus.register(OTHER_AGENT_ID, noop, 'exact', { label: 'other', type: 'agent', folderPath: 'other' });
 
   const routeCalls: Harness['routeCalls'] = [];
+  const routeResults: Harness['routeResults'] = [];
   const ctx: AgentMcpDepsContext = {
     agentId: AGENT_ID,
     folder: AGENT_FOLDER,
@@ -104,7 +111,12 @@ function buildHarness(): Harness {
     agentDb,
     route: async (address, senderId, text, routing, _rawText, _declaredName, _attachments, kind) => {
       routeCalls.push({ address, senderId, text, routing, kind });
-      return null;
+      if (routeResults.length > 0) {
+        const next = routeResults.shift()!;
+        if (next instanceof Error) throw next;
+        return next;
+      }
+      return { ok: true as const, result: null };
     },
     getApprovals: () => { throw new Error('approvals not wired in test'); },
     listSiblingAgents: undefined,
@@ -118,6 +130,7 @@ function buildHarness(): Harness {
     agentDb,
     deps,
     routeCalls,
+    routeResults,
     cleanup: () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     },
@@ -181,10 +194,10 @@ function perAgentConsoleActor(channel: '__design' | '__configure' = '__design'):
 describe('participantExists gate — user-agent', () => {
   it('user-agent push to a registered peer succeeds (allow branch)', async () => {
     // Allow branch isolates `participantExists` from `gateInbound` by using
-    // the local-identity admin handle as the target participant — `checkAcl`
-    // short-circuits to `ALL_BITS` for identity=`local` so the downstream
+    // the operator admin handle as the target participant — `checkAcl`
+    // short-circuits to `ALL_BITS` for the operator tier so the downstream
     // gate doesn't influence the outcome. The reject-branch test uses a
-    // non-local identity to exercise the reject side of the same gate.
+    // regular user identity to exercise the reject side of the same gate.
     harness.agentDb.upsertParticipant(ADMIN_PARTICIPANT);
     const actor: LocalPushActor = {
       kind: 'user-agent',
@@ -202,9 +215,9 @@ describe('participantExists gate — user-agent', () => {
   });
 
   it('user-agent push to an unregistered peer is rejected (reject branch)', async () => {
-    // Local-identity caller passes the caller-standing gate (ALL_BITS), so
+    // The operator caller passes the caller-standing gate (ALL_BITS), so
     // `participantExists` is the gate under test. No upsertParticipant → the
-    // target is unregistered. (A non-local caller would trip the caller-
+    // target is unregistered. (A regular user caller would trip the caller-
     // standing gate first, before participantExists is ever reached.)
     const actor: LocalPushActor = {
       kind: 'user-agent',
@@ -240,46 +253,29 @@ describe('participantExists gate — per-agent-console (skipped)', () => {
 });
 
 // ----------------------------------------------------------------------------
-// gateInbound (`i` bit) — user-trust gate, both branches
+// gateInbound (`i` bit) — user-trust gate, reject branch
+// (The allow branch is the operator ALL_BITS short-circuit, already covered by
+// the participantExists allow case above — the same operator-tier bypass.)
 // ----------------------------------------------------------------------------
 
 describe('gateInbound — user-agent', () => {
-  // `local` identity short-circuits to ALL_BITS in checkAcl, so we use a
-  // non-local participant whose bits are controllable via acl.json. Without
+  // The operator tier short-circuits to ALL_BITS in checkAcl, so we use a
+  // regular user participant whose bits are controllable via acl.json. Without
   // an acl.json grant, the bits are empty → `i` missing → reject.
   it('user-agent push to a peer without `i` bit is rejected', async () => {
     harness.agentDb.upsertParticipant(USER_PARTICIPANT);
-    // No acl.json on disk → checkAcl returns empty bits for non-local identities.
+    // No acl.json on disk → checkAcl returns empty bits for regular user identities.
     const client = await clientFor(userAgentActor('default'), harness);
     const r = await client.callTool({
       name: 'conversation__push_to_channel',
       arguments: { channel: 'side-channel', text: 'hi' },
     });
-    // Outcome depends on whether ALL_BITS short-circuit applies. `u:test-user`
-    // resolves to a non-local identity, so it requires acl.json grants. With
-    // no acl.json, bits are empty and `i` is missing.
+    // Outcome depends on whether the operator ALL_BITS short-circuit applies.
+    // `u:test-user` resolves to a regular user identity, so it requires
+    // acl.json grants. With no acl.json, bits are empty and `i` is missing.
     expect(r.isError).toBe(true);
     expect(resultText(r)).toContain('not authorized');
     expect(harness.routeCalls).toHaveLength(0);
-  });
-
-  it('user-agent push with `local` participant has ALL_BITS short-circuit (allow branch)', async () => {
-    // Local handle short-circuits in checkAcl regardless of acl.json. This
-    // is the allow-branch counterpart — same gate, different identity.
-    harness.agentDb.upsertParticipant(ADMIN_PARTICIPANT);
-    const actor: LocalPushActor = {
-      kind: 'user-agent',
-      agentId: AGENT_ID,
-      channel: 'default',
-      participant: ADMIN_PARTICIPANT,
-    };
-    const client = await clientFor(actor, harness);
-    const r = await client.callTool({
-      name: 'conversation__push_to_channel',
-      arguments: { channel: 'side-channel', text: 'hi' },
-    });
-    expect(r.isError).toBeFalsy();
-    expect(harness.routeCalls).toHaveLength(1);
   });
 });
 
@@ -304,7 +300,7 @@ describe('gateInbound — per-agent-console (skipped)', () => {
 
 describe('channel-name parser — user-agent (strict)', () => {
   it('user-agent accepts user-channel name', async () => {
-    // Local-identity participant so gateInbound passes — we're isolating
+    // Operator participant so gateInbound passes — we're isolating
     // the parser's accept path from the downstream gates.
     harness.agentDb.upsertParticipant(ADMIN_PARTICIPANT);
     const actor: LocalPushActor = {
@@ -580,13 +576,13 @@ describe('caller-standing gate — push_to_participant cross-channel', () => {
   it('allows a self-fire (agent-addressed caller) to push_to_participant — agent owns its channels', async () => {
     // schedule.txt / self-task fire: caller is the agent's own address, not a
     // user, so the caller-standing check is skipped (an `a:` identity can't
-    // hold `i`). The target gate still applies — local handle → ALL_BITS.
+    // hold `i`). The target gate still applies — operator handle → ALL_BITS.
     harness.agentDb.upsertParticipant(ADMIN_PARTICIPANT);
     const r = await harness.deps.deliverToChannel!(
       userAgentActor('x'),
       'y',               // target channel (differs from the self-fire channel)
       'scheduled nudge',
-      ADMIN_PARTICIPANT, // target participant (local → ALL_BITS)
+      ADMIN_PARTICIPANT, // target participant (operator → ALL_BITS)
       'x',               // caller channel (the self-fire's own channel)
       AGENT_ID,          // caller participant = agent self-address
     );
@@ -595,9 +591,31 @@ describe('caller-standing gate — push_to_participant cross-channel', () => {
     expect(harness.routeCalls[0]!.routing).toMatchObject({ channel: 'y', targetParticipant: ADMIN_PARTICIPANT });
   });
 
+  it('closes the masquerade: a peer-agent caller cannot push to a user, even one with `i` (M3)', async () => {
+    // The M3 write path: a peer agent (a non-user `a:` address) as caller. The
+    // OLD caller-standing gate was scoped to `isUser`, so a peer skipped it and
+    // only the TARGET's `i` was checked — with an operator target (ALL_BITS →
+    // has `i`) the push SUCCEEDED, letting a prompt-injected peer inject into
+    // the agent's user conversations. NEW: the peer caller is classified by
+    // membership; with no grant on #default it is a non-member and is denied
+    // outright, before the target is ever consulted.
+    harness.agentDb.upsertParticipant(ADMIN_PARTICIPANT);
+    const r = await harness.deps.deliverToChannel!(
+      userAgentActor('intel'),
+      'default',
+      'injected directive',
+      ADMIN_PARTICIPANT, // target with `i` (operator → ALL_BITS) — OLD would have allowed
+      'intel',
+      OTHER_AGENT_ID,    // caller participant = a PEER agent (a:other@srv)
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toContain('not authorized on channel "default"');
+    expect(harness.routeCalls).toHaveLength(0);
+  });
+
   it('allows the two-axis move when the caller IS authorized on #y (no over-block)', async () => {
     // Counterpart to the denial: a caller with standing on the target channel
-    // makes a legitimate two-axis push. The local handle → ALL_BITS gives the
+    // makes a legitimate two-axis push. The operator handle → ALL_BITS gives the
     // caller `i` on #y without an acl.json fixture.
     harness.agentDb.upsertParticipant(ADMIN_PARTICIPANT);
     const r = await harness.deps.deliverToChannel!(
@@ -610,5 +628,202 @@ describe('caller-standing gate — push_to_participant cross-channel', () => {
     );
     expect(r.ok).toBe(true);
     expect(harness.routeCalls).toHaveLength(1);
+  });
+});
+
+// ----------------------------------------------------------------------------
+// Transport-blind addressing pins — the substrate participant discovery
+// relies on. The registry is identity-keyed (`identityKey` strips the routing
+// handle for `u:` rows), so the bare identity and any compound form address
+// the same participant. Live delivery to bare targets is e2e-proven; these
+// pin the unit boundary.
+// ----------------------------------------------------------------------------
+
+describe('transport-blind addressing — identity-keyed registry', () => {
+  it('bare and compound forms of one identity both pass participantExists and dispatch', async () => {
+    // Registered compound (as a routed message would be), targeted both ways.
+    harness.agentDb.upsertParticipant('u:bob@srv/tg:42');
+    for (const target of ['u:bob@srv', 'u:bob@srv/tg:42']) {
+      const r = await harness.deps.deliverToChannel!(
+        userAgentActor('x'), 'y', 'hello', target, 'x', ADMIN_PARTICIPANT,
+      );
+      expect(r.ok).toBe(true);
+    }
+    expect(harness.routeCalls).toHaveLength(2);
+  });
+
+  it('verdict deny precedes existence: an unauthorized caller learns nothing about an unregistered target', async () => {
+    // u:ghost is NOT registered; alice has no standing on #y. The denial is
+    // the caller-standing verdict — byte-identical to the chokepoint wording —
+    // never "Unknown participant". Population-blind on deny.
+    const r = await harness.deps.deliverToChannel!(
+      userAgentActor('x'), 'y', 'probe', 'u:ghost@srv', 'x', 'u:alice',
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toBe(channelAuthDenial('y'));
+      expect(r.reason).not.toContain('Unknown participant');
+    }
+    expect(harness.routeCalls).toHaveLength(0);
+  });
+
+  it('recordOutboundPush + routing carry the dispatched form — wire resolution is delivery-time', async () => {
+    harness.agentDb.upsertParticipant('u:bob@srv');
+    const r = await harness.deps.deliverToChannel!(
+      userAgentActor('x'), 'y', 'hi', 'u:bob@srv/tg:42', 'x', ADMIN_PARTICIPANT,
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      const row = harness.agentDb.getOutboundPush(r.requestId);
+      expect(row).toMatchObject({ target_channel: 'y', channel: 'x', participant: ADMIN_PARTICIPANT });
+    }
+    // The push gate passes the target through untouched.
+    expect(harness.routeCalls[0]!.routing).toMatchObject({ targetParticipant: 'u:bob@srv/tg:42' });
+  });
+});
+
+// ----------------------------------------------------------------------------
+// Intra-agent push failure echo
+// ----------------------------------------------------------------------------
+
+describe('intra-agent push failure echo', () => {
+  async function flush(): Promise<void> {
+    for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+  }
+
+  function pushIdFrom(text: string): string {
+    const m = text.match(/id: (req-[A-Za-z0-9-]+)\./);
+    expect(m).not.toBeNull();
+    return m![1]!;
+  }
+
+  it('route resolving {ok:false} marks the push rejected and echoes <cast:rejection> into the caller cell', async () => {
+    harness.agentDb.upsertParticipant(ADMIN_PARTICIPANT);
+    harness.routeResults.push({ ok: false, error: 'spawn failed' }); // dispatch leg
+    harness.routeResults.push({ ok: true, result: null });           // echo leg
+    const actor: LocalPushActor = {
+      kind: 'user-agent',
+      agentId: AGENT_ID,
+      channel: 'default',
+      participant: ADMIN_PARTICIPANT,
+    };
+    const client = await clientFor(actor, harness);
+    const r = await client.callTool({
+      name: 'conversation__push_to_channel',
+      arguments: { channel: 'side-channel', text: 'hi' },
+    });
+    // Fire-and-forget: the tool reports queued before the outcome exists.
+    expect(r.isError).toBeFalsy();
+    const requestId = pushIdFrom(resultText(r));
+
+    await flush();
+
+    // Second route call is the rejection echo into the caller's own cell.
+    expect(harness.routeCalls).toHaveLength(2);
+    const echo = harness.routeCalls[1]!;
+    expect(echo.text).toContain('<cast:rejection');
+    expect(echo.text).toContain(`request="${requestId}"`);
+    expect(echo.text).toContain('spawn failed');
+    const routing = echo.routing as { channel?: string; targetParticipant?: string };
+    expect(routing.channel).toBe('default');
+    expect(routing.targetParticipant).toBe(ADMIN_PARTICIPANT);
+
+    // DB row marked — the echo rail's anchor.
+    expect(harness.agentDb.getOutboundPush(requestId)?.status).toBe('rejected');
+  });
+
+  it('route rejecting (genuine throw) takes the same failure path', async () => {
+    harness.agentDb.upsertParticipant(ADMIN_PARTICIPANT);
+    harness.routeResults.push(new Error('pipeline exploded')); // dispatch leg rejects
+    harness.routeResults.push({ ok: true, result: null });     // echo leg
+    const actor: LocalPushActor = {
+      kind: 'user-agent',
+      agentId: AGENT_ID,
+      channel: 'default',
+      participant: ADMIN_PARTICIPANT,
+    };
+    const client = await clientFor(actor, harness);
+    const r = await client.callTool({
+      name: 'conversation__push_to_channel',
+      arguments: { channel: 'side-channel', text: 'hi' },
+    });
+    expect(r.isError).toBeFalsy();
+    const requestId = pushIdFrom(resultText(r));
+
+    await flush();
+
+    expect(harness.routeCalls).toHaveLength(2);
+    expect(harness.routeCalls[1]!.text).toContain('pipeline exploded');
+    expect(harness.agentDb.getOutboundPush(requestId)?.status).toBe('rejected');
+  });
+
+  it('route resolving {ok:true} leaves the row open and produces no echo', async () => {
+    harness.agentDb.upsertParticipant(ADMIN_PARTICIPANT);
+    harness.routeResults.push({ ok: true, result: null });
+    const actor: LocalPushActor = {
+      kind: 'user-agent',
+      agentId: AGENT_ID,
+      channel: 'default',
+      participant: ADMIN_PARTICIPANT,
+    };
+    const client = await clientFor(actor, harness);
+    const r = await client.callTool({
+      name: 'conversation__push_to_channel',
+      arguments: { channel: 'side-channel', text: 'hi' },
+    });
+    const requestId = pushIdFrom(resultText(r));
+
+    await flush();
+
+    expect(harness.routeCalls).toHaveLength(1);
+    expect(harness.agentDb.getOutboundPush(requestId)?.status).toBe('open');
+  });
+
+  it('failure with no caller cell marks the row rejected without echoing', async () => {
+    harness.agentDb.upsertParticipant(ADMIN_PARTICIPANT);
+    harness.routeResults.push({ ok: false, error: 'spawn failed' });
+    // Self-fire shape — no caller channel/participant (scheduler/service origin).
+    const actor: LocalPushActor = {
+      kind: 'user-agent',
+      agentId: AGENT_ID,
+      channel: 'default',
+      participant: ADMIN_PARTICIPANT,
+    };
+    const result = await harness.deps.deliverToChannel!(
+      actor, 'side-channel', 'hi', ADMIN_PARTICIPANT,
+      undefined, undefined, undefined, undefined,
+    );
+    expect(result.ok).toBe(true);
+    const requestId = (result as { requestId: string }).requestId;
+
+    await flush();
+
+    // Only the dispatch leg — no echo route call without a caller cell.
+    expect(harness.routeCalls).toHaveLength(1);
+    expect(harness.agentDb.getOutboundPush(requestId)?.status).toBe('rejected');
+  });
+
+  it('rejection echo text never carries a transport handle or compound form', async () => {
+    harness.agentDb.upsertParticipant(ADMIN_PARTICIPANT);
+    harness.routeResults.push({ ok: false, error: 'Delivery failed' });
+    harness.routeResults.push({ ok: true, result: null });
+    const actor: LocalPushActor = {
+      kind: 'user-agent',
+      agentId: AGENT_ID,
+      channel: 'default',
+      participant: ADMIN_PARTICIPANT,
+    };
+    const client = await clientFor(actor, harness);
+    await client.callTool({
+      name: 'conversation__push_to_channel',
+      arguments: { channel: 'side-channel', text: 'hi' },
+    });
+    await flush();
+
+    const echo = harness.routeCalls[1]!;
+    // Blindness is total: the echo names the agent and the request id, never a wire.
+    expect(echo.text).not.toContain('tg:');
+    expect(echo.text).not.toContain('web:');
+    expect(echo.text).not.toMatch(/u:[^"<\s]+\//);
   });
 });

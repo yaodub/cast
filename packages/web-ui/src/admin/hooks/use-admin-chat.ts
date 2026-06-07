@@ -286,7 +286,7 @@ export function useAdminChat(
             return;
           }
 
-          // `hint` — UI presentation hint (Task 171's `chat_position` slot).
+          // `hint` — UI presentation hint (reserved `chat_position` slot).
           // No consumer wired yet; reserved so an unknown variant doesn't
           // fall through silently when implementation lands.
         }

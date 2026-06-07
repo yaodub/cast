@@ -158,7 +158,7 @@ export type ConversationPhase = 'new' | 'active' | 'expiring' | 'terminating';
  * notification path.
  *
  * Mirrors `agent/session-host.ts:IdleTimeoutMeta` during the migration. The
- * session-host copy disappears in Phase E.
+ * session-host copy will be removed when the migration completes.
  */
 export interface IdleTimeoutMeta {
   conversationKey: string;
@@ -175,7 +175,7 @@ export interface IdleTimeoutMeta {
 
 /**
  * The minimal Conversation surface that `ConversationTtl` depends on. The full
- * `Conversation` class (Phase B) implements this plus a wider API.
+ * `Conversation` class implements this plus a wider API.
  *
  * Defined here so TTL is testable in isolation without dragging in the full
  * Conversation/Catalog graph.

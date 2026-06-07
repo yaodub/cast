@@ -82,7 +82,7 @@ describe('formatTagAttrs', () => {
   });
 });
 
-// --- pushTierAttrs (Phase 7 SSOT for push trust-tier policy) ---
+// --- pushTierAttrs (SSOT for push trust-tier policy) ---
 
 describe('pushTierAttrs', () => {
   it('self tier: same agent, cross-channel — fromChannel only', () => {

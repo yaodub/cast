@@ -6,7 +6,7 @@
  * carrying packets between transports and agents). This bus is internal to
  * the conversations layer — it emits whenever a `Conversation` instance
  * changes state, phase, queue posture, or completes a teardown side-effect.
- * Phase H Steps 3-7 progressively migrate hook delivery onto this bus so
+ * Hook delivery migrated onto this bus so
  * the `Conversation` class has a single observable surface and host-layer
  * subscribers (queue UX, snapshot cleanup, expiry side-effects) become
  * compositional rather than baked into `ConversationCallbacks`.

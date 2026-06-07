@@ -26,9 +26,9 @@ describe('LocalIdentityProvider', () => {
   });
 
   describe('resolve', () => {
-    it('CLI handles always resolve to local identity', () => {
-      const result = idp.resolve('cli:alice');
-      expect(result).toEqual({ id: 'local', declaredName: 'alice', handle: 'cli:alice' });
+    it('operator handles resolve to themselves (the handle IS the identity)', () => {
+      expect(idp.resolve('cli:alice')).toEqual({ id: 'cli:alice', declaredName: 'alice', handle: 'cli:alice' });
+      expect(idp.resolve('admin:local')).toEqual({ id: 'admin:local', declaredName: 'local', handle: 'admin:local' });
     });
 
     it('returns null for unknown handles', () => {
@@ -71,10 +71,11 @@ describe('LocalIdentityProvider', () => {
   });
 
   describe('getIdentity', () => {
-    it('returns local identity record for "local"', () => {
-      const record = idp.getIdentity('local');
+    it('returns a synthetic record for operator handles (virtual, not in DB)', () => {
+      const record = idp.getIdentity('admin:local');
       expect(record).not.toBeNull();
-      expect(record!.id).toBe('local');
+      expect(record!.id).toBe('admin:local');
+      expect(record!.handles).toEqual([]);
     });
 
     it('returns null for unknown identity', () => {
@@ -110,6 +111,21 @@ describe('LocalIdentityProvider', () => {
       idp.linkHandle(reg.id, 'tg:12345');
       const record = idp.getIdentity(reg.id);
       expect(record!.handles).toHaveLength(1);
+    });
+  });
+
+  describe('getHandlesForIdentity', () => {
+    it('returns the empty list for operator handles (no IdP-backed handle map)', () => {
+      // Operator handles are their own wire — they bypass the IdP, so there is
+      // no handle mapping to return (Stage D: identity === handle).
+      expect(idp.getHandlesForIdentity('admin:local')).toEqual([]);
+      expect(idp.getHandlesForIdentity('cli:alice')).toEqual([]);
+    });
+
+    it('returns the owned handles for a registered identity', () => {
+      const reg = idp.register('tg:12345', 'Alice');
+      idp.linkHandle(reg.id, 'tg:67890');
+      expect(idp.getHandlesForIdentity(reg.id).sort()).toEqual(['tg:12345', 'tg:67890']);
     });
   });
 

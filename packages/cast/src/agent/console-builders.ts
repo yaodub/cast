@@ -77,13 +77,13 @@ export function buildConsoleContext(
     logger.debug({ agentFolder: deps.folder, err }, 'Failed to parse manifest for console prompt');
   }
 
-  let owner = 'local';
+  let owner = 'operator';
   const aclRaw = readText(agentPath(deps.folder, 'config', 'acl.json'));
   if (aclRaw) {
     try {
       owner = AclSchema.parse(JSON.parse(aclRaw)).owner;
     } catch {
-      // ACL missing/unparseable → stay with 'local' default
+      // ACL missing/unparseable → stay with 'operator' default
     }
   }
 

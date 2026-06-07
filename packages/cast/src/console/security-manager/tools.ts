@@ -40,7 +40,7 @@ function handleFinalizeAgent(
   const result = setLifecycle(resolved.folder, 'ready', {
     actor: ctx.participant ?? 'security-manager',
     via: 'sm_review',
-    requested_by: 'local',
+    requested_by: 'operator',
     posture_summary: postureSummary,
   });
 

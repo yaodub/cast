@@ -12,9 +12,8 @@
  *     fails the schema) → fail-closed `{ mode: 'deny-all', except: [] }`.
  *     This is the only safe interpretation; the prior behavior (default
  *     to allow-all on invalid) silently unblocked every agent if a
- *     config typo or partial write produced an unparseable file. See the
- *     2026-05-23 name-vs-implementation audit — the file is called
- *     `firewall` and the failure mode should match the name.
+ *     config typo or partial write produced an unparseable file. The file
+ *     is called `firewall` and the failure mode should match the name.
  *
  * `loadFirewall()` (runtime) treats invalid as fail-closed and stays up
  * so a running server doesn't die on a config-edit typo.

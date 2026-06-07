@@ -56,7 +56,7 @@ export function ensureAdminTargetCache(target: AdminTarget): AdminTargetCache {
 }
 
 // Worker-side admin global state — populated by the admin WS transport
-// (Phase 3.2). Mirrors the prior tab-side `useAdminEventStream` snapshot.
+// Mirrors the prior tab-side `useAdminEventStream` snapshot.
 export const adminGlobal: AdminGlobalSnapshot = {
   initialAgents: [],
   connectionState: 'connecting',
@@ -153,8 +153,8 @@ function disposeAdminConnection(): void {
 // ---------------------------------------------------------------------------
 
 /**
- * Lazily create the per-identity ConnectionState. Phase 2.1 wires a
- * WebSocketTransport here on first creation. Subsequent calls reuse.
+ * Lazily create the per-identity ConnectionState. A WebSocketTransport is
+ * wired here on first creation. Subsequent calls reuse.
  */
 export function ensureConnection(identity: Identity): ConnectionState {
   let conn = connections.get(identity);

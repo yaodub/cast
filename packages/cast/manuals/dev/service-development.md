@@ -28,20 +28,51 @@ The service has full filesystem access to the agent folder but should only write
 
 ## Directory Structure
 
+The simplest way to author a service is directly inside the live agent's `blueprint/service/` folder. The source lives in the blueprint, you bundle it in place, and restart the service. This is the pattern to start with: the agent folder is self-contained, with nothing to maintain elsewhere.
+
 ```
-service/
-  package.json               Dependencies (independent from host)
-  manifest.json              Service identity: name, version
+blueprint/service/
   src/
-    index.ts                 Entry point: IPC listener, cron scheduling, MCP server startup
-    mcp.ts                   MCP tool definitions (served on Unix socket)
+    index.ts                 Source: IPC listener, MCP server startup, jobs, admin handler
+  package.json               Service dependencies (independent from host)
+  manifest.json              Service identity (name, version) + settings/secrets/admin declarations
+  index.js                   Bundled output, sits beside the source
+  index.js.map
+  checksum.txt
 ```
 
-The service source lives in `blueprint/service/` within the agent folder. The agent's runtime service CWD is `ext/service/` (private runtime — databases, caches) with operator-owned secrets in `config/ext/service/.env` and agent-visible output in `shared/ext/service/`.
+The runtime service CWD is `ext/service/` (private runtime: databases, caches). Operator-owned files live in `config/ext/service/`: `secrets.json` for credentials and `config.json` for settings, declared in the manifest's `secrets` and `config` fields and edited from the admin UI. `svc.secrets` and `svc.settings` are startup snapshots of those files; the server restarts the service whenever either changes (admin save or hand edit alike), so the snapshots are always current. See "Operator Settings and Secrets" below.
 
-**During development**, set `"entry": "src/index.ts"` in `blueprint/service/manifest.json`. The server will run the TypeScript source directly via tsx (no bundle step). Edit the source, then restart the agent's service to load the new code (admin UI → the agent's ⋯ menu → **Restart Agent Service**, or restart the Cast server). Only service *source* needs a restart. Blueprint, identity, channels, and config hot-reload on their own, and a brand-new agent folder is discovered live.
+### Building and reloading
 
-**For production**, the service is bundled to `blueprint/service/index.js` via esbuild (ESM, node20 target, sourcemaps). Native modules (e.g., `better-sqlite3`) are installed separately in the output directory.
+`src/index.ts` is bundled with esbuild (ESM, node20 target, sourcemaps) to `blueprint/service/index.js`, beside the source. A manifest with no `entry` field runs that bundle under plain `node`, which is the production shape: self-contained, no toolchain needed at the runtime. Native modules (e.g. `better-sqlite3`) install into the service folder separately. Rebuild after each source change. esbuild only transpiles, so the build never type-checks the service. Type-check it explicitly (see [Type-checking a service](#type-checking-a-service)).
+
+There is no first-class CLI command to rebuild a **live** agent's in-place service, so the repo ships one: `pnpm deploy:service <agent>/blueprint/service`, then restart. It bundles the way `buildService` (`packages/agent-kit/src/build-service.ts`) does for a fresh agent, but to a throwaway dir, and copies the four artifacts (`index.js`, `index.js.map`, `checksum.txt`, stripped `manifest.json`) back over `blueprint/service/`.
+
+The throwaway dir matters: `buildService` wipes its output dir first, so pointing it at `blueprint/service/` itself would delete your `src/`. (`init` may pass the agent's `blueprint/service` as the output only because that folder is being created fresh from a template.)
+
+Restarting the service is the only step that loads new service code (admin UI → the agent's ⋯ menu → **Restart Agent Service**, or restart the Cast server). Blueprint, identity, channels, and config hot-reload on their own, and a brand-new agent folder is discovered live.
+
+> For quick local iteration you can set `"entry": "src/index.ts"` in the manifest to run the TypeScript source directly via tsx, skipping the bundle. This needs the service's dependencies resolvable from the agent folder and a server launched with tsx on PATH, so it fits a `pnpm dev` workspace rather than a bundled deploy.
+
+### Type-checking a service
+
+esbuild and the `tsx` path above both strip types without checking them, so building or running a service never type-checks it. Run `tsc` yourself before shipping a change.
+
+The check is non-obvious because a service is an independent package whose dependency closure is not the workspace's. A naive `tsc` from the repo, or one pointed at the agent folder, resolves the wrong things or nothing at all:
+
+- **Workspace deps** (`@getcast/*`, declared `workspace:*`) export their **source `.ts`**, not a built `.d.ts`. tsc resolves those only with `allowImportingTsExtensions`, and pnpm does not always expose them under the repo-root `node_modules`.
+- **Registry deps can differ in version from the workspace.** A service on `zod@3` checked against the repo root's `zod@4` is checked against the wrong types.
+- `@types/node` and any service-only dep (its own `zod`, a tokenizer, an API client) are not installed anywhere tsc can see from the agent folder, which lives outside the workspace.
+
+Run `pnpm check:service <agent>/blueprint/service`. It gives tsc the service's real closure, mirroring how `buildService` resolves deps for esbuild (`packages/agent-kit/src/build-service.ts` is the authority for the algorithm):
+
+1. Split the service `package.json` deps into workspace (`workspace:*`) and registry.
+2. `pnpm install --ignore-workspace` the registry deps plus `@types/node` into a throwaway dir. `--ignore-workspace` yields **real `node_modules`** rather than pnpm symlinks, which break package `exports` resolution.
+3. Alias each workspace dep to its source entry (`exports['.']`) through tsconfig `paths`.
+4. Copy the service `src/*.ts` beside that `node_modules` and run `tsc` with `moduleResolution: NodeNext`, `allowImportingTsExtensions: true`, `strict`, `noEmit`.
+
+A service-only dep that ships without bundled types can be covered by dropping a one-line `declare module` `.d.ts` into the service's `src/` (it gets copied into the check).
 
 ## Adding an MCP Tool
 
@@ -176,9 +207,29 @@ Services use `@getcast/agent-service-base` which bundles the common dependencies
 - `better-sqlite3` — SQLite for service databases
 - `@slack/web-api`, `imapflow`, etc. — domain-specific clients
 
+## Operator Settings and Secrets
+
+Declare the values your service needs in `blueprint/service/manifest.json`; the admin UI generates a form from the declaration (the Service card on the agent's Capabilities page):
+
+```json
+{
+  "config": {
+    "SCAN_INTERVAL": { "label": "Scan interval (minutes)", "type": "number", "default": 30 }
+  },
+  "secrets": {
+    "HN_USERNAME": { "label": "HN username" },
+    "HN_PASSWORD": { "label": "HN password", "secret": true, "required": true }
+  }
+}
+```
+
+Settings land in `config/ext/service/config.json` (native JSON types, read as `svc.settings`); credentials land in `config/ext/service/secrets.json` (flat strings, read as `svc.secrets`). Both are startup snapshots — saving from the admin UI (or hand-editing either file) restarts the service, so a startup read is always current. The admin surface rejects undeclared keys; keys you add to the files by hand are preserved on admin saves. Declared `default`s are displayed, not persisted — apply fallbacks in code (`svc.settings.SCAN_INTERVAL ?? 30`).
+
+This declarative form covers flat values. Anything richer — multi-step setup, OAuth dances, status views — belongs on your own admin page (below).
+
 ## Admin Pages
 
-Services can provide an admin UI accessible at `/agents/:agent/admin/`. The cast server reverse-proxies these requests to a unix socket at `{agentDir}/admin.sock`.
+Services can provide an admin UI accessible at `/agents/{folder}/admin/`. The cast server reverse-proxies these requests to a unix socket at `{agentDir}/admin.sock`. Declaring `"admin": true` in `blueprint/service/manifest.json` surfaces an "Open service admin page" link on the agent's Service card; the link authorizes the browser via a path-scoped cookie session set by an authenticated admin call (API callers send the admin Bearer header instead). The page is reachable only while the service is running — credentials that crash the service are fixed on the host-rendered form, which works regardless of service state.
 
 ### Simple handler (svc.admin)
 
@@ -186,7 +237,8 @@ For status pages and simple forms, use `svc.admin()`:
 
 ```typescript
 svc.admin((req) => {
-  // req: { path: string, method: string, query: Record<string, string> }
+  // req: { path: string, method: string, query: Record<string, string>, body?: string }
+  // body is the raw request body (≤ 1 MB) — parse forms with URLSearchParams, JSON with JSON.parse
   if (req.path === '/' || req.path === '') {
     return { status: 200, contentType: 'text/html', body: '<h1>Admin</h1>' };
   }
@@ -229,4 +281,4 @@ When you add service capabilities, the agent contract often needs updates:
 - **New MCP tool** → describe via `svc.prompt` for dynamic docs, or update `identity/skills.md` for static guidance
 - **New shared data** → update `identity/skills.md` if the agent should read it directly from `/shared/service`, or describe via `svc.prompt`
 - **New cron job that routes messages** → may need a dedicated channel in `channels/` to receive those messages (e.g., a `summarize` channel with appropriate TTL and lifecycle)
-- **New secrets required** → document in `config/ext/service/.env.example` and update operator instructions
+- **New settings or secrets required** → declare them in the `config` / `secrets` fields of `blueprint/service/manifest.json`. The admin UI generates the form from the declaration; saves write `config/ext/service/{config,secrets}.json` and restart the service automatically (see "Operator Settings and Secrets")

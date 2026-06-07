@@ -8,8 +8,8 @@
  */
 import { z } from 'zod';
 
-import { buildResolvedParticipant, extractHandle, isOperatorHandle } from '../auth/address.js';
-import { storePacket, markDelivered, getPacketHistory, getUndeliveredPackets, getPendingOutboundForRecipient, getUndeliveredOutboundRecipients } from './gateway-db.js';
+import { extractHandle, isOperatorHandle } from '../auth/address.js';
+import { storePacket, markDelivered, markFailed, getPacketHistory, getUndeliveredPackets, getPendingOutboundForRecipient } from './gateway-db.js';
 import type { StoredPacket } from './gateway-db.js';
 import type { IdentityProvider } from '../auth/identity.js';
 import { conversationPkt, delegatePkt, AnyPacketSchema } from './packets.js';
@@ -21,7 +21,13 @@ import type { Bus, BusHandler } from './bus.js';
 import type { LogHostEventFn } from '../server/host-activity-log.js';
 import { isExternallyReachable } from './firewall.js';
 import { attachmentHostPath, persistAttachment } from '../lib/attachment-store.js';
-import { MAX_ATTACHMENT_BYTES } from '../config.js';
+import {
+  MAX_ATTACHMENT_BYTES,
+  OUTBOUND_ACK_REDUE_MS,
+  OUTBOUND_DELIVERY_TTL_MS,
+  OUTBOUND_RETRY_BACKOFF_MS,
+  OUTBOUND_WORKER_TICK_MS,
+} from '../config.js';
 import { isPersistablePacket } from '../transports/packet-dispatch.js';
 import type { Attachment, ApprovalResponsePayload, Evt } from '../types.js';
 import type { Transport, OutboundContext } from '../transports/schema.js';
@@ -33,6 +39,18 @@ const GatewayBusPayloadSchema = z.object({
   channel: z.string().optional(),
   conversationKey: z.string().optional(),
 });
+
+// --- Outbound delivery types ---
+
+/** Result of a single transport send attempt. */
+type SendOutcome =
+  | { kind: 'delivered' }             // transport confirmed synchronously; packet marked
+  | { kind: 'awaiting-ack' }          // sent over a deferred-ack transport; the client ack marks
+  | { kind: 'no-wire' }               // no connected transport owns the recipient right now
+  | { kind: 'failed'; err: unknown }; // transport send threw
+
+/** In-memory retry state for one pending packet. */
+type RetryState = { attempts: number; dueAt: number };
 
 interface MessageGatewayDeps {
   bus: Bus;
@@ -62,8 +80,8 @@ export class MessageGateway implements BusHandler {
   }
 
   async handleEvent(evt: Evt): Promise<void> {
-    const handle = extractHandle(evt.to);
-    if (!handle) return; // Agent addresses have no transport handle
+    const handle = this.resolveWire(evt.to);
+    if (!handle) return; // agent address, or a user identity with no reachable wire
     const transport = this.deps.transports().find(
       (t) => t.ownsParticipant(handle) && t.isConnected(),
     );
@@ -153,21 +171,24 @@ export class MessageGateway implements BusHandler {
       }
     }
 
-    // /pair — intercepted at gateway, dispatched to agent via bus
+    // /pair — intercepted at gateway, dispatched to agent via bus. The source
+    // wire rides as explicit payload metadata: the bare `from` no longer
+    // carries it, and pairing is the one consumer that needs the wire.
     if (trimmed.startsWith('/pair ') || trimmed === '/pair') {
       const code = trimmed.slice(6).trim();
       if (!code) {
-        this.deps.bus.routeMessage(from, to, { type: 'pairing_request' });
+        this.deps.bus.routeMessage(from, to, { type: 'pairing_request', sourceHandle: from });
       } else {
-        this.deps.bus.routeMessage(from, to, { type: 'pairing', code });
+        this.deps.bus.routeMessage(from, to, { type: 'pairing', code, sourceHandle: from });
       }
       return;
     }
 
-    // Build resolved from address (null identity → use raw handle)
-    const resolvedFrom = resolved
-      ? buildResolvedParticipant(resolved.id, from)
-      : from;
+    // Transport-blind boundary: above the gateway the participant is the bare
+    // identity. The source wire (`from`) survives only as per-turn payload
+    // metadata (`sourceHandle`) and in this gateway's own packet store; reply
+    // delivery recovers the wire via `resolveWire` (IdP lookup).
+    const resolvedFrom = resolved ? resolved.id : from;
     const declaredName = resolved?.declaredName ?? senderName;
 
     const pktId = generateId('pkt');
@@ -214,6 +235,7 @@ export class MessageGateway implements BusHandler {
       declaredName,
       attachments: dispatchAttachments,
       routing,
+      sourceHandle: from,
     });
   }
 
@@ -310,12 +332,6 @@ export class MessageGateway implements BusHandler {
   // Outbound delivery
   // =========================================================================
 
-  /**
-   * Deliver an outbound packet (agent → participant) through the transport layer.
-   * Persists the packet first, then drains all pending outbound packets for this
-   * recipient in timestamp order — so older failed messages are retried before
-   * newer ones, preserving conversation order.
-   */
   /** Per-recipient send chains — serializes outbound sends to prevent concurrent double-delivery. */
   private sendChains = new Map<string, Promise<void>>();
 
@@ -324,27 +340,47 @@ export class MessageGateway implements BusHandler {
    *  empty map and no-op. This is the coalesce mechanism for previews. */
   private latestPreview = new Map<string, string>();
 
+  /** Per-packet retry state — in-memory only. A restart resets backoff to
+   *  "due now", which is the correct boot schedule anyway; the durable facts
+   *  (pending / delivered / failed) live in gateway.db. */
+  private retrySchedule = new Map<string, RetryState>();
+
+  /**
+   * Serialize a delivery task onto the recipient's send chain — the single
+   * guard against concurrent double-delivery to one recipient. Live sends,
+   * worker ticks, and reconnect nudges all enter through here.
+   */
+  private chainForRecipient(to: string, task: () => Promise<void>): Promise<void> {
+    const prev = this.sendChains.get(to) ?? Promise.resolve();
+    const current = prev.then(task);
+    const settled = current.catch((err) => { logger.warn({ to, err }, 'Send chain failed'); });
+    this.sendChains.set(to, settled);
+    // Clean up entry once chain settles (only if no newer chain was appended)
+    settled.then(() => {
+      if (this.sendChains.get(to) === settled) this.sendChains.delete(to);
+    });
+    return current;
+  }
+
+  /**
+   * Deliver an outbound packet (agent → participant) through the transport layer.
+   * Persists the packet first, then drains all pending outbound packets for this
+   * recipient in timestamp order — so older failed messages are retried before
+   * newer ones, preserving conversation order.
+   */
   async deliverOutbound(pkt: AnyPacket, channel?: string, conversationKey?: string): Promise<void> {
     // Preview text path — ephemeral + coalesced. Skip persistence; queue a
     // chain entry that reads the latest snapshot for this streamId at drain
     // time. Other preview kinds (none in v1) will need separate policies.
     if (pkt.type === 'preview' && pkt.kind === 'text') {
       this.latestPreview.set(pkt.streamId, pkt.text);
-
-      const prev = this.sendChains.get(pkt.to) ?? Promise.resolve();
-      const current = prev.then(async () => {
+      await this.chainForRecipient(pkt.to, async () => {
         const latest = this.latestPreview.get(pkt.streamId);
         if (latest === undefined) return;
         this.latestPreview.delete(pkt.streamId);
         const drained = { ...pkt, text: latest } as AnyPacket;
         await this.sendOne(drained, /* pktId */ '', channel);
       });
-      const settled = current.catch((err) => { logger.warn({ to: pkt.to, err }, 'Preview send chain failed'); });
-      this.sendChains.set(pkt.to, settled);
-      settled.then(() => {
-        if (this.sendChains.get(pkt.to) === settled) this.sendChains.delete(pkt.to);
-      });
-      await current;
       return;
     }
 
@@ -354,85 +390,196 @@ export class MessageGateway implements BusHandler {
       try {
         storePacket(pktId, pkt, 'outbound', conversationKey, channel);
       } catch (err) {
+        // Persist failed — fall back to a direct one-shot send so the message
+        // still gets its delivery chance (it can't enter the retry pool).
         logger.warn({ pktId, to: pkt.to, err }, 'Failed to persist outbound packet');
+        await this.chainForRecipient(pkt.to, async () => { await this.sendOne(pkt, pktId, channel); });
+        return;
       }
+      await this.nudgeRecipient(pkt.to);
+      return;
     }
 
-    // Chain on any in-flight send for this recipient to serialize delivery
-    const prev = this.sendChains.get(pkt.to) ?? Promise.resolve();
-    const current = prev.then(() => this.sendOne(pkt, pktId, channel));
-    const settled = current.catch((err) => { logger.warn({ to: pkt.to, err }, 'Send chain failed'); });
-    this.sendChains.set(pkt.to, settled);
-    // Clean up entry once chain settles (only if no newer chain was appended)
-    settled.then(() => {
-      if (this.sendChains.get(pkt.to) === settled) this.sendChains.delete(pkt.to);
-    });
-    await current;
+    await this.chainForRecipient(pkt.to, async () => { await this.sendOne(pkt, pktId, channel); });
   }
 
-  private async sendOne(pkt: AnyPacket, pktId: string, channel?: string): Promise<void> {
-    const handle = extractHandle(pkt.to);
-    if (!handle) return; // Agent addresses have no transport handle
+  /**
+   * Make a recipient's pending packets due immediately and drain them through
+   * the send chain. Live sends and web reconnects funnel here: fresh activity
+   * for a recipient is evidence the wire is worth retrying now, ahead of the
+   * worker's backoff schedule.
+   */
+  async nudgeRecipient(toAddr: string): Promise<void> {
+    return this.chainForRecipient(toAddr, async () => {
+      for (const p of getPendingOutboundForRecipient(toAddr)) this.retrySchedule.delete(p.id);
+      await this.drainRecipientPending(toAddr);
+    });
+  }
+
+  /**
+   * Resolve the delivery wire (transport handle) for an outbound `to` address.
+   * Backward-compatible with the compound form; the bare-identity branch is the
+   * transport-blind path: a bare `u:` user has its handle recovered from the IdP
+   * (one today, multi-transport-ready). Operator handles (`cli:`/`admin:`) and
+   * compounds already yield the wire directly. Agent addresses have no wire.
+   */
+  private resolveWire(to: string): string | undefined {
+    const handle = extractHandle(to);
+    if (!handle) return undefined; // agent address — no transport handle
+    if (handle.startsWith('u:')) {
+      // `to` was a bare user identity (no handle in the address) — recover the wire.
+      return this.deps.identityProvider.getHandlesForIdentity(handle)[0];
+    }
+    return handle;
+  }
+
+  private async sendOne(pkt: AnyPacket, pktId: string, channel?: string): Promise<SendOutcome> {
+    const handle = this.resolveWire(pkt.to);
+    if (!handle) return { kind: 'no-wire' }; // agent address, or a user identity with no reachable wire
     const transport = this.deps.transports().find(
       (t) => t.ownsParticipant(handle) && t.isConnected(),
     );
-    if (!transport) return;
+    if (!transport) return { kind: 'no-wire' };
 
     try {
       const outPkt = { ...pkt, to: handle } as AnyPacket;
       await transport.send(outPkt, { agentAddress: pkt.from, channel });
-      if (isPersistablePacket(pkt) && !transport.deferredAck) markDelivered(pktId);
     } catch (err) {
-      logger.warn({ pktId, to: handle, err }, 'Outbound delivery failed, queued for retry');
+      return { kind: 'failed', err };
+    }
+
+    if (transport.deferredAck) return { kind: 'awaiting-ack' };
+    if (isPersistablePacket(pkt)) markDelivered(pktId);
+    return { kind: 'delivered' };
+  }
+
+  /** Re-attach content-addressed attachment paths to a recovered packet —
+   *  gateway.db payloads don't persist hostPaths, but the attachment store
+   *  keeps the bytes indefinitely by hash. */
+  private rehydrateAttachments(pkt: AnyPacket, fromAddr: string): void {
+    if (pkt.type !== 'conversation' || !pkt.attachments) return;
+    const agentEntity = this.deps.bus.listEntities().find((e) => e.id === fromAddr);
+    if (!agentEntity) return;
+    for (const att of pkt.attachments) {
+      if (att.hash && !att.hostPath) {
+        const ext = att.mimeType.split('/')[1] || 'bin';
+        att.hostPath = attachmentHostPath(agentEntity.folderPath, att.hash, ext);
+      }
     }
   }
 
   /**
-   * Drain all pending outbound packets for a recipient, oldest first.
-   * Used only for startup recovery of undelivered packets.
+   * Drain a recipient's pending outbound packets, oldest first — the single
+   * delivery implementation behind live sends, worker ticks, and reconnect
+   * nudges. Always called on the recipient's send chain. Stops at the first
+   * packet that can't deliver so per-conversation order is preserved;
+   * TTL-expired and poison packets are marked failed (terminal, loud) and
+   * skipped over.
    */
-  private async drainOutboundForRecipient(toAddr: string): Promise<void> {
-    const pending = getPendingOutboundForRecipient(toAddr);
-    if (pending.length === 0) return;
-
-    const handle = extractHandle(toAddr);
-    if (!handle) return; // Agent addresses have no transport handle
-    const transport = this.deps.transports().find(
-      (t) => t.ownsParticipant(handle) && t.isConnected(),
-    );
-    if (!transport) return;
-
-    for (const p of pending) {
-      // Parse errors mean poison row — quarantine and skip. Looping on the
-      // same unparseable payload would stall the whole drain forever.
-      const pkt = parseJsonSafe(p.payload, AnyPacketSchema);
-      if (!pkt) {
-        logger.error({ pktId: p.id }, 'Recovery: skipping unparseable outbound payload');
-        markDelivered(p.id);
+  private async drainRecipientPending(toAddr: string): Promise<void> {
+    for (const p of getPendingOutboundForRecipient(toAddr)) {
+      const age = Date.now() - Date.parse(p.timestamp);
+      if (age > OUTBOUND_DELIVERY_TTL_MS) {
+        markFailed(p.id);
+        this.retrySchedule.delete(p.id);
+        logger.warn({ pktId: p.id, to: toAddr, ageMs: age }, 'Outbound packet expired undelivered — marked failed');
+        this.deps.logHostEvent?.('warn', 'gateway', 'outbound_expired',
+          `Outbound packet expired undelivered after ${Math.round(age / 60_000)}m`,
+          { toAddr, context: { pktId: p.id, ageMs: age } });
         continue;
       }
 
-      try {
-        // Recover attachment hostPaths for conversation packets with attachment metadata
-        if (pkt.type === 'conversation' && pkt.attachments) {
-          const agentEntity = this.deps.bus.listEntities().find((e) => e.id === p.from_addr);
-          if (agentEntity) {
-            for (const att of pkt.attachments) {
-              if (att.hash && !att.hostPath) {
-                const ext = att.mimeType.split('/')[1] || 'bin';
-                att.hostPath = attachmentHostPath(agentEntity.folderPath, att.hash, ext);
-              }
-            }
-          }
-        }
+      // Not due yet — later packets wait behind it so conversation order holds.
+      const sched = this.retrySchedule.get(p.id);
+      if (sched && sched.dueAt > Date.now()) return;
 
-        const outPkt = { ...pkt, to: handle } as AnyPacket;
-        await transport.send(outPkt, { agentAddress: p.from_addr });
-        if (!transport.deferredAck) markDelivered(p.id);
-      } catch (err) {
-        logger.warn({ pktId: p.id, to: handle, err }, 'Outbound delivery failed, will retry on next send');
-        break;
+      // Parse errors mean poison row — a payload that no longer parses can
+      // never deliver. Mark failed so the drain can't stall on it forever.
+      const pkt = parseJsonSafe(p.payload, AnyPacketSchema);
+      if (!pkt) {
+        markFailed(p.id);
+        this.retrySchedule.delete(p.id);
+        logger.error({ pktId: p.id }, 'Unparseable outbound payload — marked failed');
+        continue;
       }
+
+      this.rehydrateAttachments(pkt, p.from_addr);
+      const outcome = await this.sendOne(pkt, p.id, p.channel ?? undefined);
+      switch (outcome.kind) {
+        case 'delivered':
+          if (sched) logger.info({ pktId: p.id, to: toAddr, attempts: sched.attempts }, 'Outbound packet delivered after retry');
+          this.retrySchedule.delete(p.id);
+          break;
+        case 'awaiting-ack':
+          // Sent over a deferred-ack transport; the client ack marks delivery.
+          // Re-due far out so a lost ack self-heals — the web client dedups by
+          // packet id and re-acks duplicates, so a re-send is harmless.
+          this.retrySchedule.set(p.id, {
+            attempts: (sched?.attempts ?? 0) + 1,
+            dueAt: Date.now() + OUTBOUND_ACK_REDUE_MS,
+          });
+          break;
+        case 'no-wire':
+          // Recipient unreachable right now (no connected transport owns it).
+          // Nothing to schedule per-packet — the worker re-checks every tick.
+          return;
+        case 'failed':
+          this.noteFailedAttempt(p.id);
+          logger.warn({ pktId: p.id, to: toAddr, err: outcome.err }, 'Outbound delivery failed — retry scheduled');
+          return;
+      }
+    }
+  }
+
+  /** Record a failed attempt and schedule the next one on the backoff curve. */
+  private noteFailedAttempt(pktId: string): void {
+    const attempts = (this.retrySchedule.get(pktId)?.attempts ?? 0) + 1;
+    const idx = Math.min(attempts - 1, OUTBOUND_RETRY_BACKOFF_MS.length - 1);
+    const backoff = OUTBOUND_RETRY_BACKOFF_MS[idx] ?? 5_000; // ?? unreachable — Math.min keeps idx in range
+    this.retrySchedule.set(pktId, { attempts, dueAt: Date.now() + backoff });
+  }
+
+  // =========================================================================
+  // Outbound delivery worker
+  // =========================================================================
+
+  private workerTimer: NodeJS.Timeout | null = null;
+
+  /**
+   * Start the delivery worker. The first pass runs immediately — boot recovery
+   * is not a separate code path, just the worker's first tick over whatever
+   * the previous process lifetime left pending.
+   */
+  startDeliveryWorker(): void {
+    if (this.workerTimer) return;
+    void this.runDeliveryPass();
+    this.workerTimer = setInterval(() => { void this.runDeliveryPass(); }, OUTBOUND_WORKER_TICK_MS);
+    this.workerTimer.unref();
+  }
+
+  stopDeliveryWorker(): void {
+    if (this.workerTimer) {
+      clearInterval(this.workerTimer);
+      this.workerTimer = null;
+    }
+  }
+
+  /** One delivery pass: prune retry state for packets that left the pending
+   *  set (delivered, acked, or expired), then drain every recipient with
+   *  pending packets — due-ness is enforced per-packet inside the drain. */
+  async runDeliveryPass(): Promise<void> {
+    try {
+      const pending = getUndeliveredPackets('outbound');
+      const pendingIds = new Set(pending.map((p) => p.id));
+      for (const id of this.retrySchedule.keys()) {
+        if (!pendingIds.has(id)) this.retrySchedule.delete(id);
+      }
+      const recipients = new Set(pending.map((p) => p.to_addr));
+      for (const to of recipients) {
+        await this.chainForRecipient(to, () => this.drainRecipientPending(to));
+      }
+    } catch (err) {
+      logger.error({ err }, 'Delivery worker tick failed');
     }
   }
 
@@ -449,12 +596,15 @@ export class MessageGateway implements BusHandler {
   }
 
   // =========================================================================
-  // Crash recovery
+  // Crash recovery (inbound only — outbound recovery is the delivery
+  // worker's first tick, not a separate path)
   // =========================================================================
 
   /**
    * Re-deliver undelivered inbound packets.
    * Called once at startup — idempotent (already-delivered packets are skipped).
+   * Near-dead code by design: normal ingest marks delivery in the same tick it
+   * stores, so only a crash between those two writes leaves a row here.
    */
   recoverPending(): void {
     const pending = getUndeliveredPackets('inbound');
@@ -484,22 +634,6 @@ export class MessageGateway implements BusHandler {
         text: pkt.text,
       });
       markDelivered(p.id);
-    }
-  }
-
-  /**
-   * Re-deliver undelivered outbound packets through transports.
-   * Called after transports are connected at startup. Drains per-recipient
-   * so message ordering is preserved within each conversation.
-   */
-  async recoverUndeliveredOutbound(): Promise<void> {
-    const recipients = getUndeliveredOutboundRecipients();
-    if (recipients.length === 0) return;
-
-    logger.info({ recipientCount: recipients.length }, 'Recovery: draining undelivered outbound packets');
-
-    for (const toAddr of recipients) {
-      await this.drainOutboundForRecipient(toAddr);
     }
   }
 

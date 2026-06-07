@@ -15,7 +15,8 @@
 import type { ConsoleManager } from '../console/console-manager.js';
 import { isConsoleChannel } from '../console/index.js';
 import { parseConsoleName } from '../console/registry.js';
-import { extractIdentity, isAgent, isExtAddress, isSystemSender } from '../auth/address.js';
+import { extractIdentity, isAgent, isExtAddress, isParticipantAddress, isSystemSender } from '../auth/address.js';
+import type { IdentityId } from '../auth/address.js';
 import type { Bus } from '../gateway/bus.js';
 import { getChannel, loadChannelsConfig } from '../conversations/channel-config.js';
 import { resolveConversationKey, serializeConversationKey } from '../conversations/resolve-key.js';
@@ -39,13 +40,14 @@ import { type DeliverKind } from './conversation-runner.js';
 /** Per-conversation spawn context carried through `Conversations.deliver`
  *  and `Conversations.scheduleTtl`. AgentManager's factory closure receives
  *  this as a typed parameter — replaces the side-channel `routeContexts`
- *  map Phase C maintained. */
+ *  map the host previously maintained. */
 export interface RouteContext {
   address: string;
   channel: AgentChannel;
   channelName: string;
-  participant: string | undefined;
-  replyTo: string | undefined;
+  /** Branded by the resolveConversation chokepoint — trusted downstream. */
+  participant: IdentityId | undefined;
+  replyTo: IdentityId | undefined;
   qualifier: string | undefined;
   declaredName: string | undefined;
   isSingleShot: boolean;
@@ -73,7 +75,7 @@ export interface AgentRouteDeps {
 interface ResolvedRoute {
   channel: AgentChannel;
   channelName: string;
-  participant: string;
+  participant: IdentityId;
   conversationKey: string;
   isSingleShot: boolean;
 }
@@ -149,21 +151,38 @@ function resolveConversation(
     };
   }
 
-  const participant = routing?.targetParticipant || senderId;
+  const rawParticipant = routing?.targetParticipant || senderId;
 
   // ext:* is agent-internal — like 192.168.*.* for a LAN. It may appear as a
   // sender (extension-synthesized inbound) but never as a routing target. If
   // resolution lands ext:* in the participant slot, an upstream caller forgot
   // to set targetParticipant. Throw rather than silently route to a dead address.
-  if (isExtAddress(participant)) {
+  if (isExtAddress(rawParticipant)) {
     throw new Error(
-      `ext:* address "${participant}" cannot be a routing target — sender-only namespace. ` +
+      `ext:* address "${rawParticipant}" cannot be a routing target — sender-only namespace. ` +
       `Caller must set 'targetParticipant' to a non-ext address.`,
     );
   }
 
+  // Validate-then-brand chokepoint: every route entry (transport inbound, bus
+  // push/request, scheduler fire, watch fire, intra-agent push) funnels its
+  // participant through here. Past this check the value is an `IdentityId`
+  // and the layers below — runner opts, prompt assembly, message log,
+  // outbound routing — trust the brand instead of re-validating.
+  if (!isParticipantAddress(rawParticipant)) {
+    throw new Error(
+      `Invalid participant address: "${rawParticipant}" — expected a bare identity (u:…@issuer), an agent (a:…@issuer), or an operator/console surface`,
+    );
+  }
+  const participant = rawParticipant;
+
+  // Transport-blind cell grain: key user conversations on the bare identity so a
+  // user's transports collapse to one cell. Operator (`local/…`) and agent
+  // addresses keep their form (re-grained separately). `participant` itself stays
+  // as-is — it remains the delivery address (wire recovered at the gateway).
+  const keyParticipant = participant.startsWith('u:') ? extractIdentity(participant) : participant;
   const baseKey = serializeConversationKey(
-    resolveConversationKey(channelName, channel, participant, routing?.qualifier),
+    resolveConversationKey(channelName, channel, keyParticipant, routing?.qualifier),
   );
   const isSingleShot = channel.idle_timeout === null;
   const conversationKey = isSingleShot
@@ -272,7 +291,11 @@ export async function routeMessage(
     channel: channelDef,
     channelName: effectiveChannelName,
     participant: conversationParticipant,
-    replyTo: routing?.targetParticipant,
+    // When targetParticipant was set, resolveConversation validated it and it
+    // IS conversationParticipant — reuse the branded value rather than the
+    // raw routing string (empty-string targetParticipant behaves as unset,
+    // mirroring the `targetParticipant || senderId` resolution above).
+    replyTo: routing?.targetParticipant ? conversationParticipant : undefined,
     qualifier: routing?.qualifier,
     declaredName,
     isSingleShot,

@@ -54,6 +54,10 @@ vi.mock('./config.js', async () => {
     PUSH_ROW_TTL_MS: 5 * 60 * 1000,
     PUSH_ROW_SWEEP_MS: 60 * 1000,
     EGRESS_REFRESH_MS: 5 * 60 * 1000,
+    OUTBOUND_DELIVERY_TTL_MS: 6 * 60 * 60 * 1000,
+    OUTBOUND_RETRY_BACKOFF_MS: [5_000, 30_000, 120_000, 600_000],
+    OUTBOUND_ACK_REDUE_MS: 600_000,
+    OUTBOUND_WORKER_TICK_MS: 30_000,
   };
 });
 
@@ -102,12 +106,20 @@ vi.mock('./logger.js', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock('./lib/utils.js', () => ({
-  errorMessage: (err: unknown) => err instanceof Error ? err.message : String(err),
-  generateId: (prefix: string) => `${prefix}-test-${Date.now()}`,
-  writeAtomic: vi.fn(),
-  conversationKeyToPath: (key: string) => key.replace(/[%/:@~|]/g, '_'),
-}));
+vi.mock('./lib/utils.js', async (importOriginal) => {
+  // Spread the real module — the delivery drain needs parseJsonSafe et al.;
+  // a hand-listed subset silently breaks whatever the subset misses.
+  const actual = await importOriginal<typeof import('./lib/utils.js')>();
+  // Counter, not Date.now() — uniqueness is part of generateId's contract.
+  // Packet ids key gateway.db rows (INSERT OR REPLACE), so a same-millisecond
+  // collision silently clobbers a pending packet and loses its delivery.
+  let idCounter = 0;
+  return {
+    ...actual,
+    generateId: (prefix: string) => `${prefix}-test-${++idCounter}`,
+    writeAtomic: vi.fn(),
+  };
+});
 
 vi.mock('fs', async () => {
   const actual = await vi.importActual<typeof import('fs')>('fs');
@@ -296,7 +308,7 @@ import fs from 'fs';
 
 // --- Fixtures ---
 
-const TEST_ACL = JSON.stringify({ owner: 'local', peers: {} });
+const TEST_ACL = JSON.stringify({ owner: 'operator', peers: {} });
 
 function resetFsMocks(): void {
   vi.mocked(fs.existsSync).mockImplementation((p: unknown) => {
@@ -357,11 +369,11 @@ async function setupManager(folder: string): Promise<{ mgr: AgentManager; bus: B
 }
 
 // =============================================================================
-// Note (post task 94 Phase E): the legacy SessionHost-internal invariants
+// Note (post SessionHost retirement): the legacy SessionHost-internal invariants
 // (enqueue/release ordering, result-resolver map, identity-check on delete,
 // staging-dir cleanup, shared-gate concurrent normal+console sessions,
 // shutdown drain timing) are all covered by Conversation/Catalog/SlotPool
-// unit tests under `conversations/` plus the plan-12 e2e suite. They lived
+// unit tests under `conversations/` plus e2e runs. They lived
 // here historically because the same plumbing also exercised AgentManager
 // wiring; with the Conversations façade owning that machinery, the residual
 // AgentManager-level invariants worth integration coverage are the console
@@ -396,7 +408,7 @@ describe('Console session smoke (__design channel)', () => {
   it('routes to ConsoleManager session-host when called with operator credentials', async () => {
     const { mgr } = await setupManager('alpha');
     const addr = agentGuid('alpha');
-    const p = mgr.route(addr, 'local/cli:user', 'help', { channel: '__design' });
+    const p = mgr.route(addr, 'cli:user', 'help', { channel: '__design' });
     // Wait for container spawn — proves route reached the session-host
     // machinery (which it should, because bus handler would have already
     // gated this in production).
@@ -412,7 +424,7 @@ describe('Console session smoke (__design channel)', () => {
     const { mgr } = await setupManager('alpha');
     const addr = agentGuid('alpha');
 
-    const p = mgr.route(addr, 'local/cli:user', 'help me edit blueprint', { channel: '__design' });
+    const p = mgr.route(addr, 'cli:user', 'help me edit blueprint', { channel: '__design' });
 
     // Console spawn awaits `mcp.ready` before runContainerAgent is called, so
     // the container mock appears on a later microtask. The factory runs
@@ -433,10 +445,10 @@ describe('Console session smoke (__design channel)', () => {
 
     await p;
 
-    // New (Phase C+) semantic: a successful spawn leaves the conversation in
+    // New semantic: a successful spawn leaves the conversation in
     // `idle-with-runner` holding its slot — the runner stays warm for the
     // next message. The `runner-removed` bus event (which the ConsoleManager
-    // routes to per-strategy snapshot cleanup since Phase H Step 7) fires on
+    // routes to per-strategy snapshot cleanup) fires on
     // teardown: expiry, swap-eviction, invalidate-replace, or shutdown.
     // Verify the cleanup wiring fires on AgentManager shutdown.
     expect(cleanupSnapshot).not.toHaveBeenCalled();
@@ -460,16 +472,16 @@ describe('Concurrent normal + console sessions', () => {
     _initTestGatewayDb();
   });
 
-  // AgentManager and ConsoleManager share the process-wide `slotPool` (Phase D
-  // unified them). Concurrent normal + console sessions each consume a slot
+  // AgentManager and ConsoleManager share the process-wide `slotPool` (one
+  // unified budget). Concurrent normal + console sessions each consume a slot
   // from the same budget; pressure resolves by paging (LRU swap-eviction owned
   // by `ConversationCatalog`), not by gate isolation.
   it('normal and console sessions both charge the shared slotPool', async () => {
     const { mgr } = await setupManager('alpha');
     const addr = agentGuid('alpha');
 
-    mgr.route(addr, 'local/cli:user', 'normal msg');
-    mgr.route(addr, 'local/cli:user', 'console msg', { channel: '__design' });
+    mgr.route(addr, 'cli:user', 'normal msg');
+    mgr.route(addr, 'cli:user', 'console msg', { channel: '__design' });
 
     await vi.waitFor(() => {
       expect(containerMocks).toHaveLength(2);
@@ -649,10 +661,10 @@ describe('config/ watcher invalidation', () => {
 
 // =============================================================================
 // AgentManager.shutdown drain contract: the SIGKILL fallback and natural-close
-// paths are covered by the plan-12 e2e suite (scenario 9 — SIGKILL crash
-// recovery) and by `conversations.shutdownScope` unit tests. The previous
-// integration probe reached into `sessionHost.getRunners()` internals that no
-// longer exist post task 94 Phase E.
+// paths are covered by e2e runs (SIGKILL crash recovery) and by
+// `conversations.shutdownScope` unit tests. The previous integration probe
+// reached into `sessionHost.getRunners()` internals that no longer exist
+// post SessionHost retirement.
 // =============================================================================
 
 // =============================================================================
@@ -783,7 +795,7 @@ describe('Single-shot honors lifecycle', () => {
     const { mgr, transport } = await setupManager('alpha');
     const addr = agentGuid('alpha');
 
-    mgr.route(addr, 'local/cli:user', 'hello');
+    mgr.route(addr, 'cli:user', 'hello');
     await containerMocks[0]!.started;
 
     // Bootstrap content was threaded into the container input. The profile
@@ -815,7 +827,7 @@ describe('Single-shot honors lifecycle', () => {
     const { mgr, transport } = await setupManager('alpha');
     const addr = agentGuid('alpha');
 
-    mgr.route(addr, 'local/cli:user', 'hello');
+    mgr.route(addr, 'cli:user', 'hello');
     await containerMocks[0]!.started;
     expect(containerMocks[0]!.input.bootstrap).toBeUndefined();
 
@@ -835,7 +847,7 @@ describe('Single-shot honors lifecycle', () => {
     const { mgr, transport } = await setupManager('alpha');
     const addr = agentGuid('alpha');
 
-    mgr.route(addr, 'local/cli:user', 'hello');
+    mgr.route(addr, 'cli:user', 'hello');
     await containerMocks[0]!.started;
     expect(containerMocks[0]!.input.bootstrap).toBeUndefined();
 
@@ -855,7 +867,7 @@ describe('Single-shot honors lifecycle', () => {
     const { mgr, transport } = await setupManager('alpha');
     const addr = agentGuid('alpha');
 
-    mgr.route(addr, 'local/cli:user', 'hello');
+    mgr.route(addr, 'cli:user', 'hello');
     await containerMocks[0]!.started;
     expect(containerMocks[0]!.input.bootstrap).toContain('bootstrap body');
 
@@ -868,3 +880,67 @@ describe('Single-shot honors lifecycle', () => {
   });
 });
 
+
+// =============================================================================
+// Transport-blind spawn seam — buildRunnerOpts feeds `replyTo || participant`
+// into assembleSystemPrompt, whose isParticipantAddress guard is the single
+// validation point for everything the runner later trusts (participantAddress
+// = the same expression). assembleSystemPrompt is module-mocked here, so these
+// tests pin the WIRING (which value reaches the guard); the guard's BEHAVIOR
+// on that value (bare accepted, compound/raw-wire rejected) is pinned in
+// prompt-assembly.test.ts. Together they cover the cold-spawn push regression.
+// =============================================================================
+
+describe('buildRunnerOpts — participant guard seam', () => {
+  const TEST_CHANNEL = {
+    idle_timeout: null,
+    lifecycle: 'none',
+    log_messages: false,
+    use_sharding: false,
+    disabled_tools: [],
+  };
+
+  type SeamParams = {
+    address: string;
+    conversationKey: string;
+    channel: unknown;
+    channelName: string;
+    participant?: string;
+    replyTo?: string;
+  };
+  function callSeam(mgr: AgentManager, p: { participant?: string; replyTo?: string }): void {
+    const m = mgr as unknown as { buildRunnerOpts: (params: SeamParams) => unknown };
+    m.buildRunnerOpts({
+      address: 'a:test-seam@test',
+      conversationKey: `default|${p.replyTo ?? p.participant ?? ''}`,
+      channel: TEST_CHANNEL,
+      channelName: 'default',
+      ...p,
+    });
+  }
+
+  async function promptSpy() {
+    const { assembleSystemPrompt } = await import('./agent/prompt-assembly.js');
+    return vi.mocked(assembleSystemPrompt);
+  }
+
+  it('a bare push/scheduler target reaches the guard as-is', async () => {
+    const { mgr } = await setupManager('seam-bare');
+    const spy = await promptSpy();
+    spy.mockClear();
+    callSeam(mgr, { participant: 'u:f9a68fcd75@a9bdb7' });
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0]![0].participant).toBe('u:f9a68fcd75@a9bdb7');
+  });
+
+  it('replyTo takes precedence — the delegation leg is what the guard validates', async () => {
+    // participantAddress (message-log writer + outbound routing) is
+    // `replyTo || participant`; the guard must see the SAME value, or the
+    // writer would trust an unvalidated leg.
+    const { mgr } = await setupManager('seam-replyto');
+    const spy = await promptSpy();
+    spy.mockClear();
+    callSeam(mgr, { participant: 'u:original@srv', replyTo: 'u:delegate@srv' });
+    expect(spy.mock.calls[0]![0].participant).toBe('u:delegate@srv');
+  });
+});

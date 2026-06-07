@@ -52,7 +52,7 @@ vi.mock('./logger.js', () => ({
 }));
 
 // Mock fs. existsSync defaults to true so the spawn-time existence check on
-// `<agentDir>/manifest.json` (Phase 1A) passes — individual tests can override
+// `<agentDir>/manifest.json` passes — individual tests can override
 // to false to exercise the refusal branch.
 vi.mock('fs', async () => {
   const actual = await vi.importActual<typeof import('fs')>('fs');
@@ -259,7 +259,7 @@ describe('container-runner agent-folder existence guard', () => {
     ).rejects.toThrow(/Agent folder "test-agent" no longer exists; refusing to spawn/);
 
     // Critical assertion: must NOT have called mkdirSync on the agent dir.
-    // Pre-Phase-1A, the runner unconditionally `mkdirSync(agentDir, recursive: true)`,
+    // Previously, the runner unconditionally `mkdirSync(agentDir, recursive: true)`,
     // which would resurrect a deleted folder.
     const mkdirCalls = vi.mocked(fs.mkdirSync).mock.calls;
     const resurrectionCall = mkdirCalls.find(([p]) =>
@@ -289,9 +289,9 @@ describe('container-runner agent-folder existence guard', () => {
 });
 
 /**
- * Phase 1B: writeContainerLog tolerates write failures.
+ * writeContainerLog tolerates write failures.
  * If the agent folder is yanked between spawn and exit, writing the run log
- * would throw ENOENT — pre-Phase-1B that crashed the host node process.
+ * would throw ENOENT, which once crashed the host node process.
  */
 describe('writeContainerLog ENOENT tolerance', () => {
   beforeEach(() => {
@@ -331,7 +331,7 @@ describe('writeContainerLog ENOENT tolerance', () => {
 
   // ENOENT is the *expected* failure during a hot agent unload (folder yanked
   // mid-conversation). Logging it at WARN clutters steady-state logs once the
-  // bug it diagnoses (Phase 1B) is trusted. Downgrade ENOENT specifically to
+  // bug it diagnoses is trusted. Downgrade ENOENT specifically to
   // debug; keep WARN for unexpected failure modes (perms, disk full, etc.).
   it('logs ENOENT at debug level (expected during hot unload)', async () => {
     vi.mocked(fs.writeFileSync).mockImplementation(() => {
@@ -500,17 +500,22 @@ describe('container-runner modelOverrides', () => {
     expect(init.bootstrapModel).toBeUndefined();
   });
 
-  it('does not leak host-only fields (channelName, phase) into the init message', async () => {
+  it('strips host-only `phase` but sends channelName + participant on the wire (attested as _meta for approval routing)', async () => {
     const init = await captureInit(
       {
         ...testInput,
         channelName: 'email',
+        participant: 'user@example.com',
         phase: 'cleanup',
       } as Parameters<typeof runContainerAgent>[1],
       { model: 'claude-sonnet-4-6' },
     );
-    expect(init.channelName).toBeUndefined();
+    // phase is host-only (modelOverrides resolution) — never reaches the runner.
     expect(init.phase).toBeUndefined();
+    // channelName + participant now ride the wire so the runner can stamp them
+    // onto service tool calls as _meta.
+    expect(init.channelName).toBe('email');
+    expect(init.participant).toBe('user@example.com');
   });
 
   it('sets isCleanup=true on the init message for a cold-path cleanup spawn', async () => {

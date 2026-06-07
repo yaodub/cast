@@ -1,10 +1,12 @@
 /**
- * Peer-dialogue figure: two agents talking directly — one asks, the other
- * answers back. Unlike the grid figures, this format doesn't carry the
- * (agent, participant, channel) dimensions on its axes, so each cell spells
- * them out underneath — and the symmetry shows that each agent is a
- * participant in the other's grid. Unframed, theme-adaptive ink, fixed cell
- * colors.
+ * Peer-dialogue figure: an agent asks a peer and uses the answer in its own
+ * conversation. The LEFT cell is the asker's originating conversation (where it
+ * is already working); the RIGHT cell is the one the question opens on the peer,
+ * keyed to the asker. The answer returns to the LEFT cell — the asker's own
+ * conversation — not to a peer cell on the asker, which never exists. The ask is
+ * a move across all three (agent, participant, channel) coordinates at once, so
+ * it can't sit on a 2D grid; unlike the grid figures, each cell spells its
+ * dimensions out underneath. Unframed, theme-adaptive ink, fixed cell colors.
  */
 
 interface Side {

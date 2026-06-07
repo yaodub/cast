@@ -3,22 +3,26 @@
  *
  * Replaces a direct `tsx watch` invocation so a fresh clone can run with one
  * command: dependencies install on first run, the agent container image is
- * built if missing, and the browser opens once the server has had time to
- * start. Subsequent runs skip pre-flight and start instantly.
+ * built if missing or its sources changed, and the browser opens once the
+ * server has had time to start. Subsequent runs skip pre-flight and start
+ * instantly.
  */
 import { execSync, spawn } from 'child_process';
-import { existsSync, mkdirSync } from 'fs';
+import { accessSync, constants, existsSync, mkdirSync } from 'fs';
+import { delimiter, join } from 'path';
 
 import { ensureChromium } from './lib/ensure-chromium.mjs';
 import { waitForReady } from './lib/port-ready.mjs';
 import { resolveAgentsDir, resolveConfigDir } from './lib/resolve-paths.mjs';
+import { run } from './lib/run.mjs';
+import { computeImageHash, sentinelTag } from '../packages/agent-runner/image-hash.mjs';
 
 const log = (msg: string) => console.log(`\x1b[36m[cast]\x1b[0m ${msg}`);
 
 // 1. Dependencies
 if (!existsSync('node_modules')) {
   log('Installing dependencies (first run only)...');
-  execSync('pnpm install', { stdio: 'inherit' });
+  run('pnpm install', 'Dependency install');
 }
 
 // 1b. Browser binary for web-fetch — Playwright's chromium, host-side. Not
@@ -26,19 +30,51 @@ if (!existsSync('node_modules')) {
 // subprocess clears its startup preflight.
 ensureChromium(log);
 
-// 2. Agent container image — build if neither container runtime has it
-function imageExists(runtime: string): boolean {
+// 2. Agent container image — build if missing or if its build inputs changed
+// (content-hash receipt tag; see packages/agent-runner/image-hash.mjs). The
+// check runs on the SAME preferred runtime build.mjs builds on — checking one
+// runtime while building on another would rebuild forever. Keep the resolution
+// byte-identical to build.mjs / start.mjs (duplicated by design: those run on
+// plain Node and can't share a .ts helper).
+function binaryExists(name: string): boolean {
+  const dirs = (process.env.PATH || '').split(delimiter).filter(Boolean);
+  const exts = process.platform === 'win32'
+    ? (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)
+    : [''];
+  for (const dir of dirs) {
+    for (const ext of exts) {
+      try { accessSync(join(dir, name + ext), constants.X_OK); return true; }
+      catch { /* not here — try next */ }
+    }
+  }
+  return false;
+}
+
+function imageExists(runtime: string, ref: string): boolean {
   try {
-    execSync(`${runtime} image inspect cast-agent:latest`, { stdio: 'pipe' });
+    execSync(`${runtime} image inspect ${ref}`, { stdio: 'pipe' });
     return true;
   } catch {
     return false;
   }
 }
 
-if (!imageExists('container') && !imageExists('docker')) {
-  log('Building agent container image (~2 min on first run)...');
-  execSync('node packages/agent-runner/build.mjs', { stdio: 'inherit' });
+const runtime =
+  process.platform === 'darwin' && binaryExists('container') ? 'container'
+  : binaryExists('docker') ? 'docker'
+  : null;
+
+// Skipped when the operator points the server at a custom image. With no
+// runtime found, fall through to build.mjs, whose "no container runtime"
+// failure message is the friendly exit.
+const customImage = process.env.CONTAINER_IMAGE && process.env.CONTAINER_IMAGE !== 'cast-agent:latest';
+if (!customImage && (!runtime || !imageExists(runtime, sentinelTag(computeImageHash())))) {
+  if (runtime && imageExists(runtime, 'cast-agent:latest')) {
+    log(`Agent image sources changed — rebuilding on ${runtime} (~2 min)...`);
+  } else {
+    log('Building agent container image (first run, ~2 min)...');
+  }
+  run('node packages/agent-runner/build.mjs', 'Agent image build');
 }
 
 // 3. Ports. API server on CAST_PORT (5050); web UI on PORT (5051), proxying

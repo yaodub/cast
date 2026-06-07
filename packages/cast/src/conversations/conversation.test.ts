@@ -203,6 +203,10 @@ interface MakeConvOpts {
   /** Override the factory to return a custom runner per call. */
   runnerSequence?: MockRunner[];
   runnerOpts?: MockRunnerOpts;
+  /** Make the FIRST factory call throw with this message; subsequent calls
+   *  construct normally. Exercises spawn-cycle containment of construction
+   *  throws (the slot is already claimed when the factory runs). */
+  factoryThrowsOnce?: string;
   /** Pre-existing ccSessionId in the store. */
   seedCcSessionId?: string;
   /** Override the async pressure-path of acquireSlot. The sync fast-path
@@ -243,8 +247,13 @@ function makeConvFixture(opts: MakeConvOpts = {}): ConvFixture {
 
   const sequence = opts.runnerSequence ?? [];
   let seqIdx = 0;
+  let factoryThrew = false;
 
   const factorySpy = vi.fn((factoryOpts) => {
+    if (opts.factoryThrowsOnce !== undefined && !factoryThrew) {
+      factoryThrew = true;
+      throw new Error(opts.factoryThrowsOnce);
+    }
     idleHook = factoryOpts.onIdle;
     let runner: MockRunner;
     if (sequence.length > 0) {
@@ -267,7 +276,7 @@ function makeConvFixture(opts: MakeConvOpts = {}): ConvFixture {
     return runner;
   });
 
-  // After Phase H Step 7 the legacy `ConversationCallbacks` fields
+  // The legacy `ConversationCallbacks` fields
   // (`onQueued` / `onRunnerRemoved` / `onExpiryComplete`) no longer exist —
   // the Conversation only fans transitions through `ConversationEventBus`.
   // To keep the existing assertions readable, the fixture installs a bus
@@ -543,7 +552,7 @@ describe('Conversation — resolver (D2)', () => {
 });
 
 // =============================================================================
-// Tests — auth-retry replay (spec G.4 — pipedThisSpawn migration)
+// Tests — auth-retry replay (pipedThisSpawn migration)
 // =============================================================================
 
 describe('Conversation — auth-retry replay (G.4)', () => {
@@ -696,7 +705,7 @@ describe('Conversation — yieldSlot', () => {
 });
 
 // =============================================================================
-// Tests — markSwapFellThrough (Phase L bridge from catalog swap path)
+// Tests — markSwapFellThrough (bridge from catalog swap path)
 // =============================================================================
 
 describe('Conversation — markSwapFellThrough', () => {
@@ -1257,7 +1266,7 @@ describe('Conversation — setState chokepoint: queue enter/exit', () => {
   });
 
   it('queue transitions still drive correctly when no bus subscriber listens', async () => {
-    // Phase H Step 7 collapsed callbacks to `buildSpawnHooks` only. With no
+    // Callbacks are collapsed to `buildSpawnHooks` only. With no
     // bus subscriber, queue transitions should still drive cleanly — the
     // bus emits to nobody but the state machine progresses as designed.
     const f = makeConvFixture({ capacity: 1 });
@@ -1572,7 +1581,7 @@ describe('Conversation — chokepoint edge cases identified in design', () => {
 });
 
 // =============================================================================
-// Tests — Phase H Step 1: deferred awaiting-slot entry (spec §14.H)
+// Tests — deferred awaiting-slot entry (spec §14.H)
 //
 // The conversation enters 'awaiting-slot' only when the slot acquisition
 // returns kind:'async'. On the sync fast path (capacity available), the
@@ -1581,7 +1590,7 @@ describe('Conversation — chokepoint edge cases identified in design', () => {
 // rendered as user-visible "Waiting…" messages on Telegram.
 // =============================================================================
 
-describe('Conversation — Phase H Step 1: deferred awaiting-slot entry', () => {
+describe('Conversation — deferred awaiting-slot entry', () => {
   it('sync fast path skips awaiting-slot — no onQueued fires when pool has capacity', async () => {
     const f = makeConvFixture({ capacity: 2 });
     await f.conv.deliver('hello', {});
@@ -1631,10 +1640,10 @@ describe('Conversation — Phase H Step 1: deferred awaiting-slot entry', () => 
 });
 
 // =============================================================================
-// Tests — Phase H Step 4: event bus emission
+// Tests — event bus emission
 //
 // `Conversation` emits typed events onto its `ConversationEventBus`. After
-// Phase H Step 7 the bus is the sole observation surface — the legacy
+// The bus is the sole observation surface — the legacy
 // `ConversationCallbacks` fields (onQueued, onRunnerRemoved, onExpiryComplete)
 // were removed. These tests pin the bus contract from the Conversation side:
 // every chokepoint (setState, setPhase, _teardown post-async) emits the
@@ -1780,7 +1789,74 @@ describe('Conversation — event bus emission', () => {
     expect(expiryEvents).toHaveLength(1);
   });
 
-  // Phase H Step 7 removed the legacy `ConversationCallbacks` observation
-  // fields. The bus is now mandatory and the back-compat-no-bus test that
+  // The legacy `ConversationCallbacks` observation fields were removed.
+  // The bus is now mandatory and the back-compat-no-bus test that
   // used to live here is gone with the surface it covered.
+});
+
+// ---------------------------------------------------------------------------
+// Spawn-cycle containment — factory throw
+// ---------------------------------------------------------------------------
+
+describe('Conversation — factory throw containment', () => {
+  it('factory throw → resolver settles {ok:false}, state idle-no-runner, slot released', async () => {
+    const f = makeConvFixture({ factoryThrowsOnce: 'boom: construction failed', capacity: 2 });
+
+    const result = await f.conv.deliver('hi', {});
+    await settle(10);
+
+    // The deliver promise SETTLES with the error — pre-containment it never
+    // settled (the throw escaped `void runSpawnCycle()` as an unhandled
+    // rejection) and the caller waited forever.
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('boom: construction failed');
+
+    // No zombie: state recovered, no runner, slot back in the pool.
+    expect(f.conv.state).toBe('idle-no-runner');
+    expect(f.pool.active).toBe(0);
+  });
+
+  it('does not loop on the poisoned message (at-most-once: mailbox dropped)', async () => {
+    const f = makeConvFixture({ factoryThrowsOnce: 'persistent construction error' });
+
+    await f.conv.deliver('poison', {});
+    await settle(10);
+
+    // Exactly one construction attempt — the teardown kick must not re-enter
+    // on the dropped message and re-throw in a loop.
+    expect(f.factorySpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('subsequent deliver spawns cleanly after a factory throw', async () => {
+    const f = makeConvFixture({ factoryThrowsOnce: 'transient construction error', capacity: 2 });
+
+    const first = await f.conv.deliver('first', {});
+    await settle(10);
+    expect(first.ok).toBe(false);
+
+    // Second deliver drives a fresh spawn — the fixture's factory only
+    // throws once, so this constructs a healthy runner.
+    const second = await f.conv.deliver('second', {});
+    await settle(10);
+    expect(second.ok).toBe(true);
+    expect(f.factorySpy).toHaveBeenCalledTimes(2);
+    expect(f.conv.state).toBe('idle-with-runner');
+    expect(f.pool.active).toBe(1);
+  });
+
+  it('subsequent message black-hole regression: deliveries after the throw are not silently swallowed', async () => {
+    const f = makeConvFixture({ factoryThrowsOnce: 'boom' });
+
+    const p1 = f.conv.deliver('one', {});
+    await settle(10);
+    expect((await p1).ok).toBe(false);
+
+    // Pre-containment the conversation wedged in running/null-runner and this
+    // second deliver queued into a mailbox nothing would ever drain while
+    // synthesizing {ok:true}. Now it must actually spawn and settle truthfully.
+    const p2 = await f.conv.deliver('two', {});
+    await settle(10);
+    expect(p2.ok).toBe(true);
+    expect(f.runner?.spawnSpy).toHaveBeenCalled();
+  });
 });

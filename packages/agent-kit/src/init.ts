@@ -101,7 +101,7 @@ export async function initAgent(
   const aclPath = path.join(agentDir, 'config', 'acl.json');
   if (!fs.existsSync(aclPath)) {
     const defaultAcl = {
-      owner: 'local',
+      owner: 'operator',
       peers: {},
       reject_message: 'Not authorized. Use /pair <code> to get access.',
     };
@@ -148,13 +148,9 @@ export async function initAgent(
     path.join(agentDir, 'blueprint', 'service'),
   );
 
-  // Seed config/ext/service/.env on first init (operator secrets — CM/SM-readable,
-  // Configure-writable; dotenv loads it by absolute path from the service CWD)
-  const envPath = path.join(agentDir, 'config', 'ext', 'service', '.env');
-  if (!fs.existsSync(envPath)) {
-    fs.mkdirSync(path.dirname(envPath), { recursive: true });
-    fs.writeFileSync(envPath, '');
-  }
+  // Service secrets live in config/ext/service/secrets.json, written by the
+  // admin router (or by hand) — only the directory is seeded here.
+  fs.mkdirSync(path.join(agentDir, 'config', 'ext', 'service'), { recursive: true });
 
   // Write manifest.json at folder root — structural metadata
   // spec = agent contract (owned by agent-kit), templateVersion = template's own version

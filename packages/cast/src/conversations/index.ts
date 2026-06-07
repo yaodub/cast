@@ -4,7 +4,7 @@
  * External callers reach the new machinery exclusively through `Conversations`.
  * Internal types are re-exported for tests and the host-side wiring; the
  * concrete `Conversation` / `ConversationCatalog` classes are also exported
- * because the wiring layer (`lib/gates.ts` glue, Phase C) builds them
+ * because the wiring layer (`lib/gates.ts` glue) builds them
  * directly.
  */
 

@@ -4,7 +4,7 @@
  * Every transport's `send(pkt, ctx)` opens with the same guard: only
  * `'conversation' | 'approval_request' | 'approval_ack'` packets get delivered;
  * `'delegate'` packets are internal routing primitives that never leave the
- * bus. Phase I.10 names the set so the per-transport `if (pkt.type !== …
+ * bus. A shared helper names the set so the per-transport `if (pkt.type !== …
  * && pkt.type !== …)` triple becomes a single typed predicate call.
  *
  * The narrowing in the type predicate is what gives each transport's

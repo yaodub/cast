@@ -24,6 +24,9 @@ function createSchema(database: Database.Database): void {
   // (from_addr, to_addr, channel, conversation_key) are derived indexes.
   // Never DROP here — packets are durable records of gateway traffic and
   // must survive server restarts (reload replay depends on it).
+  // DBs created before 0.2 lack `failed_at` — covered by
+  // `scripts/migrations/0.1-to-0.2/3-packets-failed-at.ts`, not by an inline
+  // migration here.
   database.exec(`
     CREATE TABLE IF NOT EXISTS packets (
       id TEXT PRIMARY KEY,
@@ -33,16 +36,16 @@ function createSchema(database: Database.Database): void {
       timestamp TEXT NOT NULL,
       direction TEXT DEFAULT 'inbound',
       delivered_at TEXT,
+      failed_at TEXT,
       conversation_key TEXT,
       channel TEXT,
       payload TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_packets_timestamp ON packets(timestamp);
     CREATE INDEX IF NOT EXISTS idx_packets_addrs ON packets(to_addr, from_addr);
-    CREATE INDEX IF NOT EXISTS idx_packets_undelivered ON packets(delivered_at) WHERE delivered_at IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_packets_undelivered ON packets(delivered_at) WHERE delivered_at IS NULL AND failed_at IS NULL;
     CREATE INDEX IF NOT EXISTS idx_packets_conversation ON packets(to_addr, conversation_key);
   `);
-
 }
 
 export function initGatewayDb(): void {
@@ -69,6 +72,7 @@ const StoredPacketSchema = z.object({
   to_addr: z.string(),
   timestamp: z.string(),
   delivered_at: z.string().nullable(),
+  failed_at: z.string().nullable(),
   direction: z.string(),
   conversation_key: z.string().nullable(),
   channel: z.string().nullable(),
@@ -110,36 +114,36 @@ export function markDeliveredIfAddressedTo(pktId: string, toAddr: string): boole
   return res.changes > 0;
 }
 
-/** Get all undelivered packets for a given direction. */
+/**
+ * Mark a packet failed (terminal — TTL-expired or poison payload; it will
+ * never be delivered). No-op if the packet was already delivered, so a late
+ * ack racing an expiry sweep can't be overwritten into a failure.
+ */
+export function markFailed(pktId: string): void {
+  db.prepare('UPDATE packets SET failed_at = ? WHERE id = ? AND delivered_at IS NULL')
+    .run(new Date().toISOString(), pktId);
+}
+
+/** Get all pending (undelivered, not failed) packets for a given direction. */
 export function getUndeliveredPackets(direction: 'inbound' | 'outbound'): StoredPacket[] {
   const stmt = db.prepare(
-    `SELECT id, type, from_addr, to_addr, timestamp, delivered_at, direction, conversation_key, channel, payload
+    `SELECT id, type, from_addr, to_addr, timestamp, delivered_at, failed_at, direction, conversation_key, channel, payload
      FROM packets
-     WHERE delivered_at IS NULL AND direction = ?
+     WHERE delivered_at IS NULL AND failed_at IS NULL AND direction = ?
      ORDER BY timestamp ASC`,
   );
   return queryAll(stmt, StoredPacketSchema, direction);
 }
 
-/** Get undelivered outbound packets for a specific recipient, ordered oldest-first. */
+/** Get pending outbound packets for a specific recipient, ordered oldest-first. */
 export function getPendingOutboundForRecipient(toAddr: string): StoredPacket[] {
   const stmt = db.prepare(
-    `SELECT id, type, from_addr, to_addr, timestamp, delivered_at, direction, conversation_key, channel, payload
+    `SELECT id, type, from_addr, to_addr, timestamp, delivered_at, failed_at, direction, conversation_key, channel, payload
      FROM packets
-     WHERE to_addr = ? AND direction = 'outbound' AND delivered_at IS NULL
+     WHERE to_addr = ? AND direction = 'outbound' AND delivered_at IS NULL AND failed_at IS NULL
      ORDER BY timestamp ASC`,
   );
   return queryAll(stmt, StoredPacketSchema, toAddr);
-}
-
-/** Get distinct recipient addresses that have undelivered outbound packets. */
-export function getUndeliveredOutboundRecipients(): string[] {
-  const stmt = db.prepare(
-    `SELECT DISTINCT to_addr FROM packets
-     WHERE direction = 'outbound' AND delivered_at IS NULL`,
-  );
-  const schema = z.object({ to_addr: z.string() });
-  return queryAll(stmt, schema).map((r) => r.to_addr);
 }
 
 /**
@@ -159,7 +163,7 @@ export function getPacketHistory(
 
   if (opts?.channel !== undefined) {
     const stmt = db.prepare(
-      `SELECT id, type, from_addr, to_addr, timestamp, delivered_at, direction, conversation_key, channel, payload
+      `SELECT id, type, from_addr, to_addr, timestamp, delivered_at, failed_at, direction, conversation_key, channel, payload
        FROM packets
        WHERE ((from_addr = ? AND to_addr = ?) OR (from_addr = ? AND to_addr = ?))
          AND channel = ?
@@ -170,7 +174,7 @@ export function getPacketHistory(
   }
 
   const stmt = db.prepare(
-    `SELECT id, type, from_addr, to_addr, timestamp, delivered_at, direction, conversation_key, channel, payload
+    `SELECT id, type, from_addr, to_addr, timestamp, delivered_at, failed_at, direction, conversation_key, channel, payload
      FROM packets
      WHERE (from_addr = ? AND to_addr = ?) OR (from_addr = ? AND to_addr = ?)
      ORDER BY timestamp DESC

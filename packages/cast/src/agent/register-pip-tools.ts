@@ -83,7 +83,7 @@ export function registerPipTools(server: McpServer, ctx: McpAgentContext): void 
       // the host. The container mounts ONLY the output dir (no secrets) and is
       // the sole thing with network, so full egress is acceptable.
       //
-      // Stronger variants (not implemented — see task 102-windows-portability):
+      // Stronger variants (not implemented):
       //  - Scratch-dir isolation: mount an EMPTY dir as /out, host copies results
       //    back after, so a malicious LLM can't stage secrets into a folder the
       //    networked throwaway can read. (Cost: re-fetches shared deps.)

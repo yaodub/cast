@@ -86,7 +86,7 @@ export function BuildConfiguration() {
 
       <FileSpec name="acl.json" meta="json · access control list">
         <Code lang="json" noHead>{`{
-  "owner": "local",
+  "owner": "operator",
   "peers": {
     "research-agent": { "lookup": "q" }
   },
@@ -94,8 +94,11 @@ export function BuildConfiguration() {
 }`}</Code>
         <ul style={proseUl}>
           <li>
-            <code>owner</code> — identity with full access. Default <code>"local"</code>{' '}
-            (you, on the host).
+            <code>owner</code> — identity with full authorization. The default{' '}
+            <code>"operator"</code> is an inert label — your CLI and admin sessions hold
+            full access without it. Set a <code>u:</code> identity to give that user
+            unconditional push reach; listing and summary reads stay scoped to the
+            channels they are placed in.
           </li>
           <li>
             <code>peers</code> — nested map: peer identity → channel name → bit string.

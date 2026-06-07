@@ -12,7 +12,7 @@
  * Branded types section below is the type-system enforcement of the
  * address-space / persistence-space partition. Each brand is a string at
  * runtime (zero overhead) but a distinct type at compile time, so a function
- * declaring `participant: ResolvedParticipant` cannot accidentally accept a
+ * declaring `identity: IdentityId` cannot accidentally accept a
  * `BusAddress` or an `AgentFolder`. Producers stamp the brand once at the
  * boundary; consumers declare what shape they accept.
  */
@@ -30,9 +30,6 @@ export type AgentLabel = string & { readonly __brand_AgentLabel: unique symbol }
 /** Filesystem directory under `mnt/agents/`. Persistence-space only — never crosses the bus. */
 export type AgentFolder = string & { readonly __brand_AgentFolder: unique symbol };
 
-/** Compound `identity/handle` form, e.g. `local/admin:local`, `u:a7f/tg:123`. Stamped by the runtime. */
-export type ResolvedParticipant = string & { readonly __brand_ResolvedParticipant: unique symbol };
-
 /** Identity row PK — `u:<guid>@<issuer>`, `local`, `a:<guid>@<issuer>`, `ext:*`. */
 export type IdentityId = string & { readonly __brand_IdentityId: unique symbol };
 
@@ -49,7 +46,6 @@ export type ChannelName = string & { readonly __brand_ChannelName: unique symbol
 export const asBusAddress           = (s: string): BusAddress => s as BusAddress;
 export const asAgentLabel           = (s: string): AgentLabel => s as AgentLabel;
 export const asAgentFolder          = (s: string): AgentFolder => s as AgentFolder;
-export const asResolvedParticipant  = (s: string): ResolvedParticipant => s as ResolvedParticipant;
 export const asIdentityId           = (s: string): IdentityId => s as IdentityId;
 export const asHandle               = (s: string): Handle => s as Handle;
 export const asChannelName          = (s: string): ChannelName => s as ChannelName;
@@ -148,47 +144,36 @@ export function decodeAddressValue(encoded: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Compound (resolved) participant addresses
+// Participant addresses
 // ---------------------------------------------------------------------------
 
 /**
- * Parsed form of a `ResolvedParticipant` string — split into identity + handle.
+ * Structural participant validity — the form contract for any participant
+ * address above the gateway. TRUE for a bare user identity (`u:…`, no handle
+ * suffix), an agent (`a:…`), an operator surface (`cli:`/`admin:`), or a
+ * console surface (`console:…` — its own tier, self-identifying like the
+ * operator; server-scope console pushes carry it as the receiving
+ * conversation's participant). FALSE for a compound (`u:…/tg:…`) and for a
+ * raw transport handle (`tg:`/`web:`/`email:`) — the wire invariant lives at
+ * the gateway (`resolveWire`), so a participant reaching the agent layer must
+ * already be transport-blind. `ext:*` is sender-only and rejected here too.
  *
- * Note: the brand `ResolvedParticipant` (defined in the brands section above)
- * is the wire-level string. This struct is what you get from parsing one.
- * Don't confuse the two: function args take the brand; this struct is a
- * convenience for code that wants the parts.
+ * Type guard: every accepted form IS its own identity id (post-Stage-D the
+ * operator and console surfaces and the agent address resolve to themselves;
+ * a bare `u:` is the IdP row PK), so passing the check narrows to
+ * `IdentityId` — validate-then-brand at the chokepoint, trust the brand inside.
  */
-export interface ParsedParticipant {
-  /** Identity ID — "u:a7f3k" or "local". */
-  identity: IdentityId;
-  /** Transport handle — "tg:12345", "cli:alice". */
-  handle: Handle;
+export function isParticipantAddress(addr: string): addr is IdentityId {
+  if (addr.includes('/')) return false;
+  return addr.startsWith('u:') || isAgent(addr) || isOperatorHandle(addr) || addr.startsWith('console:');
 }
 
-/** Check if an address is resolved. Compound addresses have '/'; agent addresses are inherently resolved. */
-export function isResolved(addr: string): boolean {
-  return addr.includes('/') || isAgent(addr);
-}
-
-/** Parse a compound address like "u:a7f3k/tg:12345" into identity + handle. */
-export function parseResolvedParticipant(addr: string): ParsedParticipant {
-  const slashIdx = addr.indexOf('/');
-  if (slashIdx === -1) {
-    throw new Error(`Not a resolved address: "${addr}" (no "/")`);
-  }
-  return {
-    identity: asIdentityId(addr.slice(0, slashIdx)),
-    handle: asHandle(addr.slice(slashIdx + 1)),
-  };
-}
-
-/** Build a compound resolved address from identity and handle. */
-export function buildResolvedParticipant(identity: IdentityId | string, handle: Handle | string): ResolvedParticipant {
-  return asResolvedParticipant(`${identity}/${handle}`);
-}
-
-/** Extract identity from address. Compound → identity part; unresolved → pass-through. */
+/**
+ * Extract identity from address. Compound (`u:abc/tg:1`) → identity part;
+ * everything else → pass-through. Operator handles (`cli:`/`admin:`) are their
+ * own identity — the IdP resolves them to themselves, so the pass-through
+ * (no `/`) returns the handle. There is no `local` sentinel to translate to.
+ */
 export function extractIdentity(addr: string): IdentityId {
   const slashIdx = addr.indexOf('/');
   return asIdentityId(slashIdx === -1 ? addr : addr.slice(0, slashIdx));
@@ -228,25 +213,42 @@ export function isOperatorHandle(handle: string): boolean {
 }
 
 /**
- * Inside the operator's authoring envelope. Operator handles (cli/admin —
- * the operator's own keyboard) plus the authoring consoles that act on the
- * operator's behalf (`console:*` — Design/Config/Security Managers).
+ * Operator-authorization tier — the single predicate the ACL operator
+ * short-circuits consult (`checkAcl`, `getPeerChannels`, `isOperatorOrOwner`).
+ * TRUE when an address denotes the human operator: a `cli:`/`admin:` handle —
+ * bare, or the handle part of a compound. The operator bypasses the IdP, so its
+ * handle IS its identity (`resolve('cli:alice').id === 'cli:alice'`); there is
+ * no separate `local` sentinel, and ACL paths that key on `idp.resolve(...).id`
+ * (e.g. `projectEventForIdentity`) therefore pass a handle-shaped id caught here.
  *
- * Distinct from `isOperatorHandle`: that one is the *machine-trust boundary*
- * (localhost-only handles that bypass identity auto-registration and the
- * server firewall). This one is the *authoring boundary* — "did the
- * operator, directly or through their tooling, originate this traffic?" —
- * used by gates like draft-mode that want to allow dev chat while blocking
- * the agent's eventual audience (transports, peer agents).
+ * This is the one function a future admin→IdP migration edits: when admin-ness
+ * becomes a role on a `u:` identity, the body changes here and the three ACL
+ * call sites inherit it. Distinct from `isOperatorHandle` (the *machine-trust*
+ * boundary — a transport property consulted at the gateway, where only a bare
+ * handle exists): the two coincide today; the migration splits them.
  */
-export function isAuthoringSender(addr: string): boolean {
-  const handle = extractHandle(addr) ?? addr;
-  return isOperatorHandle(handle) || addr.startsWith('console:');
+export function isOperatorTier(participant: string): boolean {
+  return isOperatorHandle(extractHandle(participant) ?? participant);
 }
 
-/** Resolved user identity — u:xxx or local (with or without /handle suffix). */
+/**
+ * Inside the operator's authoring envelope. The operator tier plus the
+ * authoring consoles that act on its behalf (`console:*` — Design/Config/
+ * Security Managers). Used by gates like draft-mode that want to allow dev
+ * chat while blocking the agent's eventual audience (transports, peer agents).
+ */
+export function isAuthoringSender(addr: string): boolean {
+  return isOperatorTier(addr) || addr.startsWith('console:');
+}
+
+/**
+ * Resolved human participant — a `u:` identity (bare or compound) or the
+ * operator. Excludes agents (`a:`) and services (`ext:`). The operator is a
+ * human at a machine-trusted transport; it counts as a user for roster and
+ * peer-discovery gates.
+ */
 export function isUser(addr: string): boolean {
-  return addr.startsWith('u:') || addr === 'local' || addr.startsWith('local/');
+  return addr.startsWith('u:') || isOperatorTier(addr);
 }
 
 /** Agent address — canonical `a:<guid>@<issuer>`. Aliases route via `bus.resolveByLabel`. */
@@ -273,4 +275,45 @@ export function isExtAddress(addr: string): boolean {
 /** Check if an address is a non-user sender (agent or service). */
 export function isSystemSender(addr: string): boolean {
   return isAgent(addr) || isService(addr);
+}
+
+/**
+ * Owner-context test for the cross-conversation push chokepoint. TRUE when the
+ * caller is the agent operating AS ITSELF — either no participant (a system /
+ * scheduler / service fire that names no target) or the agent's own canonical
+ * address. FALSE for a PEER agent (a *different* `a:` address).
+ *
+ * DISTINCT FROM `isSystemSender` above, and deliberately NOT built on it:
+ * `isSystemSender` returns true for ANY `a:`/`ext:` address, so it cannot tell
+ * "me" from "another agent" — that conflation is the system-context masquerade
+ * (a peer's `a:` address slipping through `!isUser`). This predicate compares
+ * against `ownAgentId`, so a peer agent is correctly NOT system context.
+ */
+export function isSystemContext(participant: string | null | undefined, ownAgentId: string): boolean {
+  return participant == null || participant === ownAgentId;
+}
+
+/**
+ * Read tier — the gate for enumeration surfaces (channel/participant listing,
+ * cross-participant summary reads). Pure string computation, no ACL read. Two
+ * arms: the agent operating as itself (`isSystemContext`) and the
+ * machine-trusted operator surface (`isOperatorTier`). A configured acl
+ * `owner` is deliberately NOT read tier — the write tier (the push verdict's
+ * `isOperatorOrOwner` arm) adds the owner, so read ⊂ write is structural. A
+ * `u:` owner riding an injectable transport cell keeps god-mode *reach*
+ * (push is noisy, recipient-visible) but member-scoped *visibility*
+ * (enumeration is a silent oracle).
+ */
+export function isReadTier(participant: string | null | undefined, ownAgentId: string): boolean {
+  return isSystemContext(participant, ownAgentId) || (participant != null && isOperatorTier(participant));
+}
+
+/**
+ * Room-membership test over concrete placement bits (from `membershipBits` in
+ * `acl.ts`). `i` = a user placed in the room, `a` = a peer agent placed (answer
+ * bit). Either marks the identity as present in the room; empty bits → not a
+ * member.
+ */
+export function isMember(bits: string): boolean {
+  return bits.includes('i') || bits.includes('a');
 }

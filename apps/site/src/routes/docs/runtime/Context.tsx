@@ -172,11 +172,10 @@ const PROMPT_LAYERS: Layer[] = [
     children: (
       <>
         <SubSection title="<participant>" first>
-          <Example>{`<participant id="ID" handle="HANDLE" declared-name="NAME" />`}</Example>
+          <Example>{`<participant id="ID" declared-name="NAME" />`}</Example>
           <div>Who's talking to the agent.</div>
           <AttrList attrs={[
-            { name: 'id', type: 'string', required: true, desc: 'Stable identity address. Use for record-keeping and memory cross-referencing.' },
-            { name: 'handle', type: 'string', desc: 'Transport-specific handle (e.g. Telegram username, email address). Present when known.' },
+            { name: 'id', type: 'string', required: true, desc: 'Bare identity address. Use for record-keeping and memory cross-referencing. The transport handle never reaches the agent.' },
             { name: 'declared-name', type: 'string', desc: "User-chosen display name. Use in greetings; don't use as a stable key." },
           ]} />
         </SubSection>
@@ -222,7 +221,7 @@ const PROMPT_LAYERS: Layer[] = [
           <Example>{`<other-participants>NAME (DURATION ago), …</other-participants>
 
 <other-participants visibility="disabled" />`}</Example>
-          <div>Ambient awareness of who else is active on this channel. When the channel has <M>show_co_participants=false</M>, the element renders with <M>visibility="disabled"</M> so the agent reads “I can't see who else is here, by policy” rather than “I'm alone.”</div>
+          <div>Ambient awareness of who else is active on this channel. When the channel has <M>show_co_participants=false</M>, the element renders with <M>visibility="disabled"</M> so the agent reads “I can't see who else is here, by policy” rather than “I'm alone.” The same flag also seals reach: with it disabled, co-participants are unreachable by cross-conversation push, not merely hidden.</div>
           <AttrList attrs={[
             { name: 'visibility', type: 'string', desc: <>Set to <M>disabled</M> when the channel's <M>show_co_participants</M> is false. Otherwise omitted.</> },
           ]} />

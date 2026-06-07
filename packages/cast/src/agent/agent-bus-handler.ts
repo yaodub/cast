@@ -8,7 +8,7 @@
  * focused on owning state and the "what happens on each inbound message"
  * concept has one home.
  */
-import { checkAcl, gateInbound, hasBit } from '../auth/acl.js';
+import { checkAcl, gateInbound, hasBit, membershipBits } from '../auth/acl.js';
 import {
   extractHandle,
   extractIdentity,
@@ -91,11 +91,11 @@ export async function handleBusMessage(
 
   switch (parsed.type) {
     case 'pairing':
-      handlePairingRequest(deps, from, parsed.code);
+      handlePairingRequest(deps, from, parsed.code, parsed.sourceHandle);
       return;
 
     case 'pairing_request':
-      handlePairingCodeGeneration(deps, from);
+      handlePairingCodeGeneration(deps, from, parsed.sourceHandle);
       return;
 
     case 'message': {
@@ -189,7 +189,13 @@ export async function handleBusMessage(
 
     case 'push': {
       const channel = parsed.routing?.channel ?? 'default';
-      const { bits } = checkAcl(deps.bus, deps.folder, from, channel);
+      // Gate 2 — host authorization. A console/user sender is itself the push
+      // principal and legitimately holds `h`. An agent sender is a pure conduit
+      // that cannot hold `h` (the agent-bit restriction reserves i/o/p/h for
+      // user/console identities), so the host grant is read from the
+      // originating user it is handing over — never from the sending agent.
+      const hostPrincipal = isAgent(extractIdentity(from)) ? parsed.returnToParticipant : from;
+      const { bits } = checkAcl(deps.bus, deps.folder, hostPrincipal, channel);
       const { allowed, verb } = gateInbound(bits, 'push');
       if (!allowed) {
         routePushRejection(
@@ -200,16 +206,31 @@ export async function handleBusMessage(
           parsed.returnToChannel,
           parsed.returnToParticipant,
           parsed.returnToQualifier,
-          `Push from ${from} rejected: missing required bit '${verb}' on channel "${channel}"`,
+          `Push from ${from} rejected: ${hostPrincipal} lacks required bit '${verb}' on channel "${channel}"`,
         );
         return;
       }
-      // Three-check model for cross-agent push: sender agent already gated
-      // on `h` above; now gate the originating user on `i` for the target
-      // channel. Without this check, a peer agent's `h` grant effectively
-      // means "you can introduce any of your users into my channel" — a
-      // silent authorization expansion.
-      const { bits: userBits } = checkAcl(deps.bus, deps.folder, parsed.returnToParticipant, channel);
+      // Gate 3 — membership. The originating user must be a concrete member
+      // (hold `i`, be placed in the room) on the target channel. For an agent
+      // sender this reads the same user as gate 2's `h`: the user must be both
+      // hostable-via-push (`h`) and a member (`i`). For a console/user sender,
+      // gate 2 checked the sender's own `h` and this checks
+      // `returnToParticipant`'s membership. Without this, an agent's user-keyed
+      // `h` alone would let any caller introduce a non-member user into the
+      // channel — a silent expansion.
+      //
+      // On the agent-conduit path we read `membershipBits`, NOT `checkAcl`: a
+      // conduit agent must not be able to ferry a god-mode principal (operator
+      // tier, configured `u:` owner) into a channel it holds no concrete
+      // placement on. `checkAcl` god-modes those principals to full bits
+      // everywhere; `membershipBits` — the same primitive the intra-agent push
+      // chokepoint uses — treats them as members of nothing, so a compromised
+      // agent cannot puppet the operator's reach across the fleet. A
+      // console/user sender keeps `checkAcl`: it is the push principal itself,
+      // already gated on its own `h` at gate 2.
+      const userBits = isAgent(extractIdentity(from))
+        ? membershipBits(deps.bus, deps.folder, parsed.returnToParticipant, channel)
+        : checkAcl(deps.bus, deps.folder, parsed.returnToParticipant, channel).bits;
       if (!gateInbound(userBits, 'message').allowed) {
         logger.warn(
           { agentFolder: deps.folder, from, returnToParticipant: parsed.returnToParticipant, channel, requiredBit: 'i' },
@@ -546,7 +567,7 @@ function handleInboundRequest(
 }
 
 /** Process a pairing request. Called when gateway dispatches /pair through bus. */
-function handlePairingRequest(deps: BusHandlerDeps, from: string, code: string): void {
+function handlePairingRequest(deps: BusHandlerDeps, from: string, code: string, sourceHandle?: string): void {
   if (!deps.idp) {
     logger.warn(
       { agentFolder: deps.folder },
@@ -555,11 +576,13 @@ function handlePairingRequest(deps: BusHandlerDeps, from: string, code: string):
     return;
   }
 
-  const handle = extractHandle(from);
+  // The wire the code binds to rides as explicit per-turn payload metadata
+  // (`sourceHandle`); the from-address is transport-blind above the gateway.
+  const handle = sourceHandle ?? extractHandle(from);
   if (!handle) {
     logger.warn(
       { from },
-      'Pairing request from address without transport handle',
+      'Pairing request without a source wire',
     );
     return;
   }
@@ -576,8 +599,8 @@ function handlePairingRequest(deps: BusHandlerDeps, from: string, code: string):
 }
 
 /** Generate a pairing code for the requesting handle; tell user to get it from the operator. */
-function handlePairingCodeGeneration(deps: BusHandlerDeps, from: string): void {
-  const handle = extractHandle(from);
+function handlePairingCodeGeneration(deps: BusHandlerDeps, from: string, sourceHandle?: string): void {
+  const handle = sourceHandle ?? extractHandle(from);
   if (!handle) {
     deps.bus.routeMessage(deps.agentId, from, {
       pkt: conversationPkt(deps.agentId, from, 'Could not resolve your handle.'),

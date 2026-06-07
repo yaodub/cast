@@ -23,15 +23,16 @@ import {
   extractHandle,
   extractIdentity,
   isAgent,
-  isResolved,
+  isParticipantAddress,
   isSystemSender,
   isUser,
 } from '../auth/address.js';
+import type { IdentityId } from '../auth/address.js';
 import { readRoster } from '../lib/identity-roster.js';
 import type { IdentityProvider } from '../auth/identity.js';
 import { readAgentConfig } from '../container/container-runner.js';
 import { EgressController } from '../container/egress-controller.js';
-import { readJson } from '../lib/config-reader.js';
+import { readJson, readText } from '../lib/config-reader.js';
 import type { AgentSummary, Bus, BusHandler, EventDeliveryDecision } from '../gateway/bus.js';
 import { checkAcl, getPeerChannels, hasBit } from '../auth/acl.js';
 import { deriveChannelContract } from '../auth/channel-contract.js';
@@ -194,7 +195,7 @@ export class AgentManager implements BusHandler {
   /** Disposer for the agent's `ConversationEventBus` subscription — set in
    *  the constructor right after `conversations.registerScope`, called on
    *  shutdown. The bus is the sole observation surface for queue UX +
-   *  expiry side-effects since Phase H Step 7. */
+   *  expiry side-effects. */
   private conversationEventDispose: (() => void) | null = null;
 
   /** Effective IANA timezone for this agent (config override, else server default).
@@ -370,7 +371,7 @@ export class AgentManager implements BusHandler {
       onLogEvent: logEvent,
     });
 
-    // Conversations façade — owns agent traffic post-Phase-C. The typed
+    // Conversations façade — owns agent traffic. The typed
     // `AgentSpawnContext` flows through `deliver` / `scheduleTtl` so the
     // factory + buildSpawnHooks see fully-typed per-conversation context
     // with no side-channel map.
@@ -380,14 +381,14 @@ export class AgentManager implements BusHandler {
       store: this.store,
     });
 
-    // Phase H Step 7 — subscribe to the event bus once for this agent's
+    // Subscribe to the event bus once for this agent's
     // scope and dispatch from one site to host-specific reactions. The
     // alternative (per-Conversation inline `ConversationCallbacks`) gave
     // every host three separate fire sites that diverged independently
     // (Class 4 — hooks not tied to state transitions). One subscription
     // per scope, filtered by `scope`, collapses that fan-out.
     //
-    // `subscribeScope` (Phase I.7) is the typed chokepoint — derives the
+    // `subscribeScope` is the typed chokepoint — derives the
     // bus `kinds` filter from which handler fields are populated and
     // narrows views to `ConversationView<AgentSpawnContext>` once at the
     // façade boundary. `runner-removed` is a no-op for agent traffic
@@ -401,7 +402,7 @@ export class AgentManager implements BusHandler {
       },
     );
 
-    // ConsoleManager owns console-session orchestration. Phase D: shares the
+    // ConsoleManager owns console-session orchestration. Shares the
     // process-wide `slotPool` (via the Conversations façade) with agent
     // traffic — slot pressure is resolved by catalog swap-eviction, not by
     // gate isolation.
@@ -492,10 +493,10 @@ export class AgentManager implements BusHandler {
     return { entries, more: rows.length > CAP };
   }
 
-  /** Build the per-spawn hooks for this agent's scope. After Phase H Step 7
-   *  this is the only per-conversation function the host supplies —
-   *  transition observation moved to the event bus (see the bus subscription
-   *  set up in the constructor). Phase I.8 collapsed the prior single-field
+  /** Build the per-spawn hooks for this agent's scope. This is the only
+   *  per-conversation function the host supplies — transition observation
+   *  moved to the event bus (see the bus subscription set up in the
+   *  constructor). A later change collapsed the prior single-field
    *  `ConversationCallbacks` interface to a direct `BuildSpawnHooks`
    *  function type; this method is the bound callable. */
   private buildSpawnHooks: BuildSpawnHooks<AgentSpawnContext> = (conv) =>
@@ -803,9 +804,11 @@ export class AgentManager implements BusHandler {
   /**
    * Attempt to pair a transport handle using a pairing code. Validates the
    * code against `state/pairing-codes.json`, resolves the identity from the
-   * handle, grants `*: io` in `state/paired-users.json`, marks the code
-   * consumed, and emits the bus lifecycle event. All paired-users.json
-   * writes flow through this method.
+   * handle, grants `io` on the code's channel (default `default`) in
+   * `state/paired-users.json` — additively, so re-pairing on a second channel
+   * accumulates grants rather than overwriting — marks the code consumed, and
+   * emits the bus lifecycle event. All paired-users.json writes flow through
+   * this method.
    *
    * Per-handle rate-limit is scoped to this AgentManager instance — see the
    * note on `pairingFailedAttempts`.
@@ -843,10 +846,11 @@ export class AgentManager implements BusHandler {
       return { success: false, message: 'Send any message first, then try /pair again.' };
     }
 
+    // Grant `io` on the code's concrete channel (additive: re-pairing on a
+    // different channel accumulates rather than overwriting). The old wholesale
+    // `*: io` is gone — membership is now per-channel placement.
     const users = readPairedUsers(this.folder);
-    if (!(identity.id in users)) {
-      users[identity.id] = { '*': 'io' };
-    }
+    users[identity.id] = { ...(users[identity.id] ?? {}), [stateCode.channel]: 'io' };
     writePairedUsers(this.folder, users);
 
     codes[code] = { ...stateCode, consumed: true };
@@ -1033,7 +1037,7 @@ export class AgentManager implements BusHandler {
   }
 
   // =========================================================================
-  // Idle-timeout timers — delegate to Conversations façade (Phase C).
+  // Idle-timeout timers — delegate to Conversations façade.
   // =========================================================================
 
   /** Schedule (or reset) the idle-timeout timer for a conversation. Called
@@ -1164,7 +1168,9 @@ export class AgentManager implements BusHandler {
         address: this.agentId,
         channel: ch,
         channelName: conv.channelName,
-        participant: conv.participant ?? undefined,
+        // conversations.jsonl is a file boundary — re-validate on read; an
+        // invalid stored participant degrades to a system-context cleanup.
+        participant: conv.participant && isParticipantAddress(conv.participant) ? conv.participant : undefined,
         replyTo: undefined,
         qualifier: undefined,
         declaredName: undefined,
@@ -1343,6 +1349,11 @@ export class AgentManager implements BusHandler {
     this.consoleDb.close();
   }
 
+  /** Lifecycle status of this agent's service process (for the admin UI). */
+  get serviceStatus() {
+    return this.service.status;
+  }
+
   /** Restart the agent service process (bypasses crash-recovery backoff). */
   async restartService(): Promise<void> {
     await this.service.restart();
@@ -1476,15 +1487,63 @@ export class AgentManager implements BusHandler {
   private async runConfigReload(): Promise<void> {
     const paths = [...this.pendingExtConfigPaths];
     this.pendingExtConfigPaths.clear();
+    // Service secrets + settings are not an extension — route before the
+    // extension dispatch so the registry doesn't log a spurious reload for
+    // the unregistered name `service`. Both files share the restart-as-reload
+    // semantic (svc.secrets / svc.settings are startup snapshots).
+    const serviceFiles = new Set([
+      agentPath(this.folder, 'config', 'ext', 'service', 'secrets.json'),
+      agentPath(this.folder, 'config', 'ext', 'service', 'config.json'),
+    ]);
+    const changedServiceFiles: string[] = [];
     for (const p of paths) {
+      if (serviceFiles.has(p)) {
+        changedServiceFiles.push(p);
+        continue;
+      }
       this.extensions.onConfigChanged(p);
     }
+    if (changedServiceFiles.length > 0) this.restartServiceForConfigChange(changedServiceFiles);
     this.maybeRestartBackupTimer();
     await this.applyMcpDelta();
     conversations.invalidateScope(this.agentScope);
     // Live-update running containers' egress pins (invalidateScope only affects
     // the *next* spawn; an allowlist edit should reach in-flight containers too).
     await this.reconcileEgress();
+  }
+
+  /** Restart the service process so its startup snapshots re-read
+   *  config/ext/service/{secrets.json, config.json}. Mirrors extension
+   *  re-activation — secrets/settings feed derived state (sessions,
+   *  connections), so re-running startup IS the reload semantic;
+   *  agent-service-base deliberately has no hot path. One mechanism covers
+   *  every writer: the admin router and hand edits both land here through
+   *  the watcher. Parse-guarded like the registry's capabilities.json guard:
+   *  if ANY changed file is invalid JSON, the restart is skipped so a
+   *  mid-edit save doesn't bounce the service into an empty snapshot; a
+   *  *missing* file is a legitimate wipe and restarts. restart() also resets
+   *  the RestartBreaker, so fixing bad credentials recovers a service that
+   *  crash-looped into `failed` without a manual kick. */
+  private restartServiceForConfigChange(changedFiles: string[]): void {
+    for (const filePath of changedFiles) {
+      const raw = readText(filePath);
+      if (raw !== null && raw.trim().length > 0) {
+        try {
+          JSON.parse(raw);
+        } catch {
+          logger.warn(
+            { agentFolder: this.folder, filePath },
+            'Service config/secrets file changed but failed to parse — skipping service restart',
+          );
+          return;
+        }
+      }
+    }
+    this.agentDb.logEvent('info', 'service', 'restarted', 'Service secrets/settings changed — restarting service');
+    this.service.restart().catch((err) => {
+      logger.error({ agentFolder: this.folder, err }, 'Service restart after config change failed');
+      this.agentDb.logEvent('error', 'service', 'restart_failed', `Service restart after config change failed: ${String(err)}`);
+    });
   }
 
   /** Resolve the current MCP server list and reconcile the host proxy fleet.
@@ -1536,8 +1595,8 @@ export class AgentManager implements BusHandler {
     conversationKey: string;
     channel: AgentChannel;
     channelName: string;
-    participant?: string;
-    replyTo?: string;
+    participant?: IdentityId;
+    replyTo?: IdentityId;
     qualifier?: string;
     sessionIdOverride?: string;
     isNewConversation?: boolean;
