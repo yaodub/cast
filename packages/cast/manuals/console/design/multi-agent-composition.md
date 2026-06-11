@@ -232,18 +232,22 @@ mount-based wiring below.
 **Caveat:** answer text enters the sender's context — a compromised
 receiver can prompt-inject the sender. Use `r/a` if that matters.
 
-### `r`/`a` — Request, reply dropped at sender
+### `r`/`a` — Request, fire-and-forget
 
-Same wire shape as `q/a` (sender emits `<cast:query>`, receiver
-emits `<cast:answer>`). The difference is purely sender-side: the
-sender's gate drops the reply before it enters context.
+Same attribute shape and routing as `q/a`, but the sender emits
+`<cast:request>` instead of `<cast:query>`. The receiver sees that
+tag on its inbound, so it knows no `<cast:answer>` is expected — it
+does the work and emits no envelope reply. If a reply is attempted
+anyway, the sender's gate drops it before it enters context.
 
 Use when the sender dispatches work to a peer that parses untrusted
 content (web pages, email, user-supplied text) and you don't want
 a return path that could carry an injection.
 
-The receiver doesn't know which shape the sender chose — its side is
-always `a`.
+The receiver's ACL side is always `a` regardless of shape — the
+inbound tag, not the bit, carries the intent (see
+`/ref/manuals/console/cross-agent-acl.md`). Worked composition:
+`recipes/untrusted-content-airlock.md`.
 
 ### `p`/`h` — Push, user handed over
 
@@ -273,6 +277,7 @@ For other agent-to-agent patterns:
   wiring](#mount-based-wiring-file-shared-instead-of-message-sent)
 
 Mechanism: `conversation__push_to_channel({target_agent, channel, text})`.
+Worked composition: `recipes/front-desk-handoff.md`.
 
 ## Naming the shape in your handoff to Configure
 

@@ -40,8 +40,8 @@ export const EmailRouteSchema = z.object({
   channel: z.string().optional(),
   email: z.string(),
   whitelist: z.array(z.string()).optional(),
-  /** Drop inbound mail unless DKIM/DMARC alignment with the From-domain holds. */
-  requireAuth: z.boolean().optional(),
+  /** Drop inbound mail unless DKIM/DMARC alignment with the From-domain holds. On by default; set false to accept unauthenticated mail. */
+  requireAuth: z.boolean().default(true),
   imap: z.object({
     host: z.string(),
     port: z.number().default(993),
@@ -325,7 +325,7 @@ class EmailConnection {
 
     // DKIM/DMARC alignment check — drop mail whose visible From cannot be authenticated.
     // Defends against the spoofed-paired-user scenario where an attacker forges From to
-    // inherit a paired identity's ACL bits. Only applies when the route opts in.
+    // inherit a paired identity's ACL bits. On by default; routes opt out explicitly.
     if (this.route.requireAuth) {
       try {
         const verdict = await verifyMessage(source);
@@ -661,7 +661,7 @@ export const email = defineTransport<EmailConfig>({
       if (r.whitelist && r.whitelist.length > 0 && !r.requireAuth) {
         ctx.log.warn(
           { email: r.email },
-          'Email route has whitelist but requireAuth is false — From-header is spoofable. Set requireAuth: true in routes.json.',
+          'Email route has whitelist but requireAuth is explicitly disabled — From-header is spoofable. Remove "requireAuth": false from routes.json.',
         );
       }
       bindings.push({ ...r, address: canonical });

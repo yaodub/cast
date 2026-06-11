@@ -85,6 +85,19 @@ The softer variants below preserve the boundary.
   every cadence, the reviewer focuses on one agent at a time on a
   longer cadence — deeper dive, less breadth, less context cost
   per fire.
+- *Passive heartbeat (liveness).* Interviews detect drift, not
+  death — a peer that has stopped firing answers nothing, and a
+  query that times out looks the same as one that's merely slow.
+  For liveness, invert the transport: each reviewed agent appends
+  a one-line row to its own run feed at moments it's already
+  alive (a cleanup hook, a scheduled fire it already runs); the
+  reviewer declares RO resource slots over those feeds, and a
+  cheap scheduled fire checks *recency*, not content — surfacing
+  to the operator only on silence past a threshold. This polling
+  is the legitimate absence-detection exception to
+  `../anti-patterns.md` § Cadence without signal; keep the check
+  fire minimal and let the interview machinery stay the expensive,
+  infrequent layer.
 
 **Composes.** `task__schedule` (the cadence),
 `peers.md` and ACL `q`/`a` bits (the access shape),

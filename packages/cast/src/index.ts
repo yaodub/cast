@@ -408,36 +408,50 @@ async function ensureContainerRuntimeReady(): Promise<void> {
  * effort: failures are logged at debug, not surfaced.
  */
 function sweepContainersForFolder(folder: string): void {
-  if (CONTAINER_RUNTIME !== 'apple-container') return;
   try {
-    const output = execSync('container ls --format json', {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      encoding: 'utf-8',
-      timeout: 10_000,
-    });
-    const ContainerEntrySchema = z.object({
-      status: z.string(),
-      configuration: z.object({
-        id: z.string(),
-        labels: z.record(z.string(), z.string()).optional(),
-      }),
-    });
-    const containers = z
-      .array(ContainerEntrySchema)
-      .parse(JSON.parse(output || '[]'));
     // Match by label `cast.folder=<folder>` set in buildContainerArgs.
     // Scope to this instance via the name prefix so concurrent Cast servers
     // sharing the daemon don't trample each other.
-    const targets = containers
-      .filter((c) =>
-        c.status === 'running' &&
-        c.configuration.id.startsWith(CONTAINER_NAME_PREFIX) &&
-        c.configuration.labels?.['cast.folder'] === folder,
-      )
-      .map((c) => c.configuration.id);
+    let targets: string[];
+    if (CONTAINER_RUNTIME === 'apple-container') {
+      const output = execSync('container ls --format json', {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        encoding: 'utf-8',
+        timeout: 10_000,
+      });
+      const ContainerEntrySchema = z.object({
+        status: z.string(),
+        configuration: z.object({
+          id: z.string(),
+          labels: z.record(z.string(), z.string()).optional(),
+        }),
+      });
+      const containers = z
+        .array(ContainerEntrySchema)
+        .parse(JSON.parse(output || '[]'));
+      targets = containers
+        .filter((c) =>
+          c.status === 'running' &&
+          c.configuration.id.startsWith(CONTAINER_NAME_PREFIX) &&
+          c.configuration.labels?.['cast.folder'] === folder,
+        )
+        .map((c) => c.configuration.id);
+    } else {
+      const output = execFileSync('docker', [
+        'ps',
+        '--filter', `name=${CONTAINER_NAME_PREFIX}`,
+        '--filter', `label=cast.folder=${folder}`,
+        '--format', '{{.Names}}',
+      ], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        encoding: 'utf-8',
+        timeout: 10_000,
+      });
+      targets = output.trim().split('\n').filter(Boolean);
+    }
     for (const name of targets) {
       try {
-        execSync(`container stop ${name}`, { stdio: 'pipe', timeout: 10_000 });
+        execFileSync(RUNTIME_BINARY, ['stop', name], { stdio: 'pipe', timeout: 10_000 });
       } catch { /* already stopped — non-fatal */ }
     }
     if (targets.length > 0) {

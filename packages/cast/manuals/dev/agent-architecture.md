@@ -65,7 +65,7 @@ The server builds the system prompt from 10 layers, in order. Later layers appea
 | 9 | **`shared/ext/service/agent-context.md`** | `<service-context>` | Dynamic context written by the agent service |
 | 10 | Server-generated | `<conversation-context>` | Participant, channel, time, previous session summaries |
 
-Layers 1-3 and 10 are server-managed. **Layers 4-8 are your primary authoring surface** — this is where the agent's voice, identity, capabilities, peer relationships, and channel-specific behavior are defined. Layer 9 is written by the service. All layers are optional — missing files are silently skipped.
+Layers 1-3 and 10 are server-managed. **Layers 4-8 are your primary authoring surface** — this is where the agent's voice, identity, capabilities, peer relationships, and channel-specific behavior are defined. Layer 9 is written by the service. All layers are optional — missing files are silently skipped. Two conditional server-generated blocks can interleave without changing the numbering: `<agent-profile-closure>` after layer 3 (persistent channels only) and `<channel-contract>` between layers 7 and 8 (only when the active channel carries a non-default cross-agent wire contract). See SPEC.md, *System Prompt Assembly*.
 
 > **Data directories:** Static data the agent reads goes in `blueprint/assets/` (mounted read-only at `/assets`). Dynamic data written by the service goes in `shared/ext/service/` (mounted read-only at `/shared/service`). Service-local databases stay in `ext/service/` (service CWD, not mounted).
 
@@ -89,7 +89,7 @@ The four contract files the server reads (all live inside `blueprint/identity/`)
 
 **`prompt.md`** — Who the agent is and how it behaves. Personality, conversational style, what to do and what not to do. This is the agent's voice. Injected as raw text (no XML wrapper), so it reads naturally in the prompt.
 
-**`whoami.md`** — Structured identity facts. Name, location, role. Wrapped in `<agent-identity>` tags. Often ships as a stub and gets populated by the agent during its first conversation.
+**`whoami.md`** — Structured identity facts. Name, location, role. Wrapped in `<agent-identity>` tags. Often ships as a stub the author (or a Design console session) fills in as the agent's role firms up — at runtime the agent reads it read-only at `/identity` and cannot edit it. Facts the agent learns at runtime belong in `/memory/`; promote the stable ones into `whoami.md` through the authoring path.
 
 **`peers.md`** — Agent peer relationships. Describes other agents this agent works with: what they do, which channels to query, when to consult them, and any constraints. Wrapped in `<agent-peers>` tags. Only for agent-to-agent relationships — human contacts are runtime-discovered via the participant system.
 
@@ -101,7 +101,7 @@ Anything else in `blueprint/identity/` (e.g., `onboarding.md`, `tools/validate.p
 
 Each subdirectory of `channels/` defines a channel — a named conversation configuration that controls idle timeout, lifecycle, tool availability, and message logging. A `default` channel always exists; when no `channel.json` file is present, the implicit fallback is `idle_timeout: 1800000` (30min), `lifecycle: "none"`, `log_messages: true`. When a `channel.json` *is* present, `idle_timeout` is required (use `null` for single-shot; a positive integer in milliseconds otherwise). User-channel logging writes to the agent's `agent.db`; console-channel logging writes to a separate `console.db` — set `log_messages: false` to opt the channel out of both message and event log persistence.
 
-A channel directory contains `channel.json` (configuration), an optional `prompt.md` (channel-specific instructions injected into the system prompt as layer 7), and when lifecycle is enabled, `bootstrap.md` and/or `cleanup.md` (lifecycle prompts).
+A channel directory contains `channel.json` (configuration), an optional `prompt.md` (channel-specific instructions injected into the system prompt as layer 8), and when lifecycle is enabled, `bootstrap.md` and/or `cleanup.md` (lifecycle prompts).
 
 For the full channel concept, configuration schema, and lifecycle mechanics, see SPEC.md §6.
 

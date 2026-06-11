@@ -3,10 +3,11 @@ import { useState } from 'preact/hooks';
 import { CastLockup } from '../brand/CastLockup';
 import { Github } from '../brand/Icon';
 
-const TABS: ReadonlyArray<readonly [path: string, label: string]> = [
+const TABS: ReadonlyArray<readonly [path: string, label: string, external?: boolean]> = [
   ['/how-it-works', 'How it works'],
   ['/examples', 'Examples'],
   ['/docs', 'Docs'],
+  ['https://blog.getcast.dev', 'Blog', true],
 ];
 
 export function NavBar() {
@@ -43,19 +44,20 @@ export function NavBar() {
           </span>
         </button>
         <div class="nav-tabs">
-          {TABS.map(([path, label]) => {
-            const active = url === path || url.startsWith(path + '/');
-            return (
-              <button
-                key={path}
-                class="nav-tab"
-                onClick={() => route(path)}
-                style={{
-                  borderRadius: 6,
-                  color: active ? 'var(--fg)' : 'var(--fg-muted)',
-                  fontWeight: active ? 500 : 400,
-                }}
-              >
+          {TABS.map(([path, label, external]) => {
+            const active = !external && (url === path || url.startsWith(path + '/'));
+            const style = {
+              borderRadius: 6,
+              color: active ? 'var(--fg)' : 'var(--fg-muted)',
+              fontWeight: active ? 500 : 400,
+              textDecoration: 'none', // the Blog tab is an <a>; keep it un-underlined like the buttons
+            };
+            return external ? (
+              <a key={path} class="nav-tab" href={path} style={style}>
+                {label}
+              </a>
+            ) : (
+              <button key={path} class="nav-tab" onClick={() => route(path)} style={style}>
                 {label}
               </button>
             );
@@ -80,17 +82,19 @@ export function NavBar() {
       </div>
       {menuOpen && (
         <div class="nav-dropdown">
-          {TABS.map(([path, label]) => {
-            const active = url === path || url.startsWith(path + '/');
-            return (
-              <button
-                key={path}
-                onClick={() => go(path)}
-                style={{
-                  color: active ? 'var(--fg)' : 'var(--fg-muted)',
-                  fontWeight: active ? 500 : 400,
-                }}
-              >
+          {TABS.map(([path, label, external]) => {
+            const active = !external && (url === path || url.startsWith(path + '/'));
+            const style = {
+              color: active ? 'var(--fg)' : 'var(--fg-muted)',
+              fontWeight: active ? 500 : 400,
+              textDecoration: 'none', // Blog is an <a> in the dropdown; match the buttons
+            };
+            return external ? (
+              <a key={path} href={path} style={style} onClick={() => setMenuOpen(false)}>
+                {label}
+              </a>
+            ) : (
+              <button key={path} onClick={() => go(path)} style={style}>
                 {label}
               </button>
             );

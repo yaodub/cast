@@ -129,7 +129,7 @@ collect that overhead without earning it. Primary questions:
 - **Identity bulk.** Are `prompt.md`, `peers.md`, `skills.md`,
   `whoami.md` tight relative to the agent's scope? Prescriptive
   multi-page prose, peers listed that the agent never queries, and
-  tutorial-style skills all ride every turn forever. Layers 4–6 of
+  tutorial-style skills all ride every turn forever. Layers 4–7 of
   prompt assembly compound by every conversation.
 - **Eager capability load.** Are extensions or MCP servers declared
   in `capabilities.json` that no channel's prompt actually invokes?

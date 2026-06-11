@@ -17,7 +17,7 @@ checklist. Develop the feel; spot the smell earlier next time.
 `peers.md` listing twelve peers the agent queries two of; `skills.md`
 written as tutorial prose.
 
-Layers 4–6 ride every conversation. Three pages of prescription
+Layers 4–7 ride every conversation. Three pages of prescription
 pays three pages per fire, forever.
 
 **Reach for:** scaffolding, not definition (`what-is-an-agent.md`).
@@ -107,7 +107,7 @@ A's reasoning enters B's context as inbound. Q/A answers also
 re-enter the sender's context — verbose answers double-tax.
 
 **Reach for:** hand the conclusion. *"X."* If B needs reasoning, B
-asks. R/A drops the reply before context entirely — even cheaper.
+asks. R/A expects no reply at all — even cheaper.
 
 ### Verbatim payload
 
@@ -156,6 +156,13 @@ interval until most fires produce action, or convert to
 event-triggered.
 
 Test: of the last N fires, how many produced an action?
+
+One legitimate exception: absence detection. Silence emits no event
+to trigger on, so a liveness or staleness check has to poll — keep
+that fire as cheap as the check allows and reserve the expensive
+session for the alarm path
+(`recipes/reviewer-interviews-team.md` § Variants, *Passive
+heartbeat*; `recipes/two-speed-agent.md` for the cost split).
 
 ### TTL churn
 

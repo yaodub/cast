@@ -40,7 +40,11 @@ export function formatMessages(messages: NewMessage[], timezone?: string): strin
  *  (`<cast:watch>`, `<cast:schedule>`, etc.) or fake private reasoning
  *  (`<cast:internal>`). Strips balanced pairs first, then drops any orphan
  *  openers/closers in the family so a truncated injection can't pass through
- *  as literal text the agent might trust. */
+ *  as literal text the agent might trust.
+ *
+ *  Applied at the untrusted-ingest boundary by `formatParticipantMessage`
+ *  (strip → escape → wrap), so the stripped body is what reaches the agent AND
+ *  what the message log records — not just the log copy. */
 const FRAMEWORK_TAG_NAMES = 'internal|watch|schedule|service|lifecycle|push|rejection';
 const FRAMEWORK_PAIR_RE = new RegExp(
   `<cast:(${FRAMEWORK_TAG_NAMES})\\b[^>]*>[\\s\\S]*?<\\/cast:\\1>`,
@@ -53,6 +57,42 @@ const FRAMEWORK_ORPHAN_RE = new RegExp(
 
 export function stripFrameworkTags(text: string): string {
   return text.replace(FRAMEWORK_PAIR_RE, '').replace(FRAMEWORK_ORPHAN_RE, '').trim();
+}
+
+/**
+ * Single chokepoint for turning UNTRUSTED participant text into the message
+ * envelope delivered to the agent. Strips the forge-able framework `<cast:*>`
+ * stimulus family FIRST (so a participant can never inject fake framework
+ * stimulus the agent would trust), THEN escapes + wraps via `formatMessages`.
+ * The only formatter permitted to touch participant-supplied text — the shared
+ * formatters (`formatMessages`, the request/response tag builders) also serve
+ * trusted paths that legitimately construct `<cast:*>` tags, so the strip lives
+ * here, never in them.
+ *
+ * Pure. Returns the sanitized body alongside the rendered envelope so the caller
+ * can log a body that matches what the agent saw and detect an injection attempt
+ * via `sanitized !== rawText.trim()` (stripFrameworkTags trims, so an unchanged
+ * body is byte-identical to the trimmed input).
+ */
+export function formatParticipantMessage(
+  rawText: string,
+  opts: { sender: string; declaredName?: string; timezone?: string; timestamp: string },
+): { formatted: string; sanitized: string } {
+  const sanitized = stripFrameworkTags(rawText);
+  const formatted = formatMessages(
+    [
+      {
+        id: '',
+        address: '',
+        sender: opts.sender,
+        sender_name: opts.declaredName ?? opts.sender,
+        content: sanitized,
+        timestamp: opts.timestamp,
+      },
+    ],
+    opts.timezone,
+  );
+  return { formatted, sanitized };
 }
 
 // ---------------------------------------------------------------------------

@@ -1,4 +1,5 @@
 import { CopyButton } from '../ui/CopyButton';
+import { CAST_VERSION } from '../../version';
 
 export function TurboPascalBlock() {
   const kw = { color: 'var(--tp-keyword)', fontWeight: 700 };
@@ -58,7 +59,7 @@ export function TurboPascalBlock() {
               <span style={body}> Cast;</span>
             </div>
             <div style={{ color: 'var(--tp-comment)', fontStyle: 'italic' }}>
-              {'{ v0.1.0 · alpha · MIT · self-hosted }'}
+              {`{ ${CAST_VERSION} · alpha · MIT · self-hosted }`}
             </div>
             <div>
               <span style={kw}>begin</span>

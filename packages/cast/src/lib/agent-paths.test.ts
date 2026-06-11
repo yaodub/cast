@@ -12,12 +12,17 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-const { TMP_ROOT } = vi.hoisted(() => {
+const { TMP_ROOT, OUTSIDE_ROOT } = vi.hoisted(() => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const fsH = require('fs') as typeof import('fs');
   const osH = require('os') as typeof import('os');
   const pathH = require('path') as typeof import('path');
-  return { TMP_ROOT: fsH.mkdtempSync(pathH.join(osH.tmpdir(), 'cast-resolver-test-')) };
+  return {
+    TMP_ROOT: fsH.mkdtempSync(pathH.join(osH.tmpdir(), 'cast-resolver-test-')),
+    // Operator resources live OUTSIDE the agents tree — the privacy boundary
+    // (`resourcePathEscapesAgentsTree`) drops any resource path inside AGENTS_DIR.
+    OUTSIDE_ROOT: fsH.mkdtempSync(pathH.join(osH.tmpdir(), 'cast-resolver-ext-')),
+  };
 });
 
 vi.mock('../config.js', async () => {
@@ -70,8 +75,10 @@ function setupAgentLayout(): { stagingHostDir: string } {
 }
 
 beforeEach(() => {
-  for (const entry of fs.readdirSync(TMP_ROOT)) {
-    fs.rmSync(path.join(TMP_ROOT, entry), { recursive: true, force: true });
+  for (const root of [TMP_ROOT, OUTSIDE_ROOT]) {
+    for (const entry of fs.readdirSync(root)) {
+      fs.rmSync(path.join(root, entry), { recursive: true, force: true });
+    }
   }
 });
 
@@ -180,7 +187,7 @@ describe('createPathResolver — operator resources', () => {
   });
 
   it('resolves /resources/photos as RW when access:rw', () => {
-    const externalDir = path.join(TMP_ROOT, 'external-photos');
+    const externalDir = path.join(OUTSIDE_ROOT, 'external-photos');
     fs.mkdirSync(externalDir, { recursive: true });
     fs.writeFileSync(path.join(externalDir, 'img.jpg'), '');
     const r = createPathResolver(HOST, CONV_KEY, { photos: { path: externalDir, access: 'rw' } });
@@ -190,7 +197,7 @@ describe('createPathResolver — operator resources', () => {
   });
 
   it('resolves /resources/photos as RO by default', () => {
-    const externalDir = path.join(TMP_ROOT, 'external-photos-ro');
+    const externalDir = path.join(OUTSIDE_ROOT, 'external-photos-ro');
     fs.mkdirSync(externalDir, { recursive: true });
     fs.writeFileSync(path.join(externalDir, 'img.jpg'), '');
     const r = createPathResolver(HOST, CONV_KEY, { photos: { path: externalDir, access: 'ro' } });
@@ -203,10 +210,10 @@ describe('createPathResolver — operator resources', () => {
     // The operator points photos: at a symlink. realpath(mount.hostPath) resolves
     // the symlink; the file inside resolves to the same physical target. Both
     // sides realpath'd → no false traversal rejection.
-    const realDir = path.join(TMP_ROOT, 'real-photos');
+    const realDir = path.join(OUTSIDE_ROOT, 'real-photos');
     fs.mkdirSync(realDir, { recursive: true });
     fs.writeFileSync(path.join(realDir, 'img.jpg'), '');
-    const symlinkedDir = path.join(TMP_ROOT, 'symlinked-photos');
+    const symlinkedDir = path.join(OUTSIDE_ROOT, 'symlinked-photos');
     fs.symlinkSync(realDir, symlinkedDir);
     const r = createPathResolver(HOST, CONV_KEY, { photos: { path: symlinkedDir, access: 'rw' } });
     const result = r.resolveReadable('/resources/photos/img.jpg');

@@ -38,7 +38,7 @@ paths. Other shapes work; pick what fits.
 `reflection` earns its own channel because it differs from
 `default` on lifecycle (single-shot vs. persistent), trigger source
 (schedule vs. user), tool surface (narrow vs. full), and substrate
-posture (silent maintenance vs. user-facing) — four of the six
+posture (silent maintenance vs. user-facing) — four of the seven
 rationale dimensions, well above the merge-or-split threshold.
 
 Output goes to two places: reflection notes written to

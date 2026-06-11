@@ -12,6 +12,7 @@ import { AgentConfigSchema, AgentManifestSchema, ProvisionsSchema, isUnlocked } 
 
 import type { AgentManager } from '../../agent/agent-manager.js';
 import { AgentDb } from '../../agent/agent-db.js';
+import { resourcePathEscapesAgentsTree } from '../../container/container-mounts.js';
 import { AclSchema } from '../../auth/acl.js';
 import { AGENTS_DIR, agentPath, listSubdirectories, readCapabilities, readProvisions } from '../../config.js';
 import { ChannelJsonSchema, DEFAULT_CHANNEL_JSON } from '../../conversations/types.js';
@@ -310,11 +311,20 @@ export const agentRouter = router({
       // Resources: validate against declared slots
       if (input.resources) {
         const res: Record<string, string> = {};
-        for (const [name, path] of Object.entries(input.resources)) {
+        for (const [name, resourcePath] of Object.entries(input.resources)) {
           if (!caps.resources[name]) {
             throw new TRPCError({ code: 'BAD_REQUEST', message: `Resource "${name}" not declared in capabilities` });
           }
-          if (path !== null) res[name] = path;
+          if (resourcePath !== null) {
+            const escape = resourcePathEscapesAgentsTree(resourcePath);
+            if (escape) {
+              throw new TRPCError({
+                code: 'BAD_REQUEST',
+                message: `Resource "${name}": ${escape}. Agent folders are private and cannot be mounted into another agent.`,
+              });
+            }
+            res[name] = resourcePath;
+          }
         }
         existing.resources = res;
       }

@@ -241,7 +241,7 @@ export function ApiTools() {
       <ToolDoc
         name="agent__list_participants"
         summary="List the members of a channel you are placed in, as identities in the exact form push_to_participant accepts, with day-level recency. Scoped by caller standing: a cell can list exactly what the push gate would let it reach, and a query outside its rooms is denied without revealing whether the channel exists. The agent itself and operator surfaces get unfiltered views — and the agent-wide registry when no channel is in play."
-        args={[
+        params={[
           { name: 'channel', type: 'string', desc: 'Optional. Accepts name~qualifier (qualifier ignored — shards share membership). Omitted: the current channel for members, the registry for the agent itself and operator surfaces.' },
         ]}
         returns={[

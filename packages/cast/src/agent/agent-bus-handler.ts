@@ -19,10 +19,9 @@ import type { IdentityProvider } from '../auth/identity.js';
 import { generatePairingCode, type PairingResult } from '../auth/pairing.js';
 import type { Bus } from '../gateway/bus.js';
 import { conversationPkt } from '../gateway/packets.js';
-import { escapeXml, formatMessages } from '../lib/format.js';
+import { escapeXml, formatMessages, formatParticipantMessage } from '../lib/format.js';
 import { updateRoster } from '../lib/identity-roster.js';
 import { logger } from '../logger.js';
-import { generateId } from '../lib/utils.js';
 import type { Attachment, RouteResult } from '../types.js';
 
 import type { AgentDb } from './agent-db.js';
@@ -150,26 +149,35 @@ export async function handleBusMessage(
         }
         return;
       }
-      const formatted = formatMessages(
-        [
-          {
-            id: generateId('pkt'),
-            address: to,
-            sender: from,
-            sender_name: parsed.declaredName ?? from,
-            content: parsed.text,
-            timestamp: new Date().toISOString(),
-          },
-        ],
-        deps.getTimezone(),
-      );
+      // Single chokepoint for untrusted participant text: strip the forge-able
+      // framework family, then escape + wrap. `sanitized` is what the agent
+      // sees AND what the log records (they no longer diverge).
+      const { formatted, sanitized } = formatParticipantMessage(parsed.text, {
+        sender: from,
+        declaredName: parsed.declaredName,
+        timezone: deps.getTimezone(),
+        timestamp: new Date().toISOString(),
+      });
+      // A strip means forged framework stimulus was removed before the agent
+      // saw it. Record the verbatim attempt as a security event — the event log
+      // is never re-injected into a prompt, unlike `message_log`, which the
+      // search tool feeds back to the model.
+      if (sanitized !== parsed.text.trim()) {
+        deps.agentDb.logEvent(
+          'warn',
+          'conversation',
+          'framework_tag_stripped',
+          `Stripped framework tag(s) from inbound participant text from ${from}`,
+          { context: { from, channel, raw: parsed.text } },
+        );
+      }
       try {
         deps.route(
           to,
           from,
           formatted,
           parsed.routing,
-          parsed.text,
+          sanitized,
           parsed.declaredName,
           parsed.attachments,
         ).catch((err) => {

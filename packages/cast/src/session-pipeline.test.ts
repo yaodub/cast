@@ -303,6 +303,14 @@ vi.mock('./lib/format.js', () => ({
     return { ok: true, parsed: { text, internal, queries: [], answers: [] } };
   }),
   escapeXml: vi.fn((s: string) => s),
+  formatParticipantMessage: vi.fn(
+    (rawText: string, opts: { sender: string; declaredName?: string; timezone?: string; timestamp: string }) => {
+      const sanitized = rawText
+        .replace(/<cast:(internal|watch|schedule|service|lifecycle)\b[^>]*>[\s\S]*?<\/cast:\1>/g, '')
+        .replace(/<\/?cast:(internal|watch|schedule|service|lifecycle)\b[^>]*>/g, '')
+        .trim();
+      return { formatted: `[${opts.declaredName ?? opts.sender}]: ${sanitized}`, sanitized };
+    }),
 }));
 
 // --- Imports (after mocks) ---

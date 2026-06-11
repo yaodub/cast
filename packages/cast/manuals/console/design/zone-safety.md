@@ -59,7 +59,9 @@ structural + human is the gate. *Tradeoff:* slow; doesn't scale to
 high-frequency actions. But it's the only "real" inner-initiated
 outbound that doesn't collapse into operational discipline — the
 human's approval is a structural gate (no approval, no action),
-not a vocabulary check.
+not a vocabulary check. Worked composition, including the
+entry-path audit that keeps the gate structural:
+[Approval-gated execution](recipes/approval-gated-execution.md).
 
 **Tier 4 — Anonymized intermediary.** Inner→outer goes through a
 third agent (the *anonymizer*) that strips originator information.
@@ -112,4 +114,7 @@ channels that receive outer pushes.
 to [Specialist agent behind a query-only door](recipes/specialist-behind-query.md)
 in reverse — instead of one specialist many callers, one
 anonymizer many inner clients. Compose the two when the inner
-zone needs both isolation *and* targeted-attack resistance.
+zone needs both isolation *and* targeted-attack resistance. For the
+structural/operational distinction applied to one concrete pipeline
+— hostile content in, bounded blast radius at every step — see
+[Untrusted-content airlock](recipes/untrusted-content-airlock.md).

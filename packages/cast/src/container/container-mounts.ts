@@ -18,6 +18,7 @@ import path from 'path';
 import type { ResourceEntry } from '@getcast/agent-schema/v1';
 
 import {
+  AGENTS_DIR,
   agentPath,
   mcpDir,
   sessionCastSocketPath,
@@ -34,6 +35,46 @@ export interface VolumeMount {
   readonly: boolean;
   /** Framework-managed mount (Claude session, MCP socket). Excluded from agent-watchable surface. */
   isSystem?: boolean;
+}
+
+/**
+ * An operator-configured resource mount must live entirely OUTSIDE the agents
+ * tree. Returns a human-readable reason when `hostPath` violates that, else null.
+ *
+ * Two ways to violate, both of which would hand one agent another agent's
+ * private state/home/memory:
+ *  - the path IS the agents root or sits inside it (any agent folder), or
+ *  - the path is an ancestor of the agents root (e.g. `/`, `$HOME`) and so
+ *    contains every agent folder.
+ *
+ * Both sides are realpath'd so a symlink inside an otherwise-allowed directory
+ * cannot smuggle the agents tree back in. A path that doesn't exist on disk
+ * falls back to lexical resolution (the existence check upstream skips missing
+ * resource paths before this is consulted on the spawn path).
+ *
+ * This is the enforcement boundary for agent-folder privacy: it runs on the one
+ * chokepoint every spawn passes through (`mountTable`), so a provisions.json
+ * written directly (bypassing the admin API) is still caught here.
+ */
+export function resourcePathEscapesAgentsTree(hostPath: string): string | null {
+  const realOrLexical = (p: string): string => {
+    try {
+      return fs.realpathSync(p);
+    } catch {
+      return path.resolve(p);
+    }
+  };
+  const resolved = realOrLexical(hostPath);
+  const root = realOrLexical(AGENTS_DIR);
+
+  const contained = (parent: string, child: string): boolean => {
+    const rel = path.relative(parent, child);
+    return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+  };
+
+  if (contained(root, resolved)) return `path is inside the agents tree (${root})`;
+  if (contained(resolved, root)) return `path contains the agents tree (${root})`;
+  return null;
 }
 
 /**
@@ -174,6 +215,17 @@ export function mountTable(
       const readonly = typeof entry === 'string' ? true : entry.access !== 'rw';
       if (!fs.existsSync(hostPath)) {
         logger.warn({ agent: agent.name, resource: name, hostPath }, 'Resource path does not exist, skipping mount');
+        continue;
+      }
+      // Agent-folder privacy boundary: never let a resource bind another agent's
+      // folder (or the whole tree) into this container. Fail closed — drop the
+      // offending mount, keep the rest of the agent alive.
+      const escape = resourcePathEscapesAgentsTree(hostPath);
+      if (escape) {
+        logger.warn(
+          { agent: agent.name, resource: name, hostPath, reason: escape },
+          'Resource path overlaps the agents tree; refusing to mount (agent folders are private)',
+        );
         continue;
       }
       mounts.push({ hostPath, containerPath: `/resources/${name}`, readonly });

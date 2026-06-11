@@ -218,13 +218,15 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
     border-bottom: 1px solid var(--border);
     box-shadow: 0 14px 28px -14px rgba(0, 0, 0, 0.3);
   }
-  .nav-dropdown button {
+  .nav-dropdown button,
+  .nav-dropdown a {
     text-align: left;
     padding: 13px 20px;
     font-size: 15px;
     border-bottom: 1px solid var(--border);
   }
-  .nav-dropdown button:last-child { border-bottom: none; }
+  .nav-dropdown button:last-child,
+  .nav-dropdown a:last-child { border-bottom: none; }
 }
 
 /* Phone-only adjustments. Sections reflow for narrow viewports;

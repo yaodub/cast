@@ -1,7 +1,7 @@
 import fs from 'fs';
 
 import { Bot, GrammyError, InlineKeyboard, InputFile } from 'grammy';
-import type { Message } from 'grammy/types';
+import type { Chat, Message, MessageOrigin, User } from 'grammy/types';
 import { z } from 'zod';
 
 import type { BusAddress } from '../auth/address.js';
@@ -15,6 +15,9 @@ import type { OutboundContext, Transport, TransportContext } from './schema.js';
 
 const TELEGRAM_MAX_LENGTH = 4096;
 const DEBOUNCE_MS = 1000;
+// Cap on the quoted snippet injected for reply context. Replied-to messages
+// can run the full 4096 chars; the snippet is a pointer, not a transcript.
+const REPLY_SNIPPET_MAX_LENGTH = 500;
 // Lifecycle/typing surfaces are suppressed unless the user has interacted in
 // this chat recently. Without this, scheduled-task fires leave permanent
 // "Waking up…" debris above an unprompted reply.
@@ -224,6 +227,23 @@ class TelegramTransport implements Transport {
       //   /set_name → /set-name  (Telegram uses underscores; we normalize to hyphens)
       //   /whoami@BotName → /whoami  (Telegram appends @bot in menus)
       text = text.replace(/^\/([a-z0-9_]+)(@\w+)?/, (_m, cmd: string) => '/' + cmd.replace(/_/g, '-'));
+
+      // Map /start → /pair. Telegram auto-sends /start as the first message
+      // when a user opens the bot, and t.me/<bot>?start=<payload> deep links
+      // arrive as "/start <payload>". Routing it to /pair makes first contact
+      // begin pairing, and a deep-link payload rides through as the pairing
+      // code (so a /pair-code link redeems in one tap). /pair is gateway-handled.
+      text = text.replace(/^\/start\b/, '/pair');
+
+      // Reply/forward framing. Prepended AFTER the ^-anchored command rewrites
+      // above so they still match the typed text; skipped entirely when the
+      // message IS a command — command dispatch keys on a leading "/" and the
+      // context would defeat it (replying to a message with /whoami is a
+      // system-level act, the anchor doesn't change its meaning).
+      const contextPrefix = serializeMessageContext(msg, ctx.me.id);
+      if (contextPrefix && !text.startsWith('/')) {
+        text = text ? `${contextPrefix}\n${text}` : contextPrefix;
+      }
 
       if (mediaPromise) {
         mediaPromise.then((attachments) => {
@@ -750,6 +770,100 @@ function serializeStructuredContent(msg: Message): { text: string; attachments: 
   }
 
   return { text: parts.join('\n'), attachments };
+}
+
+/**
+ * Serialize reply/forward framing for an inbound message into bracketed
+ * context lines. Unlike serializeStructuredContent (whose output is appended
+ * as content), this is metadata that frames the typed text — the caller
+ * PREPENDS it so the model reads the anchor before the user's words.
+ *
+ * Replies prefer Telegram's native partial quote (`msg.quote`) over the full
+ * replied-to text: the user selected exactly that substring, and injecting
+ * the whole message can hand the model unrelated actionable-looking text the
+ * user never pointed at (hermes-agent #22619 is the cautionary tale). The
+ * frame is injected even when the quoted text already sits in conversation
+ * history — it's disambiguation (WHICH prior message), not deduplication.
+ *
+ * Exported for tests.
+ */
+export function serializeMessageContext(msg: Message, botId: number | undefined): string {
+  const parts: string[] = [];
+
+  if (msg.forward_origin) {
+    // origin.date is the original send time (unix seconds) — forwarded
+    // content can be arbitrarily stale, so surface the date.
+    const sentDate = new Date(msg.forward_origin.date * 1000).toISOString().slice(0, 10);
+    parts.push(`[Forwarded from ${formatMessageOrigin(msg.forward_origin)}, originally sent ${sentDate}]`);
+  }
+
+  if (msg.reply_to_message) {
+    const reply = msg.reply_to_message;
+    const isSelf = botId !== undefined && reply.from?.id === botId;
+    const author = reply.from && !isSelf ? userLabel(reply.from) : undefined;
+    const snippet = msg.quote?.text || reply.text || reply.caption;
+    if (snippet) {
+      const target = isSelf ? 'your message' : author ?? 'a message';
+      parts.push(`[Replying to ${target}: "${truncateSnippet(snippet)}"]`);
+    } else {
+      // Media-only replied-to message — a type tag is enough of an anchor;
+      // downloading the replied-to media isn't worth the async plumbing.
+      const kind = describeMediaKind(reply) ?? 'message';
+      const owner = isSelf ? 'your' : author ? `${author}'s` : 'a';
+      parts.push(`[Replying to ${owner} ${kind}]`);
+    }
+  } else if (msg.external_reply) {
+    // Reply to a message in another chat — carries an origin and media
+    // descriptors but no text; msg.quote has the text when the user quoted.
+    const origin = formatMessageOrigin(msg.external_reply.origin);
+    const quoted = msg.quote?.text;
+    parts.push(quoted
+      ? `[Replying to a message from ${origin}: "${truncateSnippet(quoted)}"]`
+      : `[Replying to a message from ${origin}]`);
+  }
+
+  return parts.join('\n');
+}
+
+function userLabel(user: User): string {
+  const name = [user.first_name, user.last_name].filter(Boolean).join(' ');
+  return user.username ? `${name} (@${user.username})` : name;
+}
+
+function chatLabel(chat: Chat): string {
+  // Group/supergroup/channel chats carry `title`; private chats carry names.
+  return chat.title ?? [chat.first_name, chat.last_name].filter(Boolean).join(' ');
+}
+
+function formatMessageOrigin(origin: MessageOrigin): string {
+  switch (origin.type) {
+    case 'user':
+      return userLabel(origin.sender_user);
+    case 'hidden_user':
+      return origin.sender_user_name;
+    case 'chat':
+      return `chat "${chatLabel(origin.sender_chat)}"${origin.author_signature ? ` (${origin.author_signature})` : ''}`;
+    case 'channel':
+      return `channel "${chatLabel(origin.chat)}"${origin.author_signature ? ` (${origin.author_signature})` : ''}`;
+  }
+}
+
+function truncateSnippet(text: string): string {
+  return text.length > REPLY_SNIPPET_MAX_LENGTH ? text.slice(0, REPLY_SNIPPET_MAX_LENGTH) + '…' : text;
+}
+
+function describeMediaKind(msg: Message): string | undefined {
+  if (msg.photo?.length) return 'photo';
+  if (msg.document) return 'document';
+  if (msg.voice) return 'voice message';
+  if (msg.audio) return 'audio';
+  if (msg.video) return 'video';
+  if (msg.video_note) return 'video note';
+  if (msg.sticker) return 'sticker';
+  if (msg.location) return 'location';
+  if (msg.poll) return 'poll';
+  if (msg.contact) return 'contact';
+  return undefined;
 }
 
 /**

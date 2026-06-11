@@ -1,5 +1,6 @@
 import { CastLockup } from '../brand/CastLockup';
 import { Github } from '../brand/Icon';
+import { CAST_VERSION } from '../../version';
 
 const REPO = 'https://github.com/yaodub/cast';
 
@@ -7,7 +8,7 @@ type FooterLink = { label: string; href: string };
 type FooterColumn = readonly [title: string, links: readonly FooterLink[]];
 
 // Parked for later (uncomment + add when these exist): Changelog, Roadmap,
-// API reference index, Discord, Discussions, Blog, Showcase, RFC index,
+// API reference index, Discord, Discussions, Showcase, RFC index,
 // Governance, Sponsors, Credits.
 const columns: readonly FooterColumn[] = [
   [
@@ -16,6 +17,7 @@ const columns: readonly FooterColumn[] = [
       { label: 'Docs', href: '/docs/quickstart' },
       { label: 'Examples', href: '/examples' },
       { label: 'How it works', href: '/how-it-works' },
+      { label: 'Blog', href: 'https://blog.getcast.dev' },
     ],
   ],
   [
@@ -128,7 +130,7 @@ export function Footer() {
         }}
       >
         <span>MIT License © 2026 Cast contributors</span>
-        <span>v0.1.0 · alpha</span>
+        <span>{CAST_VERSION} · alpha</span>
       </div>
     </footer>
   );

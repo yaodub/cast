@@ -75,8 +75,10 @@ awkward exchanges, async meetings across schedules, negotiation
 where each side has private constraints.
 
 (For *joint authoring* — both parties writing into the same draft
-directly, no editorial gate — that's a different recipe with a raw
-shared file, not this pattern.)
+directly, no editorial gate — drop the editorial layer: a raw
+shared artifact plus the *Live coordination across participant
+sessions* variant below is the shape. This recipe's value is the
+gate.)
 
 **Why a shared log beats per-party push in mediated mode.** A
 shared `/memory/shared/<topic>.md` read by all participants beats

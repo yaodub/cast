@@ -294,6 +294,13 @@ mistyped host path warns to the agent's container log and skips
 silently in chat; check there if the operator says a mount isn't
 working.
 
+A bound path that overlaps the agents directory (`CAST_AGENTS_DIR`) —
+inside it, the directory itself, or an ancestor of it — is rejected the
+same way: it warns to the container log and the slot is skipped, because
+binding one agent's folder into another would break isolation. The admin
+form rejects such a path up front. Full rule:
+`console/design/primitives.md` § "The mount table".
+
 ## Cast-server restart narration
 
 There are three cache layers that hold tool-list state. Each has a

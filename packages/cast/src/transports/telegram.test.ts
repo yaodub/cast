@@ -11,8 +11,10 @@
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { GrammyError } from 'grammy';
+import type { Bot } from 'grammy';
+import type { Message, Update, UserFromGetMe } from 'grammy/types';
 
-import { telegram } from './telegram.js';
+import { serializeMessageContext, telegram } from './telegram.js';
 import { conversationPkt, previewTextPkt } from '../gateway/packets.js';
 import type { TransportContext, Transport } from './schema.js';
 import type { BusAddress } from '../auth/address.js';
@@ -30,6 +32,10 @@ interface BotApiStub {
   sendMessage: ReturnType<typeof vi.fn>;
   editMessageText: ReturnType<typeof vi.fn>;
   setMyCommands: ReturnType<typeof vi.fn>;
+  /** grammy's handleUpdate reads bot.api.config.installedTransformers() when
+   *  constructing the per-update Api — stub it so inbound tests can inject
+   *  updates through the real middleware pipeline. */
+  config: { installedTransformers: () => unknown[] };
 }
 
 interface TransportInternals {
@@ -106,6 +112,7 @@ function makeHarness(opts: { streaming?: boolean } = {}): Harness {
     sendMessage: vi.fn().mockResolvedValue({ message_id: 100 }),
     editMessageText: vi.fn().mockResolvedValue(true),
     setMyCommands: vi.fn().mockResolvedValue(true),
+    config: { installedTransformers: () => [] },
   };
   const botStop = vi.fn();
   const internals = transport as unknown as TransportInternals;
@@ -331,6 +338,221 @@ describe('TelegramTransport — disconnect', () => {
     await h.transport.send(preview('strm-1', 'first'), { agentAddress: AGENT_ADDR });
     await h.transport.disconnect();
     expect(h.botStop).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Inbound reply/forward framing
+// ---------------------------------------------------------------------------
+
+const BOT_ID = 999;
+const BOT_INFO: UserFromGetMe = {
+  id: BOT_ID,
+  is_bot: true,
+  first_name: 'Cast',
+  username: 'cast_bot',
+  can_join_groups: true,
+  can_read_all_group_messages: false,
+  supports_inline_queries: false,
+  can_connect_to_business: false,
+  has_main_web_app: false,
+  has_topics_enabled: false,
+  allows_users_to_create_topics: false,
+};
+const SENDER = { id: 1111, is_bot: false as const, first_name: 'Alex' };
+const JANE = { id: 2222, is_bot: false as const, first_name: 'Jane', last_name: 'Doe', username: 'jdoe' };
+// 2025-01-01T00:00:00Z — pins the "originally sent" date rendering.
+const ORIGIN_DATE = 1735689600;
+
+// Update-level inbound messages are Message & Update.NonChannel (non-channel
+// chat, `from` guaranteed) — the type handleUpdate accepts.
+type UpdateMessage = NonNullable<Update['message']>;
+
+function inboundMsg(overrides: Partial<UpdateMessage> = {}): UpdateMessage {
+  return {
+    message_id: 7,
+    date: 1750000000,
+    chat: { id: CHAT_ID, type: 'private', first_name: 'Alex' },
+    from: SENDER,
+    ...overrides,
+  };
+}
+
+type ReplyTarget = NonNullable<Message['reply_to_message']>;
+
+function replyTarget(overrides: Partial<ReplyTarget> = {}): ReplyTarget {
+  return {
+    message_id: 3,
+    date: 1749990000,
+    chat: { id: CHAT_ID, type: 'private', first_name: 'Alex' },
+    reply_to_message: undefined,
+    ...overrides,
+  };
+}
+
+describe('serializeMessageContext — reply/forward framing', () => {
+  it('returns empty string for a plain message', () => {
+    expect(serializeMessageContext(inboundMsg({ text: 'hi' }), BOT_ID)).toBe('');
+  });
+
+  it('frames a forward from a user with name, username, and original date', () => {
+    const msg = inboundMsg({
+      text: 'check this out',
+      forward_origin: { type: 'user', date: ORIGIN_DATE, sender_user: JANE },
+    });
+    expect(serializeMessageContext(msg, BOT_ID)).toBe('[Forwarded from Jane Doe (@jdoe), originally sent 2025-01-01]');
+  });
+
+  it('frames a forward from a hidden user by display name only', () => {
+    const msg = inboundMsg({
+      text: 'fwd',
+      forward_origin: { type: 'hidden_user', date: ORIGIN_DATE, sender_user_name: 'Anon Person' },
+    });
+    expect(serializeMessageContext(msg, BOT_ID)).toBe('[Forwarded from Anon Person, originally sent 2025-01-01]');
+  });
+
+  it('frames a forward from a channel by title', () => {
+    const msg = inboundMsg({
+      text: 'fwd',
+      forward_origin: {
+        type: 'channel',
+        date: ORIGIN_DATE,
+        chat: { id: -1001, type: 'channel', title: 'News Wire' },
+        message_id: 55,
+      },
+    });
+    expect(serializeMessageContext(msg, BOT_ID)).toBe('[Forwarded from channel "News Wire", originally sent 2025-01-01]');
+  });
+
+  it('reply to the bot\'s own message reads "your message"', () => {
+    const msg = inboundMsg({
+      text: 'sounds good',
+      reply_to_message: replyTarget({ from: BOT_INFO, text: 'I propose we do X' }),
+    });
+    expect(serializeMessageContext(msg, BOT_ID)).toBe('[Replying to your message: "I propose we do X"]');
+  });
+
+  it('reply to another participant names them', () => {
+    const msg = inboundMsg({
+      text: 'agreed',
+      reply_to_message: replyTarget({ from: JANE, text: 'shall we ship it?' }),
+    });
+    expect(serializeMessageContext(msg, BOT_ID)).toBe('[Replying to Jane Doe (@jdoe): "shall we ship it?"]');
+  });
+
+  it('prefers the native partial quote over the full replied-to text', () => {
+    const msg = inboundMsg({
+      text: 'do this one',
+      reply_to_message: replyTarget({ from: BOT_INFO, text: 'Option A: foo. Option B: bar. Option C: baz.' }),
+      quote: { text: 'Option B: bar.', position: 14, is_manual: true },
+    });
+    expect(serializeMessageContext(msg, BOT_ID)).toBe('[Replying to your message: "Option B: bar."]');
+  });
+
+  it('truncates long reply snippets to 500 chars with ellipsis', () => {
+    const msg = inboundMsg({
+      text: 'ok',
+      reply_to_message: replyTarget({ from: JANE, text: 'z'.repeat(600) }),
+    });
+    const out = serializeMessageContext(msg, BOT_ID);
+    expect(out).toBe(`[Replying to Jane Doe (@jdoe): "${'z'.repeat(500)}…"]`);
+  });
+
+  it('reply to a media-only message falls back to a type tag', () => {
+    const msg = inboundMsg({
+      text: 'nice shot',
+      reply_to_message: replyTarget({
+        from: JANE,
+        photo: [{ file_id: 'f1', file_unique_id: 'u1', width: 100, height: 100 }],
+      }),
+    });
+    expect(serializeMessageContext(msg, BOT_ID)).toBe('[Replying to Jane Doe (@jdoe)\'s photo]');
+  });
+
+  it('reply to captioned media uses the caption as the snippet', () => {
+    const msg = inboundMsg({
+      text: 'love it',
+      reply_to_message: replyTarget({
+        from: JANE,
+        photo: [{ file_id: 'f1', file_unique_id: 'u1', width: 100, height: 100 }],
+        caption: 'sunset from the roof',
+      }),
+    });
+    expect(serializeMessageContext(msg, BOT_ID)).toBe('[Replying to Jane Doe (@jdoe): "sunset from the roof"]');
+  });
+
+  it('external reply (message in another chat) frames the origin + quote', () => {
+    const msg = inboundMsg({
+      text: 'thoughts?',
+      external_reply: {
+        origin: {
+          type: 'channel',
+          date: ORIGIN_DATE,
+          chat: { id: -1001, type: 'channel', title: 'News Wire' },
+          message_id: 12,
+        },
+      },
+      quote: { text: 'markets rallied today', position: 0 },
+    });
+    expect(serializeMessageContext(msg, BOT_ID)).toBe('[Replying to a message from channel "News Wire": "markets rallied today"]');
+  });
+});
+
+describe('TelegramTransport — inbound reply/forward integration', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  /**
+   * Drive the real grammy middleware pipeline without network: register the
+   * transport's handlers via the private setupBot, seed botInfo so
+   * handleUpdate doesn't try getMe, inject the update, then advance past the
+   * inbound debounce window so the burst flushes into ingestInbound.
+   */
+  async function deliver(h: Harness, message: UpdateMessage): Promise<void> {
+    // Private-member reach-in, local to this fixture (same pattern as
+    // TransportInternals above).
+    const internals = h.transport as unknown as {
+      tokenToBotEntry: Map<string, { bot: Bot }>;
+      setupBot(entry: unknown): void;
+    };
+    const entry = internals.tokenToBotEntry.get(FAKE_TOKEN)!;
+    entry.bot.botInfo = BOT_INFO;
+    internals.setupBot(entry);
+    await entry.bot.handleUpdate({ update_id: 1, message });
+    vi.advanceTimersByTime(1001); // DEBOUNCE_MS + 1
+  }
+
+  function ingestedText(h: Harness): string {
+    const calls = (h.ctx.ingestInbound as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls).toHaveLength(1);
+    return calls[0]![2] as string;
+  }
+
+  it('prepends the reply frame to the typed text', async () => {
+    const h = makeHarness();
+    await deliver(h, inboundMsg({
+      text: 'sounds good',
+      reply_to_message: replyTarget({ from: BOT_INFO, text: 'I propose we do X' }),
+    }));
+    expect(ingestedText(h)).toBe('[Replying to your message: "I propose we do X"]\nsounds good');
+  });
+
+  it('prepends the forward frame ahead of forwarded text', async () => {
+    const h = makeHarness();
+    await deliver(h, inboundMsg({
+      text: 'the original post body',
+      forward_origin: { type: 'user', date: ORIGIN_DATE, sender_user: JANE },
+    }));
+    expect(ingestedText(h)).toBe('[Forwarded from Jane Doe (@jdoe), originally sent 2025-01-01]\nthe original post body');
+  });
+
+  it('commands skip the frame — a reply carrying /whoami stays a bare command', async () => {
+    const h = makeHarness();
+    await deliver(h, inboundMsg({
+      text: '/whoami',
+      reply_to_message: replyTarget({ from: BOT_INFO, text: 'earlier reply' }),
+    }));
+    expect(ingestedText(h)).toBe('/whoami');
   });
 });
 

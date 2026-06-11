@@ -29,6 +29,16 @@ pattern (the *Browse by pattern* axis).
   [Shared feed as a meeting point](shared-feed-meeting-point.md)
 - *An agent that asks who wants updates, then notifies whoever opted in* —
   [Opt-in notification](opt-in-notification.md)
+- *Many parallel threads of the same kind — a review per PR, a client
+  per account* — [Per-entity workroom](per-entity-workroom.md)
+- *One public contact; specialist agents own the conversations behind
+  it* — [Front desk that routes users](front-desk-handoff.md)
+- *Reading hostile content without handing it your agent's tools* —
+  [Untrusted-content airlock](untrusted-content-airlock.md)
+- *Checking something often without paying strong-model prices each
+  time* — [Two-speed agent](two-speed-agent.md)
+- *Consequential actions only ever happen with you in the room* —
+  [Approval-gated execution](approval-gated-execution.md)
 
 ## Browse by pattern (for per-agent Design composing)
 
@@ -63,6 +73,25 @@ pattern (the *Browse by pattern* axis).
   one agent, multiple participants. Discreet mode (cross-cut
   awareness without quotation) and mediated mode (shared log in the
   agent's voice for awkward, async, or conflict-prone coordination).
+- [Per-entity workroom](per-entity-workroom.md) — one sharded
+  channel hosting qualifier-keyed sub-conversations: per-slice
+  continuity and substrate that materialize at runtime, plus the
+  janitor that closes the loop.
+- [Front desk that routes users](front-desk-handoff.md) — the
+  `p`/`h` handoff worked end-to-end: routing judgment at a public
+  desk, users handed to the specialists who own their threads,
+  pairing prerequisite named.
+- [Untrusted-content airlock](untrusted-content-airlock.md) — the
+  `r`/`a` edge worked end-to-end: hostile content parsed in a cage
+  that can only write files, re-entering through an RO mount onto a
+  low-privilege reader channel.
+- [Two-speed agent](two-speed-agent.md) — per-channel model tiering:
+  a cheap single-shot sentinel on a fast cadence detects; a
+  strong-model synthesis channel wakes only on signal.
+- [Approval-gated execution](approval-gated-execution.md) — the
+  consequential verb enabled on exactly one operator-only channel;
+  every other channel can only write proposals. Includes the
+  entry-path audit that keeps the gate structural.
 
 The [Degrees of zone safety](../zone-safety.md) composition reference
 (formerly in this folder) sits one level up — it composes the
@@ -105,3 +134,32 @@ name seams and habits that don't (couriers, process-decomposition,
 verbatim handoffs, cadence-without-signal). The two pair: if a
 proposed shape doesn't match a recipe but does match a smell in
 anti-patterns, that's a strong tell.
+
+## Coverage map
+
+Which recipe exercises which primitive — for finding a worked
+example of the move you're reaching for, and for spotting coverage
+gaps when adding recipes. ✓ core to the recipe, ○ in a variant,
+— absent. (Memory substrate and `disabled_tools` appear in nearly
+every recipe and aren't columned.)
+
+| Recipe | Lifecycle | Edge | Sharding | Push | Feed+watch | Mounts/slots | Schedule | Multi-participant | Model tiers |
+|---|---|---|---|---|---|---|---|---|---|
+| [Quiet processing](quiet-processing-channel.md) | single-shot (○ persistent) | ○ q/a | — | ✓ intra | ○ | ○ | ✓ | — | — |
+| [Nightly reflection](nightly-reflection.md) | single-shot | — | — | ✓ intra | — | — | ✓ | — | — |
+| [Deferred follow-up](deferred-follow-up.md) | persistent target | — | — | — | — | — | ✓ once | — | — |
+| [Specialist behind query](specialist-behind-query.md) | single-shot | ✓ q/a | — | — | — | ○ | — | ✓ visibility off | — |
+| [Shared feed](shared-feed-meeting-point.md) | persistent | — | — | — | ✓ | ✓ | — | ✓ | — |
+| [Reviewer interviews team](reviewer-interviews-team.md) | single-shot | ✓ q/a | — | ✓ intra | ○ heartbeat | ○ heartbeat | ✓ | — | — |
+| [Connecting multiple users](connecting-multiple-users.md) | persistent | — | — | ✓ participant | ○ | — | ○ | ✓ | — |
+| [Opt-in notification](opt-in-notification.md) | both | — | — | ✓ participant | ✓ | — | ✓ | ✓ | ○ |
+| [Per-entity workroom](per-entity-workroom.md) | persistent, sharded | ○ q/a | ✓ | ✓ composite | — | — | ✓ janitor | ○ substrate | — |
+| [Front desk](front-desk-handoff.md) | persistent | ✓ p/h (○ q/a) | — | ✓ cross-agent | — | — | — | ✓ | — |
+| [Untrusted-content airlock](untrusted-content-airlock.md) | single-shot | ✓ r/a | — | ✓ intra | ✓ | ✓ | ○ | — | ○ |
+| [Two-speed agent](two-speed-agent.md) | both | — | — | ✓ intra | ✓ | — | ✓ | — | ✓ |
+| [Approval-gated execution](approval-gated-execution.md) | persistent | — | — | ✓ subtracted | — | — | ✓ nudge | — | — |
+
+The edge column's `q/a` / `r/a` / `p/h` shapes are
+`../multi-agent-composition.md`'s vocabulary;
+[zone-safety](../zone-safety.md) composes rows of this table rather
+than appearing in it.

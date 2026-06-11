@@ -200,6 +200,11 @@ The server builds the system prompt from 10 layers, concatenated with double new
 
 HTML comments (`<!-- ... -->`) are stripped from all files before inclusion.
 
+Two conditional server-generated blocks interleave with the numbered layers when their conditions hold; the numbering above stays stable:
+
+- `<agent-profile-closure>` — after layer 3. Profile-provided proactive-closure guidance. Persistent channels only (`idle_timeout` not `null`, since single-shot conversations self-close); console prompts never include it.
+- `<channel-contract>` — between layers 7 and 8. ACL-derived wire-contract guidance for the active channel, teaching which envelopes are deliverable (e.g. that an inbound `<cast:request>` expects no answer envelope). Rendered only when the channel's contract toward the addressee is not the default conversational shape.
+
 ### Layer 1: Infrastructure
 
 Server-generated. Documents the container filesystem paths (`/home/agent`, `/identity`, `/memory`, `/assets`, `/shared`, `/staging`) and their access modes. Describes the effective network mode (`none`, `sdk-only`, or `full`).
@@ -244,7 +249,7 @@ Conversations have finite context windows. When a conversation ends and a new on
 
 - **Bootstrap** — tells the agent what to read at conversation start to restore working state.
 - **Cleanup** — tells the agent to persist what it learned before the conversation closes.
-- **Summaries** — the agent writes a summary during cleanup (`conversation__write_summary` tool), and the server injects recent summaries into the next conversation's context (Layer 9).
+- **Summaries** — the agent writes a summary during cleanup (`conversation__write_summary` tool), and the server injects recent summaries into the next conversation's context (Layer 10).
 
 The cycle: cleanup saves state → bootstrap restores state → summaries bridge the gap.
 

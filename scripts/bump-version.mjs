@@ -6,6 +6,10 @@
 // publish to npm or outside contributors file per-PR entries. Neither is true
 // yet, so a 20-line rewrite is the right-sized tool.
 //
+// The version the site displays (hero block, footer) derives from
+// apps/site/package.json via apps/site/src/version.ts, so this script covers
+// it — no separate site edit at release time.
+//
 // Usage: pnpm version:set 0.2.0   (or: node scripts/bump-version.mjs 0.2.0)
 import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';

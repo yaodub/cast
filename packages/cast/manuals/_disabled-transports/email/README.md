@@ -37,7 +37,7 @@ array of `EmailRoute` objects:
       "email": "agent@example.com",
       "channel": "default",             // optional; routes to a specific channel
       "whitelist": ["*@example.com"],   // optional sender allowlist
-      "requireAuth": true,              // optional DKIM/DMARC alignment check
+      "requireAuth": true,              // DKIM/DMARC alignment check (default: true)
       "imap": { "host": "...", "port": 993, "user": "...", "pass": "...", "tls": true },
       "smtp": { "host": "...", "port": 465, "user": "...", "pass": "...", "secure": true }
     }
@@ -67,9 +67,10 @@ set).
   is responsible for filesystem protection.
 - IMAP IDLE keeps a persistent connection; UID watermark tracked in
   `transport-email.db`.
-- `requireAuth: true` enables DKIM/DMARC alignment check; defends
-  against From-header spoofing when senders' domains publish proper
-  records.
+- `requireAuth` enables DKIM/DMARC alignment check; defends against
+  From-header spoofing when senders' domains publish proper records.
+  On by default; set `requireAuth: false` to accept unauthenticated
+  mail (spoofable From).
 - `whitelist` supports exact match and `*@domain` wildcards.
 - Threads tracked via `Message-ID` for reply context.
 - ACL still gates participant access after the transport ingests

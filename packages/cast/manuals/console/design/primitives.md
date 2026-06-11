@@ -303,6 +303,16 @@ the admin form. The slot's `access` is the ceiling — operators can
 narrow `rw → ro` when binding, never escalate. Operators cannot invent
 slots Design didn't declare.
 
+The bound host path must live entirely outside the agents directory
+(`CAST_AGENTS_DIR`). A path inside it, the directory itself, or any
+ancestor that contains it is rejected — that would bind another agent's
+private `state/`, `home/`, or `memory/` (or the whole fleet) into this
+container, defeating per-agent isolation. The check realpath-resolves
+both sides, so a symlink cannot smuggle the tree back in. Enforcement is
+at the mount chokepoint every spawn passes through, so a path written
+directly into `provisions.json` (bypassing the admin form) is still
+caught: it warns to the container log and the slot is skipped.
+
 Use this to:
 
 - Read a corpus the operator drops in (RO).
@@ -469,6 +479,7 @@ Composes with: memory (per-shard files), summaries (per-shard,
 because the conversation key is per-shard), the verb surface
 (`conversation__push_to_channel` accepts the composite form), and
 `agent__list_peers` discovery (sharded peers render with `~*`).
+Worked composition: `recipes/per-entity-workroom.md`.
 
 ---
 
@@ -604,9 +615,29 @@ Composes with: memory (persistent learning across fires),
 `<cast:internal>` (silent fires), source attribution (fires arrive as
 `<cast:schedule>`), recall (the new session can search past runs).
 
+### Ending the conversation — `conversation__end`
+
+The agent ends its own conversation after a cooldown (default 300s,
+minimum 60s, capped at the channel's `idle_timeout`). The expiry is
+normal — cleanup and summary run as usual — and a participant
+message during the cooldown cancels the end and notifies the agent.
+Not registered on single-shot channels (they end by themselves).
+
+Use this when the conversation has reached a natural close and
+holding the slot for the full idle timer serves nobody: a wrap-up
+the participant has confirmed, a completed handoff, a long-timer
+channel whose work for this session is visibly done. The verb makes
+`idle_timeout` the fallback closer — the timer catches abandonment,
+the verb marks completion.
+
+Composes with: lifecycle (cleanup fires at the cooldown's end, so
+distillation happens while the exchange is fresh instead of
+`idle_timeout` later), TTL economics (`economics.md` § Cadence — a
+deliberate close beats a long timer held warm).
+
 ### Outbound semantic tags
 
-Three tags the agent emits in its output to signal intent:
+Four tags the agent emits in its output to signal intent:
 
 - `<cast:internal>` — wrap output that should be logged but not
   delivered to the participant. Background reasoning, silent
@@ -615,6 +646,10 @@ Three tags the agent emits in its output to signal intent:
 - `<cast:query target="agent" channel="name">` — request a
   structured response from a peer agent. The reply lands as
   `<cast:answer>` in the next turn.
+- `<cast:request target="agent" channel="name">` — dispatch
+  fire-and-forget work to a peer agent. Same shape as query; no
+  reply is expected or delivered (the `r` edge — see
+  `multi-agent-composition.md` § The three shapes).
 - `<cast:answer request="id">` — respond to an inbound query.
 
 These are not just routing — they're a posture vocabulary. A channel
@@ -623,6 +658,14 @@ an agent that's quiet by default and audible only when there's
 something to say. A channel that uses query/answer lets two agents
 converse on a structured edge without either becoming a participant
 in the other's session.
+
+Queries are tracked as requests while open. `request__list` shows
+the open set — inbound queries awaiting this agent's answer and
+outbound ones awaiting a peer's — scoped to the current channel and
+participant; `request__close` / `request__close_all` clear them.
+Closing an inbound request sends the requester a rejection, so a
+handler that decides not to answer can decline explicitly instead
+of leaving the caller to time out.
 
 Composes with: cross-agent push (query is structured; push is
 initiative-driven; choose by intent), `disabled_tools` (you can
@@ -641,6 +684,10 @@ The framework wraps and the agent reads:
   `fromAgent` means *peer participant on same agent*
   (collaborative); `fromChannel` without the others means *self on
   another channel* (own memory).
+- `<cast:query from request>` / `<cast:request from request>` — an
+  inbound peer call on a `q`/`a` or `r`/`a` edge. A query expects a
+  `<cast:answer request="...">` back; a request expects none — do
+  the work, emit no envelope reply.
 - `<cast:watch path since through>` — a file-watch fire. Body is
   the new rows.
 - `<cast:schedule>` — a scheduled task fire (from `schedule.txt` or
@@ -660,6 +707,27 @@ the design wants.
 Composes with: every primitive that produces non-participant input
 (push, file-watch, scheduling, services, lifecycle), and channel
 prompts that authorize different responses by source class.
+
+### Discovery — `agent__list_peers`, `agent__list_channels`, `agent__list_participants`
+
+The runtime-acquisition verbs. `list_peers` names the peer agents
+this agent can reach and in which directions, per channel (sharded
+peer channels render as `name~*`). `list_channels` lists the
+channels where the calling cell's participant is placed, with
+sharding and visibility markers. `list_participants` lists a
+channel's members as push-target identities with day-level recency —
+scoped to the caller's own rooms, so a cell can list exactly what
+the push gate would let it reach.
+
+These verbs are why a blueprint never bakes an address
+(`anti-patterns.md` § Agent with no users): the prompt teaches
+*which* discovery verb to reach for, and the agent acquires the
+concrete peer, channel, or participant at runtime.
+
+Composes with: push (discovery output is push input),
+co-participant visibility (`show_co_participants` gates member
+rows in `list_participants`), sharding (the `~*` affordance
+marker).
 
 ### Recall — `message_log__search`, `conversation__list_summaries`
 
@@ -779,9 +847,12 @@ The unit of the spec is the arrow, not the artifact at either end.
 An artifact can be filled by the author, stubbed for the agent to
 overwrite, absent for an extension to create, declared as a slot
 for the operator to bind, or implicit in a prompt instruction that
-fires a tool call. State varies; named-ness doesn't. Design is
-complete when every arrow is named, regardless of which artifacts
-have materialized.
+fires a tool call. State varies; named-ness doesn't. When an
+arrow may fire before its artifact exists, the trigger names the
+fallback — create from a skeleton, or read as empty — so the
+cold start is a defined joint, not a missing one. Design is
+complete when every arrow is named, regardless of which
+artifacts have materialized.
 
 ### Rigor at the joints, freedom inside the nodes
 
@@ -899,7 +970,11 @@ The spec discipline names every joint at authoring time. It does
 *not* fix every behavior. A blueprint that pins all behavior up
 front is one you'll keep returning to edit; the complementary
 design-time question is which behaviors to leave evolvable at
-runtime, within the substrate the spec defines.
+runtime, within the substrate the spec defines — `/memory`, the
+only surface the agent can write while the blueprint stays fixed.
+Evolvable behavior is an immutable prompt layer that reads a file
+the agent also writes: name both the read arrow and the write
+arrow, or you get a static doc or an orphaned diary.
 
 Two shapes this takes, calibrated to the agent's job:
 

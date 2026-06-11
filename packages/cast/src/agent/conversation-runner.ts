@@ -46,7 +46,7 @@ import {
 } from '../container/container-runner.js';
 import { applyBuiltinToolPolicy } from '../container/sdk-surface.js';
 import { resolveModel } from '../lib/resolve-model.js';
-import { formatTagAttrs, stripFrameworkTags, validateAgentOutput, type ParsedOutput } from '../lib/format.js';
+import { formatTagAttrs, validateAgentOutput, type ParsedOutput } from '../lib/format.js';
 import { systemFormatError } from './agent-spawn-hooks.js';
 import { logger } from '../logger.js';
 import { startMcpSocketServer, type McpServerDeps } from './mcp-server.js';
@@ -671,15 +671,13 @@ export class ConversationRunner {
     const attachmentsMeta: AttachmentMeta[] | undefined = attachments?.map((a) => ({
       label: a.filename, hash: a.hash!, mimeType: a.mimeType, size: a.filesize ?? 0,
     }));
-    // Strip framework tags only from participant input (defense against fake
-    // stimulus injection). Framework-emitted kinds keep the `<cast:${kind}>`
-    // wrapper in the log — that's the provenance signal that lets readers
-    // tell scheduled/watch/service/etc. fires apart from spontaneous self-talk.
-    // `rawText` (when supplied) overrides for participant input because it's
-    // the pre-format-pass content.
-    const logText = kind === 'participant'
-      ? stripFrameworkTags(rawText ?? text)
-      : wrapped;
+    // Participant input is already sanitized upstream — `formatParticipantMessage`
+    // strips the framework family at the ingest boundary, so the log records
+    // exactly what the agent received. `rawText` (when supplied) is that
+    // sanitized pre-envelope body. Framework-emitted kinds keep the
+    // `<cast:${kind}>` wrapper in the log — the provenance signal that tells
+    // scheduled/watch/service/etc. fires apart from spontaneous self-talk.
+    const logText = kind === 'participant' ? (rawText ?? text) : wrapped;
     this.messageLog?.logInbound(
       this.participantAddress, this.participantAddress, logText, this.channelName, this.conversationKey,
       attachmentsMeta,

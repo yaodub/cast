@@ -122,7 +122,7 @@ Pass-by-reference patches the cost; collapsing removes it.
 
 For deliberation: keep `<cast:query>` and push payloads
 high-density. Q/A answers land in the *sender's* context, so
-verbose answers double-tax. R/A drops the answer entirely.
+verbose answers double-tax. R/A expects no answer at all.
 
 See `anti-patterns.md` § *Verbatim narration* and § *Verbatim payload*.
 

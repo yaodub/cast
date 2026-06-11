@@ -30,6 +30,8 @@ If neither `$CAST_AGENTS_DIR` nor a folder hint is present, ask the operator bef
 | Extension operator config | `config/ext/<name>/.env`, `config/ext/<name>/config.json` | `configure__restart_agent_service` on secret rotation |
 | Cross-agent folder ops | rename, restore from backup, bulk delete under `$CAST_AGENTS_DIR/` | n/a |
 
+Reload mechanics: the server hot-reloads blueprint and config edits — **new** conversations pick them up on the next message with no action needed. `agent__expire_conversations` and `configure__restart_agent_service` are console-side MCP tools that refresh what hot-reload doesn't touch (in-flight conversations; the running service process) — you cannot call them from this session. To trigger them, ask the operator to run them from any console chat, restart the service from the admin UI, or restart the server.
+
 ## Reading order
 
 Don't read everything up front — read what the task points at. But know what each doc holds so you fetch the right one.
@@ -49,7 +51,7 @@ Don't read everything up front — read what the task points at. But know what e
 - **Pair widening with the code that needs it.** Flip `containerNetwork: full` or add `containerAllowedEndpoints` together with the service code that uses the endpoint.
 - **Back up before mutating.** Before the first write to any agent's files, snapshot that agent so the change is reversible: `python3 scripts/agent-snapshot.py <CAST_AGENTS_DIR>/<name>` (from the cast repo root). Whole-agent capture (blueprint + runtime), bounded rotation — keeps the newest 5 in a `pre-edit-*` lane under the agent's `.backups/`, self-pruning, independent of the server's daily snapshots. Scope it to what you'll touch: in single-folder scope, run once up front for the target; in cross-agent ops, snapshot each agent immediately before you modify it (for a rename, snapshot under the current name first).
 - **Diff discipline.** Read before editing. Propose the change, wait for the go, then write. The operator's review is the only audit layer Cast has for this work.
-- **Validate after blueprint edits.** Run any available validation script (`design__validate`-equivalent host-side checks) and address gaps before declaring the work done.
+- **Validate after blueprint edits.** There is no standing host-side validator for agent instances (`pnpm agent template check` covers templates only). Check edited JSON against the Zod schemas in `packages/agent-schema/src/v1/` — `channel.json` fields, `capabilities.json`, `acl.json` shape — and re-read the SPEC.md section for whatever you touched before declaring the work done.
 - **Stratify directives correctly.** Agent-wide things (`identity/*.md`) vs. channel-specific things (`channels/<name>/prompt.md`). Keep layers separate. See `primitives.md` § Stratification.
 
 ## Sibling skills
