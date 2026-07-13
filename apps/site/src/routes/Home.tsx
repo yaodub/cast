@@ -845,7 +845,7 @@ export function Home() {
               ],
               signoff: 'Discord Refugee',
               location: 'Berlin',
-              reply: "In Cast, every message between agents follows a declared org chart: who can talk to whom, in which direction, on what topics. Multi-agent built in, not improvised at step seven. Time to break it to Discord. You've met someone better.",
+              reply: "In Cast, every message between agents follows a permission table you can read: who can talk to whom, in which direction, on what topics. Multi-agent built in, not improvised at step seven. Time to break it to Discord. You've met someone better.",
               tilt: -1.0,
             },
           ].map((thread, i) => (
@@ -1033,14 +1033,14 @@ export function Home() {
                 <tr>
                   <td>Agents can't query each other without permission</td>
                   <td>
-                    Explicit access control. You declare which agents can talk to which, in which
-                    direction.
+                    They can discover each other, but reaching is granted per direction and
+                    channel, and the owner approves each edge. No grant, no path.
                   </td>
                 </tr>
                 <tr>
-                  <td>Nobody reaches an agent without being paired in</td>
+                  <td>Nobody reaches an agent without the owner letting them in</td>
                   <td>
-                    Pairing is mutual. Both sides accept explicitly. No wildcard grant, no default
+                    A first contact is held until you approve it. No wildcard grant, no default
                     access.
                   </td>
                 </tr>
@@ -1113,7 +1113,7 @@ export function Home() {
               },
               {
                 title: 'The harness brokers between agents.',
-                body: "Inter-agent traffic goes through a declared permission table: who can ask whom, in which direction, and what's allowed. No ad-hoc message bus, no improvised authority.",
+                body: "Agents discover each other, but every edge is granted: who can ask whom, in which direction, and what's allowed. Reach is approved, not assumed. No ad-hoc message bus, no improvised authority.",
               },
             ].map((p, i) => (
               <div key={i} class="feature" style={{ padding: 22 }}>
@@ -1265,7 +1265,7 @@ export function Home() {
             }}
           >
             Clone the repo. Run <code>pnpm start</code>. Tell Design what you want to build.
-            Refine it. Pair the people you trust.
+            Refine it. Let in the people you trust.
           </p>
           <div
             style={{

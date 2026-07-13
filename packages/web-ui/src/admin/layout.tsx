@@ -74,7 +74,7 @@ interface ServerCategory {
 
 const SERVER_CATEGORIES: readonly ServerCategory[] = [
   { id: 'routes',   href: '/routes',   label: 'Messaging',  hint: 'Telegram, email, websocket transports',                Icon: GlobeIcon },
-  { id: 'identity', href: '/identity', label: 'Identities', hint: 'Server identity, registered agents, paired users',     Icon: UserIcon },
+  { id: 'identity', href: '/identity', label: 'Identities', hint: 'Server identity, registered agents, known users',      Icon: UserIcon },
   { id: 'activity', href: '/activity', label: 'Activity',   hint: 'Host event log — bus drops, lifecycle, container failures', Icon: ActivityIcon },
   { id: 'settings', href: '/settings', label: 'Settings',   hint: 'Server-wide preferences and model credentials',        Icon: CogIcon },
 ];
@@ -492,7 +492,14 @@ function NewAgentRow({ onClick }: { onClick: () => void }): JSX.Element {
 
 export function Layout({ children }: { children: ComponentChildren }) {
   const agents = trpc.agent.list.useQuery();
-  const pairingCounts = trpc.agent.pendingPairingCounts.useQuery();
+  // Fleet-wide pending-approval counts → the per-row red badge, so an agent
+  // with an access request waiting shows it in the sidebar (not only on its
+  // Access tab). Polled like the Access-tab badge (no SSE push for agent.db
+  // state); one aggregate query, not one per row.
+  const approvalCounts = trpc.agent.pendingApprovalCounts.useQuery(
+    undefined,
+    { refetchInterval: 15000, refetchOnWindowFocus: true },
+  );
   const [location, navigate] = useLocation();
 
   const agentMatch = location.match(/^\/agents\/([^/]+)/);
@@ -595,11 +602,6 @@ export function Layout({ children }: { children: ComponentChildren }) {
   // when the target isn't active. Chat hooks read from this via
   // `useTargetMessages` — they own no message array of their own.
   useAdminGlobalState({ aliases, activeTarget });
-
-  const badgeMap = new Map<string, number>();
-  for (const r of pairingCounts.data ?? []) {
-    badgeMap.set(r.alias, r.count);
-  }
 
   const panelChat = resolveCurrentChatState(currentChat, { dmChat, cmChat, smChat, designChat, configureChat });
 
@@ -770,7 +772,7 @@ export function Layout({ children }: { children: ComponentChildren }) {
                 key={agent.alias}
                 alias={agent.alias}
                 status={agent.status}
-                badge={badgeMap.get(agent.alias)}
+                badge={approvalCounts.data?.[agent.alias]}
                 isUrlActive={isUrlActive}
                 href={`/agents/${agent.alias}`}
                 chatActiveMode={chatActiveModeFor(agent.alias)}

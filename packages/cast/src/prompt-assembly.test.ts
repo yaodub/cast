@@ -63,6 +63,28 @@ describe('assembleSystemPrompt', () => {
     expect(result).toContain('</cast-protocol>');
   });
 
+  it('Layer 6: renders granted peer reach (q/r) and omits push-only edges', () => {
+    const result = assembleSystemPrompt(baseOpts({
+      grantedPeers: [
+        { alias: 'weather', canonical: 'a:wx@srv', description: 'forecasts', channels: [{ name: 'default', bits: 'qa' }] },
+        { alias: 'silent', canonical: 'a:p@srv', channels: [{ name: 'default', bits: 'p' }] }, // push-only → no capability line
+      ],
+    }));
+    expect(result).toContain('<agent-peers>');
+    expect(result).toContain('weather (a:wx@srv): forecasts');
+    expect(result).toContain('Peer agents you can already reach');
+    // A bare push `p`-edge projects to no send/receive capability → not surfaced.
+    expect(result).not.toContain('a:p@srv');
+  });
+
+  it('Layer 6: omits the agent-peers layer entirely when there is no granted reach', () => {
+    expect(assembleSystemPrompt(baseOpts())).not.toContain('<agent-peers>');
+    const pushOnly = assembleSystemPrompt(baseOpts({
+      grantedPeers: [{ alias: 'silent', canonical: 'a:p@srv', channels: [{ name: 'default', bits: 'p' }] }],
+    }));
+    expect(pushOnly).not.toContain('<agent-peers>');
+  });
+
   it('protocol layer contains only directory layout and network access', () => {
     const result = assembleSystemPrompt(baseOpts());
     const protocol = result.slice(result.indexOf('<cast-protocol>'), result.indexOf('</cast-protocol>'));

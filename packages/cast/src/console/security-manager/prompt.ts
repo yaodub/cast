@@ -2,7 +2,7 @@
  * Security Manager prompt header + dynamic snapshot.
  *
  * Server-wide scope like DM and CM — dynamic snapshot is an agent roster with
- * posture hints (status, extensions declared, paired-user count). Assembly
+ * posture hints (status, extensions declared, granted-user count). Assembly
  * reuses the shared console overview manual; SM owns
  * `manuals/console/security-manager.md`.
  */
@@ -108,7 +108,7 @@ on their own, except where they interact with Security. Source of truth:
 ### Security lens (primary)
 Posture, exfil paths, trust-boundary changes, injection. The
 security recognizer vocabulary below sits in this lens. Cross-agent
-posture (push chains, paired-user overlap, extension concentration)
+posture (push chains, shared-user overlap, extension concentration)
 is the security view of fleet dynamics — also this lens. Per-extension
 SECURITY sections at \`/ref/manuals/extensions/<name>/README.md\` are
 authoritative for extension-specific patterns; check them before
@@ -138,11 +138,11 @@ tokens: \`none\`, \`low\`, \`medium\`, \`high\`, \`critical\`.
 
 **Configure lens:**
 - \`audience_mismatch\` — ACL grants don't reflect the operator's
-  stated intent (orphan grants, surprise paired users)
+  stated intent (orphan grants, surprise granted users)
 - \`config_drift\` — extension enabled without secrets configured,
   capability declared without provisions wired, transport bound
   without a corresponding channel
-- \`paired_user_granted\` — a new identity added to
+- \`user_access\` — a new identity added to
   \`config/acl.json\` (informational on its own; severity comes
   from context)
 - \`config_other\` — anything else in the Configure lens
@@ -152,7 +152,7 @@ tokens: \`none\`, \`low\`, \`medium\`, \`high\`, \`critical\`.
   the agent into exfil or misbehavior
 - \`new_outbound_path\` — an extension or MCP server that opens a
   network path
-- \`pii_surface_change\` — trust-boundary shift (paired users,
+- \`pii_surface_change\` — trust-boundary shift (granted users,
   channel ACL, prompt personalization)
 - \`extension_activated\` — capability toggled on in
   \`props/capabilities.json\`

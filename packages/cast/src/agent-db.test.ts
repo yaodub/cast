@@ -121,3 +121,48 @@ describe('outbound_pushes TTL purge', () => {
     expect(db.purgeExpiredOutboundPushes(cutoff)).toBe(0);
   });
 });
+
+describe('listRequests status filter — the outbox model', () => {
+  const CTX = { channel: 'default', participant: 'u:abc@srv' };
+
+  function seed(): void {
+    // Outbound: one open, one fulfilled, one rejected
+    db.recordOutboundRequest({ requestId: 'out-open', targetAgent: 'a:p@s', targetChannel: 'work', ...CTX, kind: 'query' });
+    db.recordOutboundRequest({ requestId: 'out-done', targetAgent: 'a:p@s', targetChannel: 'work', ...CTX, kind: 'query' });
+    db.updateRequestStatus('outbound', 'out-done', 'fulfilled');
+    db.recordOutboundRequest({ requestId: 'out-bounced', targetAgent: 'a:p@s', targetChannel: 'work', ...CTX, kind: 'request' });
+    db.updateRequestStatus('outbound', 'out-bounced', 'rejected');
+    // Inbound: one open, one closed
+    db.recordInboundRequest({ requestId: 'in-open', fromAgent: 'a:q@s', returnToAgent: 'a:q@s', returnToChannel: 'default', returnToParticipant: 'u:abc@srv', ...CTX, upstreamSet: '[]', queryText: 'hi' });
+    db.recordInboundRequest({ requestId: 'in-closed', fromAgent: 'a:q@s', returnToAgent: 'a:q@s', returnToChannel: 'default', returnToParticipant: 'u:abc@srv', ...CTX, upstreamSet: '[]', queryText: 'hi' });
+    db.updateRequestStatus('inbound', 'in-closed', 'closed');
+  }
+
+  it('defaults to open only — the working set', () => {
+    seed();
+    const { inbound, outbound } = db.listRequests(CTX.channel, CTX.participant);
+    expect(outbound.map((r) => r.request_id)).toEqual(['out-open']);
+    expect(inbound.map((r) => r.request_id)).toEqual(['in-open']);
+  });
+
+  it('returns full history with "all" — rows are never deleted', () => {
+    seed();
+    const { inbound, outbound } = db.listRequests(CTX.channel, CTX.participant, 'all');
+    expect(outbound).toHaveLength(3);
+    expect(inbound).toHaveLength(2);
+  });
+
+  it('filters by a terminal status — the bounce-audit view', () => {
+    seed();
+    const { inbound, outbound } = db.listRequests(CTX.channel, CTX.participant, 'rejected');
+    expect(outbound.map((r) => r.request_id)).toEqual(['out-bounced']);
+    expect(inbound).toHaveLength(0);
+  });
+
+  it('scopes to the (channel, participant) context regardless of filter', () => {
+    seed();
+    db.recordOutboundRequest({ requestId: 'other-ctx', targetAgent: 'a:p@s', targetChannel: 'work', channel: 'other', participant: 'u:zzz@srv', kind: 'query' });
+    const { outbound } = db.listRequests(CTX.channel, CTX.participant, 'all');
+    expect(outbound.map((r) => r.request_id)).not.toContain('other-ctx');
+  });
+});

@@ -43,7 +43,7 @@ push events inward (daily news scraping, periodic API polls
 ferried into inner); inner cannot push or query outward at all.
 The clever part: when the operator wants to *tweak* the outer's
 behavior, they talk to the outer *directly* in their own chat —
-the human is already paired to both zones, so they're a working
+the human already has access to both zones, so they're a working
 cross-zone communication channel without any structural edge
 between the agents. The outer takes operator instruction (*"start
 also pulling from this source"*) and continues its inbound-flow

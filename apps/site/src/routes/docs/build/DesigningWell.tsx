@@ -72,7 +72,7 @@ export function BuildDesigningWell() {
         <em>writer → editor → publisher</em> with no judgment between them are
         courier chains. Once an agent seam earns its keep, see{' '}
         <DocsLink href="/docs/build/multi-agent">Multi-agent composition</DocsLink>{' '}
-        for the wiring.
+        for the grants.
       </Callout>
 
       <H2>Trim what doesn’t earn its place</H2>
@@ -203,7 +203,7 @@ export function BuildDesigningWell() {
       <Callout kind="warn">
         Some refinements widen what the agent can do — a new extension, a new peer
         ACL, a new resource mount, a new external surface. When those edits land
-        in a Design session, the agent flips back to draft first; paired users see{' '}
+        in a Design session, the agent flips back to draft first; people with access see{' '}
         <em>"not yet ready"</em> until All-Agents Review walks through the diff
         with the operator and flips it live again. Cosmetic edits — prompt
         wording, schedule cadence, identity tweaks — land directly on a live
@@ -214,7 +214,7 @@ export function BuildDesigningWell() {
       <ul style={proseUl}>
         <li>
           <DocsLink href="/docs/build/multi-agent">Multi-agent composition</DocsLink>{' '}
-          — once an agent seam earns its keep, the wiring.
+          — once an agent seam earns its keep, the grants.
         </li>
         <li>
           <DocsLink href="/docs/build/services">Writing services</DocsLink> — when a

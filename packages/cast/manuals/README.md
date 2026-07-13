@@ -57,8 +57,8 @@ operator is asking for:
   or `blueprint/props/schedule.txt`.
 - `console/design/multi-agent-composition.md` — this agent peers with
   another (sends to or receives from a peer channel), or you were
-  briefed as part of a multi-agent create batch. Channel-name
-  alignment and shape choice (q/a, r/a, p/h).
+  briefed as part of a multi-agent create batch. Advertising the
+  interface and shape choice (q/a, r/a, push).
 - `console/cross-agent-acl.md` — you're a Configure surface authoring
   ACL grants for a cross-agent edge. Bit glossary, the directional
   rule, worked JSON. (Design and Design Manager do not author ACL.)

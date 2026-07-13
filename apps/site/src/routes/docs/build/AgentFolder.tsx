@@ -123,8 +123,7 @@ const folderTree: FolderLine[] = [
   { text: '│   ├── identity/', zone: 'blueprint' },
   { text: '│   │   ├── prompt.md', comment: 'core persona', zone: 'blueprint' },
   { text: '│   │   ├── whoami.md', comment: 'structured identity facts', zone: 'blueprint' },
-  { text: '│   │   ├── skills.md', comment: 'tool guidance', zone: 'blueprint' },
-  { text: '│   │   └── peers.md', comment: 'who to consult, on what channel', zone: 'blueprint' },
+  { text: '│   │   └── skills.md', comment: 'tool guidance', zone: 'blueprint' },
   { text: '│   ├── channels/', zone: 'blueprint' },
   { text: '│   │   └── <name>/', zone: 'blueprint' },
   { text: '│   │       ├── channel.json', comment: 'idle timeout, lifecycle, log policy', zone: 'blueprint' },
@@ -140,14 +139,13 @@ const folderTree: FolderLine[] = [
   { text: '│' },
   { text: '├── config/', zone: 'config' },
   { text: '│   ├── agent.json', comment: 'model, network mode, timezone', zone: 'config' },
-  { text: '│   ├── acl.json', comment: 'agent-to-agent permissions', zone: 'config' },
+  { text: '│   ├── acl.json', comment: 'agent + human access grants', zone: 'config' },
   { text: '│   └── ext/<name>/', comment: 'operator overrides + .env per extension', zone: 'config' },
   { text: '│' },
   { text: '├── state/', zone: 'state' },
   { text: '│   ├── conversations.jsonl', zone: 'state' },
   { text: '│   ├── tasks.json', zone: 'state' },
   { text: '│   ├── agent.db', comment: 'message log + FTS5', zone: 'state' },
-  { text: '│   ├── paired-users.json', comment: 'human pairings', zone: 'state' },
   { text: '│   ├── attachments/', comment: 'content-addressed blob store', zone: 'state' },
   { text: '│   └── identity-roster.json', zone: 'state' },
   { text: '│' },
@@ -240,9 +238,8 @@ export function BuildAgentFolder() {
           title="State — what the server records"
           body={
             <>
-              Conversation log (<code>agent.db</code>), attachments, tasks, paired
-              users, identity roster. Server-managed — read when debugging, never
-              hand-edit.
+              Conversation log (<code>agent.db</code>), attachments, tasks, identity
+              roster. Server-managed — read when debugging, never hand-edit.
             </>
           }
         />

@@ -43,6 +43,7 @@ const MessageMeta = z.union([
     summary: z.string(),
     details: z.string().optional(),
     expiresAt: z.string().optional(),
+    tiered: z.boolean().optional(),
   }),
   z.object({
     type: z.literal('approval_ack'),
@@ -50,6 +51,7 @@ const MessageMeta = z.union([
     summary: z.string(),
     decision: z.enum(['approved', 'rejected', 'expired']),
     reason: z.string().optional(),
+    tier: z.enum(['once', 'always']).optional(),
   }),
 ]);
 
@@ -255,6 +257,7 @@ const RespondToApprovalAction = z.object({
   agent: z.string(),
   approvalId: z.string(),
   decision: z.enum(['approved', 'rejected']),
+  tier: z.enum(['once', 'always']).optional(),
 });
 
 const ExplainApprovalAction = z.object({

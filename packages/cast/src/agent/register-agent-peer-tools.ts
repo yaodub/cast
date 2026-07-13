@@ -40,17 +40,30 @@ export function registerAgentPeerTools(server: McpServer, ctx: McpAgentContext, 
   const listFn = deps.listPeerAgents;
   server.tool(
     'agent__list_peers',
-    'List peer agents and your relationship with each (who you can query, who can query you, messaging permissions). Sharded channels render as `name~*` — substitute your own qualifier (e.g. `name~daily`) to address a specific sub-conversation.',
+    'List peer agents and your relationship with each: channels you can already query/push (granted) and channels you can REQUEST to reach (askable — the first attempt asks your owner to approve). Sharded channels render as `name~*` — substitute your own qualifier (e.g. `name~daily`) to address a specific sub-conversation.',
     {},
     async () => {
       const peers = listFn();
-      if (peers.length === 0) return textResult('No peer agents configured.');
+      if (peers.length === 0) return textResult('No peer agents are visible.');
       const renderName = (ch: { name: string; sharded?: boolean }) =>
         ch.sharded ? `${ch.name}~*` : ch.name;
       const blocks = peers.map((p) => {
         const header = p.description ? `- ${p.alias} (${p.canonical}): ${p.description}` : `- ${p.alias} (${p.canonical})`;
         const lines: string[] = [header];
         for (const ch of p.channels) {
+          if (ch.reach === 'askable') {
+            // No grant yet — teach that reach is requestable, and the exact wire
+            // form (self-contained, since an ungranted agent isn't taught the
+            // envelope syntax elsewhere). Emitting it raises an owner approval;
+            // on approval the grant persists and the call goes through.
+            const chAttr = ch.name === 'default' ? '' : ` channel="${renderName(ch)}"`;
+            lines.push(
+              `  on ${renderName(ch)}: askable (not yet granted). To reach out, emit ` +
+              `\`<cast:query target="${p.alias}"${chAttr}>…</cast:query>\` (or \`<cast:request …>\` for fire-and-forget). ` +
+              `The first attempt asks your owner to approve.`,
+            );
+            continue;
+          }
           const capabilities = renderContractForPeerListing(deriveChannelContract(ch.bits));
           if (capabilities.length === 0) continue;
           lines.push(`  on ${renderName(ch)}: ${capabilities.join('; ')}`);

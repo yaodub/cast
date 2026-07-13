@@ -19,7 +19,7 @@ Each browser client owns a handle of the form `web:<10hex>` (e.g.
 Bespoke. Constructed directly in `packages/cast/src/index.ts`; no
 `routes.json` entry. Always enabled when the Cast server is running.
 
-## Pairing flow
+## Onboarding flow
 
 User-initiated:
 
@@ -31,9 +31,11 @@ User-initiated:
 4. Browser persists the handle locally; reconnects replay missed
    packets from `gateway.db` (deferred ACK, cache-like).
 
-Operators do not mint web handles — users do. To grant a web identity
-access to an agent, the operator pairs the minted identity into the
-agent's ACL via per-agent Configure.
+Operators do not mint web handles — users do. When a web identity
+first reaches an agent it isn't granted on, the message is held while
+the agent's owner approves access in-band (allow-once, or allow-always
+to persist the grant). The owner can also pre-grant the identity into
+the agent's ACL via per-agent Configure.
 
 ## Security
 

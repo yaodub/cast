@@ -38,7 +38,7 @@ vi.mock('../config.js', async () => {
   };
 });
 
-import { mountTable, resourcePathEscapesAgentsTree } from './container-mounts.js';
+import { mountTable, resourcePathEscapesAgentsTree, withMcpSocketMount, type VolumeMount } from './container-mounts.js';
 import type { Host } from '../types.js';
 import type { ResourceEntry } from '@getcast/agent-schema/v1';
 
@@ -119,5 +119,45 @@ describe('mountTable — Layer 8 resource privacy enforcement', () => {
     const containerPaths = mounts.map((m) => m.containerPath);
     expect(containerPaths).not.toContain('/resources/stolen');
     expect(containerPaths).toContain('/resources/legit');
+  });
+});
+
+describe('withMcpSocketMount — per-spawn socket append (Fix 1)', () => {
+  const BASE: VolumeMount[] = [
+    { hostPath: '/x/home', containerPath: '/home/agent', readonly: false },
+  ];
+
+  it('appends an existing socket as the fixed /mcp/cast.sock (isSystem, rw)', () => {
+    const sockDir = path.join(TMP_ROOT, 'agent-a', 'mcp', 'socket');
+    fs.mkdirSync(sockDir, { recursive: true });
+    const sockPath = path.join(sockDir, 'abc123-def456.sock');
+    fs.writeFileSync(sockPath, '');
+
+    const result = withMcpSocketMount(BASE, sockPath);
+
+    const sock = result.find((m) => m.containerPath === '/mcp/cast.sock');
+    expect(sock).toEqual({ hostPath: sockPath, containerPath: '/mcp/cast.sock', readonly: false, isSystem: true });
+    expect(result).toHaveLength(BASE.length + 1);
+  });
+
+  it('returns base unchanged when the socket file does not exist (e.g. TCP mode)', () => {
+    const missing = path.join(TMP_ROOT, 'agent-a', 'mcp', 'socket', 'nope.sock');
+    expect(withMcpSocketMount(BASE, missing)).toBe(BASE);
+  });
+
+  it('returns base unchanged when no socket path applies', () => {
+    expect(withMcpSocketMount(BASE, undefined)).toBe(BASE);
+  });
+
+  it('never mutates the input array (overrideMounts is reused across respawns)', () => {
+    const sockDir = path.join(TMP_ROOT, 'agent-a', 'mcp', 'socket');
+    fs.mkdirSync(sockDir, { recursive: true });
+    const sockPath = path.join(sockDir, 'nonce.sock');
+    fs.writeFileSync(sockPath, '');
+
+    const base: VolumeMount[] = [...BASE];
+    const before = base.length;
+    withMcpSocketMount(base, sockPath);
+    expect(base).toHaveLength(before);
   });
 });

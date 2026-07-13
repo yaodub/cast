@@ -117,6 +117,9 @@ export interface ApprovalRequestPkt extends Packet {
   summary: string;
   details?: string;
   expiresAt?: string;
+  /** Owner-directed approvals carry the tiered four-option (once/always) path;
+   *  participant tool-call approvals omit it (two-option). */
+  tiered?: boolean;
 }
 
 /** Approval acknowledgment packet (agent → participant, confirming decision). */
@@ -126,6 +129,10 @@ export interface ApprovalAckPkt extends Packet {
   decision: 'approved' | 'rejected' | 'expired';
   summary: string;
   reason?: string;
+  /** Effective persistence tier of the decision (owner-directed approvals).
+   *  `always` means a standing grant/tombstone was written; surfaced so the
+   *  ack rendering can distinguish "Approved" from "Always approved". */
+  tier?: 'once' | 'always';
 }
 
 /** Ephemeral directed content — fourth corner of the packet/event matrix.
@@ -162,6 +169,9 @@ export interface ApprovalResponsePayload {
   id: string;
   decision: 'approved' | 'rejected';
   reason?: string;
+  /** Persistence tier (owner-directed approvals only): 'once' (default) releases
+   *  this action; 'always' writes a standing per-(participant, tool) verdict. */
+  tier?: 'once' | 'always';
 }
 
 // --- Route result (returned by MessageBus.route()) ---

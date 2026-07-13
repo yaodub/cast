@@ -34,9 +34,9 @@ array of `TelegramRoute` objects:
 One bot serves one agent. Multiple bots can run side-by-side via
 multiple route entries.
 
-## Pairing flow
+## Onboarding flow
 
-Operator-initiated:
+Operator sets up the transport:
 
 1. Operator creates a bot in BotFather (`/newbot`) and copies the
    token.
@@ -44,8 +44,10 @@ Operator-initiated:
 3. Operator reconciles/restarts transports.
 
 Chat IDs (`tg:<chat_id>`) mint upon first user message. The user's
-identity is created on first contact; the operator pairs the
-resulting identity in per-agent Configure to grant ACL access.
+identity is created on first contact; the first ungranted message is
+held while the agent's owner approves access in-band (allow-once, or
+allow-always to persist the grant). The owner can also pre-grant the
+identity in per-agent Configure.
 
 ## Security
 

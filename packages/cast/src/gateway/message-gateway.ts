@@ -8,7 +8,7 @@
  */
 import { z } from 'zod';
 
-import { extractHandle, isOperatorHandle } from '../auth/address.js';
+import { extractHandle, isExtAddress, isOperatorHandle } from '../auth/address.js';
 import { storePacket, markDelivered, markFailed, getPacketHistory, getUndeliveredPackets, getPendingOutboundForRecipient } from './gateway-db.js';
 import type { StoredPacket } from './gateway-db.js';
 import type { IdentityProvider } from '../auth/identity.js';
@@ -99,10 +99,9 @@ export class MessageGateway implements BusHandler {
    * 2. System command check (/help, /whoami, /name — server-wide)
    * 3. Resolve target agent
    * 4. Server firewall check (external senders only)
-   * 5. /pair interception — dispatched to agent via bus (agent-scoped)
-   * 6. Build + persist ConversationPkt
-   * 7. Format as XML
-   * 8. Forward via bus.routeMessage() with resolved from address + declaredName
+   * 5. Build + persist ConversationPkt
+   * 6. Format as XML
+   * 7. Forward via bus.routeMessage() with resolved from address + declaredName
    */
   ingestInbound(
     from: string,
@@ -116,8 +115,10 @@ export class MessageGateway implements BusHandler {
     // Auto-register identity on first contact. Operator-class handles
     // (cli:*, admin:*) short-circuit to the `local` identity via
     // idp.resolve and must NOT be auto-registered as external users.
+    // G2: an `ext:*` address is an agent-internal injection origin,
+    // never a transport sender — it must never be registered as an identity.
     let resolved = idp.resolve(from);
-    if (!resolved && !isOperatorHandle(from)) {
+    if (!resolved && !isOperatorHandle(from) && !isExtAddress(from)) {
       try { resolved = idp.register(from, senderName); } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         if (this.deps.logHostEvent) {
@@ -144,7 +145,7 @@ export class MessageGateway implements BusHandler {
       }
     }
 
-    // Resolve target agent — needed for both firewall check and /pair
+    // Resolve target agent — needed for the firewall check.
     const handler = this.deps.bus.resolve(to);
     if (!handler) {
       logger.debug({ to }, 'Message for unregistered address, dropping');
@@ -171,25 +172,35 @@ export class MessageGateway implements BusHandler {
       }
     }
 
-    // /pair — intercepted at gateway, dispatched to agent via bus. The source
-    // wire rides as explicit payload metadata: the bare `from` no longer
-    // carries it, and pairing is the one consumer that needs the wire.
-    if (trimmed.startsWith('/pair ') || trimmed === '/pair') {
-      const code = trimmed.slice(6).trim();
-      if (!code) {
-        this.deps.bus.routeMessage(from, to, { type: 'pairing_request', sourceHandle: from });
-      } else {
-        this.deps.bus.routeMessage(from, to, { type: 'pairing', code, sourceHandle: from });
-      }
-      return;
-    }
-
     // Transport-blind boundary: above the gateway the participant is the bare
     // identity. The source wire (`from`) survives only as per-turn payload
     // metadata (`sourceHandle`) and in this gateway's own packet store; reply
     // delivery recovers the wire via `resolveWire` (IdP lookup).
     const resolvedFrom = resolved ? resolved.id : from;
     const declaredName = resolved?.declaredName ?? senderName;
+
+    // Owner-claim redemption. `/claim <code>` binds the sender as
+    // the agent's owner. Intercepted here — after the firewall, before the
+    // conversation packet is built and routed to the runner — so the bearer code
+    // never reaches the agent's LLM. Routed as an `owner-claim` control packet
+    // the AgentManager's bus handler terminates host-side (redeem against the
+    // owner_claims store, write acl.json). Deliberately bypasses the ACL `i`-bit:
+    // a not-yet-recognized human must be able to claim ownership to bootstrap it,
+    // and the code is the capability. The server firewall above still gates
+    // reachability, so a non-exposed agent is unclaimable by an external sender.
+    if (trimmed === '/claim' || trimmed.startsWith('/claim ')) {
+      const code = trimmed.slice('/claim'.length).trim();
+      if (!code) {
+        this.sendSystemReply(to, from, 'Usage: /claim <code>');
+        return;
+      }
+      this.deps.bus.routeMessage(resolvedFrom, to, {
+        type: 'owner-claim',
+        code,
+        channel: routing?.channel ?? 'default',
+      });
+      return;
+    }
 
     const pktId = generateId('pkt');
     const pkt = conversationPkt(resolvedFrom, to, text, undefined, undefined, undefined, pktId);

@@ -15,7 +15,7 @@ Cast's `(channel, participant)` keying gives each user their own
 private conversation on the same channel — same `prompt.md`, same
 tool surface, isolated state. One `default` channel, persistent
 (`idle_timeout: 1800000` or longer), with `i`/`o` granted to each
-paired participant in `acl.json`. No new channel needed for the
+participant in `acl.json`. No new channel needed for the
 multi-user shape; the participant dimension is already first-class.
 
 The substrate — agent-scoped, accessed by all participants'

@@ -51,6 +51,8 @@ There is no first-class CLI command to rebuild a **live** agent's in-place servi
 
 The throwaway dir matters: `buildService` wipes its output dir first, so pointing it at `blueprint/service/` itself would delete your `src/`. (`init` may pass the agent's `blueprint/service` as the output only because that folder is being created fresh from a template.)
 
+`deploy:service` copies only those four artifacts, never `node_modules` — so a service with a native module (e.g. `better-sqlite3`, which runs against the host's Node ABI) needs it installed into `blueprint/service/` once. The `workspace:*` dependency on `@getcast/agent-service-base` makes a plain `pnpm install --ignore-workspace` fail there, so for the install swap in a minimal `package.json` listing only the native dep (with `pnpm.onlyBuiltDependencies` naming it, or pnpm 10 skips its build script), then restore the full one; the built `node_modules` persists across later `deploy:service` runs.
+
 Restarting the service is the only step that loads new service code (admin UI → the agent's ⋯ menu → **Restart Agent Service**, or restart the Cast server). Blueprint, identity, channels, and config hot-reload on their own, and a brand-new agent folder is discovered live.
 
 > For quick local iteration you can set `"entry": "src/index.ts"` in the manifest to run the TypeScript source directly via tsx, skipping the bundle. This needs the service's dependencies resolvable from the agent folder and a server launched with tsx on PATH, so it fits a `pnpm dev` workspace rather than a bundled deploy.
@@ -203,7 +205,7 @@ The server reads `shared/ext/service/agent-context.md` synchronously during prom
 
 ## Key Dependencies
 
-Services use `@getcast/agent-service-base` which bundles the common dependencies (MCP SDK, dotenv, zod). Additional service-specific deps:
+Services use `@getcast/agent-service-base` which bundles the common dependencies (MCP SDK, dotenv, zod). Pin the service's own `zod` to `^3.25` to match it — the rest of the repo is on zod 4, and a version split checks and bundles your tool schemas against a different zod than the framework and MCP SDK use. Additional service-specific deps:
 - `better-sqlite3` — SQLite for service databases
 - `@slack/web-api`, `imapflow`, etc. — domain-specific clients
 

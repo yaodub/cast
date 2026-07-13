@@ -30,19 +30,13 @@ import {
 import type { IdentityId } from '../auth/address.js';
 import { readRoster } from '../lib/identity-roster.js';
 import type { IdentityProvider } from '../auth/identity.js';
+import type { LogHostEventFn } from '../server/host-activity-log.js';
 import { readAgentConfig } from '../container/container-runner.js';
 import { EgressController } from '../container/egress-controller.js';
 import { readJson, readText } from '../lib/config-reader.js';
 import type { AgentSummary, Bus, BusHandler, EventDeliveryDecision } from '../gateway/bus.js';
 import { checkAcl, getPeerChannels, hasBit } from '../auth/acl.js';
 import { deriveChannelContract } from '../auth/channel-contract.js';
-import {
-  readPairedUsers,
-  writePairedUsers,
-  readPairingCodes,
-  writePairingCodes,
-  type PairingResult,
-} from '../auth/pairing.js';
 import {
   CONFIG_RELOAD_DEBOUNCE_MS,
   EGRESS_REFRESH_MS,
@@ -59,11 +53,28 @@ import { createDebounced, type DebounceHandle } from '../lib/debounce.js';
 import { McpProxyManager } from './mcp-proxy.js';
 import { FileWatchService } from './file-watch-service.js';
 import type { ConversationRunnerOpts } from './conversation-runner.js';
-import { buildSpawnHooks as externalBuildSpawnHooks } from './agent-spawn-hooks.js';
+import {
+  buildSpawnHooks as externalBuildSpawnHooks,
+  emitOutboundRequest,
+  HeldOutboundRequestSchema,
+  systemUndelivered,
+} from './agent-spawn-hooks.js';
 import { ApprovalHandler } from './approval-handler.js';
 import { type Routing, type SiblingAgentInfo } from './agent-bus-payload.js';
-import { handleBusMessage, type BusHandlerDeps } from './agent-bus-handler.js';
-import { buildAgentMcpDeps } from './agent-mcp-deps.js';
+import {
+  deliverHeldInboundRequest,
+  deliverHeldMessage,
+  deliverHeldPush,
+  handleBusMessage,
+  HeldInboundRequestSchema,
+  HeldMessageSchema,
+  HeldPushDeliverySchema,
+  rejectHeldInboundRequest,
+  rejectHeldMessage,
+  rejectHeldPush,
+  type BusHandlerDeps,
+} from './agent-bus-handler.js';
+import { buildAgentMcpDeps, declineLocalPush, emitLocalPush, emitPush, HeldLocalPushSchema, HeldPushSchema } from './agent-mcp-deps.js';
 import {
   closeConversationByAddress,
   routeMessage as externalRouteMessage,
@@ -104,6 +115,7 @@ import type {
   RouteResult,
 } from '../types.js';
 import { persistAttachment } from '../lib/attachment-store.js';
+import { stripFrameworkTags } from '../lib/format.js';
 import { generateId, roughTimeAgo } from '../lib/utils.js';
 
 import { slotPool, conversations } from '../lib/gates.js';
@@ -128,6 +140,9 @@ interface AgentManagerOpts {
   agentId: string;
   watcher: FileWatcher;
   listSiblingAgents?: () => SiblingAgentInfo[];
+  /** Surfaces agent-tier security/host events (e.g. a dropped forged approval
+   *  response) to the operator's host-events view. */
+  logHostEvent?: LogHostEventFn;
   /** Stop any container processes still tagged with this agent's folder. Best-effort,
    *  fire-and-forget; called from shutdown() AFTER drainRunners SIGKILLs stragglers
    *  so containers that didn't get to run their own cleanup get reaped. */
@@ -141,6 +156,7 @@ export class AgentManager implements BusHandler {
   private bus: Bus;
   private mcpDeps: McpServerDeps | undefined;
   private idp: IdentityProvider | undefined;
+  private logHostEvent: LogHostEventFn | undefined;
 
   /** Scope key for this agent on the `conversations` façade. */
   private get agentScope(): string { return `agent:${this.folder}`; }
@@ -159,12 +175,6 @@ export class AgentManager implements BusHandler {
 
   // --- State store ---
   private store: AgentStateStore;
-
-  // --- Pairing rate-limit, per-handle. Scope is per-agent (this instance);
-  //     the previous module-scope Map in `auth/pairing.ts` was global, which
-  //     coupled brute-force lockout across all agents. Resets on
-  //     server restart (acceptable). ---
-  private pairingFailedAttempts = new Map<string, { count: number; blockedUntil: number }>();
 
   // --- Agent database (always open — participants table is a security gate) ---
   private agentDb: AgentDb;
@@ -313,6 +323,7 @@ export class AgentManager implements BusHandler {
     this.keyFingerprint = AgentManager.computeKeyFingerprint(this.folder);
     this.bus = opts.bus;
     this.idp = opts.identityProvider;
+    this.logHostEvent = opts.logHostEvent;
     this.watcher = opts.watcher;
     this.store = new AgentStateStore(agentPath(this.folder, 'state'));
     this.agentDb = new AgentDb(agentPath(this.folder, 'state', 'agent.db'));
@@ -363,7 +374,7 @@ export class AgentManager implements BusHandler {
         return approvalId;
       },
       onApprovalToolResult: (id, result, isError) => {
-        const row = this.agentDb.getApproval(id);
+        const row = this.agentDb.approvals.getApproval(id);
         if (!row) return;
         const prefix = isError ? `Approved tool "${row.tool}" failed` : `Approval granted for "${row.summary}". Result`;
         this.approvals.notifyOutcome(row, `${prefix}:\n${result}`);
@@ -508,6 +519,7 @@ export class AgentManager implements BusHandler {
         agentDb: this.agentDb,
         store: this.store,
         getTimezone: () => this.effectiveTimezone,
+        getApprovals: () => this.approvals,
       },
       conv,
     );
@@ -579,11 +591,26 @@ export class AgentManager implements BusHandler {
   private initExtensionsAndApprovals(): void {
     this.extensions = new AgentExtensions(
       this.folder,
-      (extName, channel) => (text, opts) =>
-        this.route(this.agentId, `ext:${extName}`, text, {
+      (extName, channel) => (text, opts) => {
+        // Stopgap: extension delivery bypasses the bus ingest
+        // boundary, so it never reaches `formatParticipantMessage`. Strip the
+        // forge-able framework `<cast:*>` family here so a prompt-injected
+        // email/webhook body can't smuggle fake framework stimulus into the
+        // agent. Full `ext: = zero authority` enforcement lands in Phase 1
+        // (carried-origin); this closes the literal-tag injection vector now.
+        const sanitized = stripFrameworkTags(text);
+        if (sanitized !== text.trim()) {
+          this.agentDb.logEvent(
+            'warn', 'conversation', 'framework_tag_stripped',
+            `Stripped framework tag(s) from ext:${extName} delivery`,
+            { context: { ext: extName, channel } },
+          );
+        }
+        return this.route(this.agentId, `ext:${extName}`, sanitized, {
           channel,
           targetParticipant: opts?.replyTo ?? this.agentId,
-        }),
+        });
+      },
     );
 
     this.approvals = new ApprovalHandler({
@@ -593,6 +620,8 @@ export class AgentManager implements BusHandler {
       agentDb: this.agentDb,
       service: this.service,
       extensions: this.extensions,
+      idp: this.idp,
+      logHostEvent: this.logHostEvent,
       getTimezone: () => this.effectiveTimezone,
       routeOutcome: (row, formatted) => {
         this.route(this.agentId, this.agentId, formatted, {
@@ -600,7 +629,115 @@ export class AgentManager implements BusHandler {
           targetParticipant: row.participant,
         });
       },
+      // acl-edge resume (2B): on grant, replay the held thing into this agent's
+      // conversation; on reject, route the rejection back to the sender. The held
+      // carry is one of two kinds — an agent request (HeldInboundRequest) or a
+      // first-contact user message (HeldMessage), distinguished structurally by
+      // the schema that parses (message requires `msgType`, request requires
+      // `requestId` — mutually exclusive). The payload crossed a JSON round-trip
+      // + the approval store, so validate.
+      deliverHeldRequest: (raw) => {
+        // Push-delivery first: its `carry: 'push'` literal disambiguates it from the
+        // request/message carries (receiver-side access resume on `io`).
+        const push = HeldPushDeliverySchema.safeParse(raw);
+        if (push.success) return deliverHeldPush(this.busHandlerDeps(), push.data);
+        const req = HeldInboundRequestSchema.safeParse(raw);
+        if (req.success) return deliverHeldInboundRequest(this.busHandlerDeps(), req.data);
+        const msg = HeldMessageSchema.safeParse(raw);
+        if (msg.success) return deliverHeldMessage(this.busHandlerDeps(), msg.data);
+        logger.error({ agentId: this.agentId, err: req.error }, 'acl-edge: malformed held carry, cannot deliver');
+      },
+      rejectHeldRequest: (raw, reason) => {
+        const push = HeldPushDeliverySchema.safeParse(raw);
+        if (push.success) return rejectHeldPush(this.busHandlerDeps(), push.data, reason);
+        const req = HeldInboundRequestSchema.safeParse(raw);
+        if (req.success) return rejectHeldInboundRequest(this.busHandlerDeps(), req.data, reason);
+        const msg = HeldMessageSchema.safeParse(raw);
+        if (msg.success) return rejectHeldMessage(this.busHandlerDeps(), msg.data, reason);
+        logger.error({ agentId: this.agentId, err: req.error }, 'acl-edge: malformed held carry, cannot reject');
+      },
+      // Outbound containment resume (2B.5): on grant, re-emit the held outbound
+      // request (the agent now holds q/r to the target); on decline, drop a
+      // system notice back into the agent's own conversation (it is its own
+      // originator, so there is no remote sender to route a rejection to).
+      reEmitHeldRequest: (raw) => {
+        const req = HeldOutboundRequestSchema.safeParse(raw);
+        if (req.success) return emitOutboundRequest({ agentId: this.agentId, bus: this.bus, agentDb: this.agentDb }, req.data);
+        logger.error({ agentId: this.agentId, err: req.error }, 'acl-edge: malformed held outbound carry, cannot re-emit');
+      },
+      declineHeldRequest: (raw, reason) => {
+        const req = HeldOutboundRequestSchema.safeParse(raw);
+        if (!req.success) {
+          logger.error({ agentId: this.agentId, err: req.error }, 'acl-edge: malformed held outbound carry, cannot decline');
+          return;
+        }
+        const held = req.data;
+        const formatted = systemUndelivered(
+          `Your ${held.kind} to ${held.target} was declined by the owner${reason ? `: ${reason}` : '.'}`,
+          held.text,
+          this.effectiveTimezone,
+        );
+        // kind 'system': framework correction, not participant speech — gets the
+        // <cast:system> wrapper on delivery and `sender: 'system'` in message_log.
+        this.route(this.agentId, this.agentId, formatted, {
+          channel: held.returnToChannel,
+          targetParticipant: held.returnToParticipant,
+        }, undefined, undefined, undefined, 'system');
+      },
+      // Push containment resume: on grant, re-emit the held cross-agent
+      // push (the agent now holds `p` to the target); on decline, drop a system
+      // notice back into the sender's own cell (the conversation it was serving when
+      // it tried to push). Mirrors the q/r reEmit/decline pair above.
+      reEmitHeldPush: (raw) => {
+        const push = HeldPushSchema.safeParse(raw);
+        if (push.success) return emitPush({ agentId: this.agentId, bus: this.bus, agentDb: this.agentDb }, push.data);
+        logger.error({ agentId: this.agentId, err: push.error }, 'acl-edge: malformed held push carry, cannot re-emit');
+      },
+      declineHeldPush: (raw, reason) => {
+        const push = HeldPushSchema.safeParse(raw);
+        if (!push.success) {
+          logger.error({ agentId: this.agentId, err: push.error }, 'acl-edge: malformed held push carry, cannot decline');
+          return;
+        }
+        const held = push.data;
+        const formatted = systemUndelivered(
+          `Your push to ${held.target} was declined by the owner${reason ? `: ${reason}` : '.'}`,
+          held.text,
+          this.effectiveTimezone,
+        );
+        // kind 'system': framework correction, not participant speech — gets the
+        // <cast:system> wrapper on delivery and `sender: 'system'` in message_log.
+        this.route(this.agentId, this.agentId, formatted, {
+          channel: held.callerChannel ?? '',
+          targetParticipant: held.participant,
+        }, undefined, undefined, undefined, 'system');
+      },
+      // User↔user push resume: on the pushee's consent, replay the held
+      // intra-agent push into their conversation; on decline/lapse, echo a rejection
+      // back into the pusher's own cell. Both drive the shared local-push helpers.
+      deliverHeldUserPush: (raw) => {
+        const push = HeldLocalPushSchema.safeParse(raw);
+        if (push.success) return emitLocalPush(this.localPushDeps(), push.data);
+        logger.error({ agentId: this.agentId, err: push.error }, 'user-push: malformed held carry, cannot deliver');
+      },
+      declineHeldUserPush: (raw, reason) => {
+        const push = HeldLocalPushSchema.safeParse(raw);
+        if (push.success) return declineLocalPush(this.localPushDeps(), push.data, reason);
+        logger.error({ agentId: this.agentId, err: push.error }, 'user-push: malformed held carry, cannot decline');
+      },
     });
+  }
+
+  /** The minimal context the intra-agent push helpers (`emitLocalPush` /
+   *  `declineLocalPush`) need — used by the 2B.3 user-push approval resume, which
+   *  fires outside any single conversation's deps. */
+  private localPushDeps(): Parameters<typeof emitLocalPush>[0] {
+    return {
+      agentId: this.agentId,
+      agentDb: this.agentDb,
+      route: (address, senderId, text, routing, rawText, declaredName, attachments, kind, attrs) =>
+        this.route(address, senderId, text, routing, rawText, declaredName, attachments, kind, attrs),
+    };
   }
 
   /**
@@ -785,128 +922,7 @@ export class AgentManager implements BusHandler {
       isDraft: () => this.isDraft,
       route: (address, senderId, text, routing, rawText, declaredName, attachments, kind, attrs) =>
         this.route(address, senderId, text, routing, rawText, declaredName, attachments, kind, attrs),
-      pair: (handle, code) => this.pair(handle, code),
     };
-  }
-
-  // =========================================================================
-  // Pairing — sole writers of `state/paired-users.json`.
-  //
-  // `pair()` and `unpair()` replace the free functions `tryPairing` (in
-  // `auth/pairing.ts`) and `revokePairedUser` (in `console/configure/tools.ts`)
-  // — both write to `mnt/agents/{name}/state/`, which is AgentManager's
-  // exclusive territory. After the write succeeds, both methods fire
-  // `bus.update(this.agentId, 'acl-change')` so subscribers (WebTransport,
-  // future operator-edit signals, etc.) can re-project accessible-agents
-  // views for connected identities.
-  // =========================================================================
-
-  /**
-   * Attempt to pair a transport handle using a pairing code. Validates the
-   * code against `state/pairing-codes.json`, resolves the identity from the
-   * handle, grants `io` on the code's channel (default `default`) in
-   * `state/paired-users.json` — additively, so re-pairing on a second channel
-   * accumulates grants rather than overwriting — marks the code consumed, and
-   * emits the bus lifecycle event. All paired-users.json writes flow through
-   * this method.
-   *
-   * Per-handle rate-limit is scoped to this AgentManager instance — see the
-   * note on `pairingFailedAttempts`.
-   */
-  pair(handle: string, code: string): PairingResult {
-    const rateLimited = this.checkPairingRateLimit(handle);
-    if (rateLimited) {
-      return { success: false, message: rateLimited };
-    }
-
-    if (!fs.existsSync(agentPath(this.folder, 'config', 'acl.json'))) {
-      return { success: false, message: 'No ACL configured for this agent.' };
-    }
-
-    const codes = readPairingCodes(this.folder);
-    const stateCode = codes[code];
-
-    if (!stateCode || stateCode.consumed || stateCode.for_handle !== handle) {
-      this.recordPairingFailedAttempt(handle);
-      return { success: false, message: 'Invalid pairing code.' };
-    }
-
-    if (stateCode.expires && Date.now() > new Date(stateCode.expires).getTime()) {
-      delete codes[code];
-      writePairingCodes(this.folder, codes);
-      this.recordPairingFailedAttempt(handle);
-      return { success: false, message: 'Pairing code has expired.' };
-    }
-
-    if (!this.idp) {
-      return { success: false, message: 'Identity provider unavailable.' };
-    }
-    const identity = this.idp.resolve(handle);
-    if (!identity) {
-      return { success: false, message: 'Send any message first, then try /pair again.' };
-    }
-
-    // Grant `io` on the code's concrete channel (additive: re-pairing on a
-    // different channel accumulates rather than overwriting). The old wholesale
-    // `*: io` is gone — membership is now per-channel placement.
-    const users = readPairedUsers(this.folder);
-    users[identity.id] = { ...(users[identity.id] ?? {}), [stateCode.channel]: 'io' };
-    writePairedUsers(this.folder, users);
-
-    codes[code] = { ...stateCode, consumed: true };
-    writePairingCodes(this.folder, codes);
-
-    this.pairingFailedAttempts.delete(handle);
-
-    this.bus.update(this.agentId, 'acl-changed');
-
-    return {
-      success: true,
-      identity,
-      message: `Paired successfully (${identity.id}). Use /name to set your display name.`,
-    };
-  }
-
-  /**
-   * Revoke a previously-paired identity by deleting its `paired-users.json`
-   * entry. Returns `{ ok: false, error }` if the identity wasn't paired.
-   * Emits `bus.update('acl-change')` on success.
-   */
-  unpair(identityId: string): { ok: boolean; error?: string } {
-    const users = readPairedUsers(this.folder);
-    if (!(identityId in users)) {
-      return { ok: false, error: `No paired user with identity \`${identityId}\`.` };
-    }
-    delete users[identityId];
-    writePairedUsers(this.folder, users);
-    this.bus.update(this.agentId, 'acl-changed');
-    return { ok: true };
-  }
-
-  private checkPairingRateLimit(handle: string): string | null {
-    const entry = this.pairingFailedAttempts.get(handle);
-    if (!entry) return null;
-    const remaining = entry.blockedUntil - Date.now();
-    if (remaining <= 0) {
-      this.pairingFailedAttempts.delete(handle);
-      return null;
-    }
-    const secs = Math.ceil(remaining / 1000);
-    if (secs >= 60) {
-      const mins = Math.ceil(remaining / 60_000);
-      return `Too many failed attempts. Try again in ${mins} minute${mins === 1 ? '' : 's'}.`;
-    }
-    return `Too many failed attempts. Try again in ${secs} second${secs === 1 ? '' : 's'}.`;
-  }
-
-  private recordPairingFailedAttempt(handle: string): void {
-    const BACKOFF_BASE_MS = 10_000;
-    const BACKOFF_MAX_MS = 30 * 60 * 1000;
-    const entry = this.pairingFailedAttempts.get(handle) ?? { count: 0, blockedUntil: 0 };
-    entry.count++;
-    const delay = Math.min(BACKOFF_BASE_MS * Math.pow(2, entry.count - 1), BACKOFF_MAX_MS);
-    entry.blockedUntil = Date.now() + delay;
-    this.pairingFailedAttempts.set(handle, entry);
   }
 
   // =========================================================================
@@ -1280,7 +1296,7 @@ export class AgentManager implements BusHandler {
     // post-restart audit trails don't show perpetual-pending rows. Done BEFORE
     // drain so the runners can't race back in to resolve them.
     try {
-      const approvals = this.agentDb.markPendingApprovalsInterrupted();
+      const approvals = this.agentDb.approvals.markPendingApprovalsInterrupted();
       const requests = this.agentDb.markOpenRequestsInterrupted();
       if (approvals > 0 || requests.inbound > 0 || requests.outbound > 0) {
         logger.info(
@@ -1578,7 +1594,6 @@ export class AgentManager implements BusHandler {
       agentScope: this.agentScope,
       mcpDeps: this.mcpDeps,
       getTimezone: () => this.effectiveTimezone,
-      unpair: (identityId) => this.unpair(identityId),
     };
   }
 
@@ -1621,6 +1636,20 @@ export class AgentManager implements BusHandler {
     const channelContract = promptParticipant
       ? deriveChannelContract(addresseeBits)
       : undefined;
+    // Layer-6 self-knowledge: the agent's GRANTED first-degree reach,
+    // computed from the live sibling roster filtered to granted channels. Askable
+    // peers stay in `agent__list_peers`; this granted-only block lets the agent know
+    // its reach without a tool call. Recomputed per spawn — picks up acl.json edits.
+    const grantedPeers = (this.listSiblingAgents?.() ?? [])
+      .map((s) => ({
+        alias: s.alias,
+        canonical: s.canonical,
+        description: s.description,
+        channels: s.channels
+          .filter((ch) => ch.reach === 'granted')
+          .map((ch) => ({ name: ch.name, bits: ch.bits, sharded: ch.sharded })),
+      }))
+      .filter((s) => s.channels.length > 0);
     const systemPrompt = assembleSystemPrompt({
       agentFolder: this.host.folder,
       agentName: this.host.name,
@@ -1644,6 +1673,7 @@ export class AgentManager implements BusHandler {
         : undefined,
       hasPip: !!resolved.pip,
       channelContract,
+      grantedPeers: grantedPeers.length > 0 ? grantedPeers : undefined,
     });
 
     // Pre-compose the cleanup body so the runner's single-shot self-expire

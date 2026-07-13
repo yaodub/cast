@@ -181,7 +181,7 @@ export function ConsoleAvatar({ kind, size = 24 }: { kind: ConsoleKind; size?: n
  * happens next.
  *
  *   <AskConsole kind="configure">
- *     Generate a pairing code for Sam — default channel access.
+ *     Approve Sam for default channel access.
  *   </AskConsole>
  */
 export function AskConsole({

@@ -1,6 +1,6 @@
 {
   "name": "@getcast/agent-runner",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "description": "Container-side agent runner — Claude Agent SDK wrapper that runs inside Apple Container VMs",
   "main": "dist/index.js",

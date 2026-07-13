@@ -32,6 +32,7 @@ import { agentPath, mcpDir } from '../config.js';
 import { mcpTransport } from '../container/mcp-transport.js';
 import type { ResolvedMcpServer } from '../config.js';
 import { generateId } from '../lib/utils.js';
+import { startMcpKeepalive } from '../lib/mcp-keepalive.js';
 import { logger } from '../logger.js';
 
 // ---------------------------------------------------------------------------
@@ -98,6 +99,7 @@ function createTransport(
 interface SocketSession {
   transport: StreamableHTTPServerTransport;
   server: McpServer;
+  stopKeepalive: () => void;
 }
 
 function startProxySocketServer(
@@ -161,9 +163,13 @@ function startProxySocketServer(
       await transport.handleRequest(req, res);
 
       if (transport.sessionId) {
-        sessions.set(transport.sessionId, { transport, server });
+        const stopKeepalive = startMcpKeepalive(server, { mcpServer: serverName, sessionId: transport.sessionId });
+        sessions.set(transport.sessionId, { transport, server, stopKeepalive });
         transport.onclose = () => {
-          if (transport.sessionId) sessions.delete(transport.sessionId);
+          const sid = transport.sessionId;
+          if (!sid) return;
+          sessions.get(sid)?.stopKeepalive();
+          sessions.delete(sid);
         };
       }
       return;

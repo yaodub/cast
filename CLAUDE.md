@@ -17,7 +17,7 @@ You are reading this from a host-side Claude Code session on the Cast project (o
 
 ## Working with agents
 
-An agent is a folder under `~/.cast/agents/` (or whatever `CAST_AGENTS_DIR` resolves to). To create or modify an agent, edit files inside that folder. The server hot-reloads on the next message: new agent folders are discovered live, and blueprint, identity, channel, and config edits apply on the next message. Service code under `blueprint/service/` is the exception. A running service process does not reload its own source, so service-code changes need a service restart.
+An agent is a folder under `~/.cast/agents/` (or whatever `CAST_AGENTS_DIR` resolves to). To modify an agent, edit files inside that folder; the server hot-reloads blueprint, identity, channel, and config edits on the next message. To create one, scaffold it first — admin "create agent," or `pnpm agent init` with `CAST_AGENTS_DIR` set — which provisions its identity keypair, ACL, and registration; then author on top. A bare folder is not picked up until it carries a valid `manifest.json` and `secrets/agent.key`. Service code under `blueprint/service/` is the exception to hot-reload: a running service process does not reload its own source, so service-code changes need a service restart.
 
 ## Pick your task
 

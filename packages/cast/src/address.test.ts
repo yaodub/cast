@@ -196,6 +196,13 @@ describe('extractHandle', () => {
     expect(extractHandle('a:abc123@srv')).toBeUndefined();
     expect(extractHandle('a:f945514f3a@a5e1f2')).toBeUndefined();
   });
+
+  it('returns undefined for ext:* addresses (injection origin, no transport handle) [G-cluster]', () => {
+    // An ext origin is agent-internal — it has no wire. Returning the address
+    // as a handle would let delivery treat `ext:email` as transport-addressable.
+    expect(extractHandle('ext:email')).toBeUndefined();
+    expect(extractHandle('ext:calendar')).toBeUndefined();
+  });
 });
 
 describe('extractHandlePrefix', () => {

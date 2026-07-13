@@ -52,13 +52,6 @@ describe('LocalIdentityProvider', () => {
       expect(result.declaredName).toBe('Bob');
       expect(result.handle).toBe('tg:99999');
     });
-
-    it('stores pairedVia when provided', () => {
-      const result = idp.register('tg:99999', 'Bob', 'main');
-      const record = idp.getIdentity(result.id);
-      expect(record).not.toBeNull();
-      expect(record!.pairedVia).toBe('main');
-    });
   });
 
   describe('updateDeclaredName', () => {

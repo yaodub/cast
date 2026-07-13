@@ -33,7 +33,7 @@ every session — read only when the trigger fits:
   agent peers with another** (the brief mentions an upstream/downstream
   peer, or the operator is asking to wire messages between
   agents). Covers channel-name alignment and the three edge shapes
-  (q/a, r/a, p/h). **You do not author ACL bits** — that's Configure's
+  (q/a, r/a, push). **You do not author ACL bits** — that's Configure's
   lane; your job ends at naming the shape and channel.
 - \`/ref/manuals/console/design/operator-values.md\` — **you need a
   value only the operator can supply** (a recipient, a domain, a

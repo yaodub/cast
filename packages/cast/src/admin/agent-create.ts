@@ -75,8 +75,7 @@ export function createAgentScratch(name: string, description?: string): string {
     path.join(agentDir, 'config', 'acl.json'),
     JSON.stringify({
       owner: 'operator',
-      peers: {},
-      reject_message: 'Not authorized. Use /pair <code> to get access.',
+      allowed: {},
     }, null, 2) + '\n',
   );
 

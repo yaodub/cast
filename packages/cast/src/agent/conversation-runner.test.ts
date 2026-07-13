@@ -277,3 +277,87 @@ describe('formatFallbackMessage', () => {
   });
 });
 
+
+// =============================================================================
+// pipeMessage sender attribution — the message_log `sender` column is the
+// audit contract for framework stimuli (`WHERE sender = 'system'` is how
+// denial corrections and scheduled/service fires are told apart from the
+// participant's own words). Locks the participant/system ternary directly:
+// a regression here silently mis-attributes every framework correction.
+// =============================================================================
+
+import { ConversationRunner } from './conversation-runner.js';
+import type { IdentityId } from '../auth/address.js';
+import type { AgentStateStore } from './state-store.js';
+import type { MessageLogStore } from '../lib/message-log-store.js';
+
+describe('pipeMessage — message_log sender attribution', () => {
+  function makeRunner() {
+    const logInbound = vi.fn();
+    const runner = new ConversationRunner({
+      host: { name: 'att-test', folder: 'att-test' },
+      agentFolder: 'att-test',
+      address: 'a:att@iss',
+      conversationKey: 'default|u:alice@iss',
+      channelName: 'default',
+      channel: {
+        idle_timeout: null, lifecycle: 'none', log_messages: true,
+        use_sharding: false, disabled_tools: [],
+      } as never,
+      participant: 'u:alice@iss' as IdentityId,
+      store: {} as AgentStateStore,
+      messageLog: { logInbound } as unknown as MessageLogStore,
+      isExpired: () => false,
+      requestCleanup: () => {},
+      // mcpDeps omitted — skips socket creation (tests)
+    });
+    // pipeMessage records inbound only AFTER a successful pipe (so a message that
+    // fails to reach the container and gets re-queued is logged once, by the
+    // respawn's cold path, not twice). Stub the IPC write to simulate the
+    // message landing in the container so the attribution write is exercised.
+    vi.spyOn(runner as unknown as { sendViaIpc: () => boolean }, 'sendViaIpc').mockReturnValue(true);
+    return { runner, logInbound };
+  }
+
+  it('participant kind logs the participant as sender', () => {
+    const { runner, logInbound } = makeRunner();
+    runner.pipeMessage('hello', undefined, { kind: 'participant' });
+    expect(logInbound).toHaveBeenCalledTimes(1);
+    const [participant, sender, text] = logInbound.mock.calls[0]!;
+    expect(participant).toBe('u:alice@iss');
+    expect(sender).toBe('u:alice@iss');
+    expect(text).toBe('hello');
+  });
+
+  it('framework kinds log sender "system" with the provenance wrapper', () => {
+    const { runner, logInbound } = makeRunner();
+    runner.pipeMessage('corrected', undefined, { kind: 'system' });
+    const [participant, sender, text] = logInbound.mock.calls[0]!;
+    expect(participant).toBe('u:alice@iss'); // row stays keyed to the participant
+    expect(sender).toBe('system');
+    expect(text).toContain('<cast:system>');
+  });
+
+  it('every non-participant DeliverKind attributes to system', () => {
+    const { runner, logInbound } = makeRunner();
+    // 'lifecycle' excluded: past the log write it resolves the cleanup model
+    // via readAgentConfig (needs the config watcher) — same ternary branch as
+    // the four below, covered by the wrapper test above.
+    for (const kind of ['schedule', 'service', 'watch', 'push'] as const) {
+      runner.pipeMessage(`${kind} body`, undefined, { kind });
+    }
+    const senders = logInbound.mock.calls.map((c) => c[1]);
+    expect(senders).toEqual(['system', 'system', 'system', 'system']);
+  });
+
+  it('does not log inbound when the pipe fails (no double-log on re-queue)', () => {
+    // A failed pipe re-queues the message; the respawn's cold path (`spawn`)
+    // logs it there. If pipeMessage also logged before the send, the message
+    // would appear twice for a single delivery. Pin: fail → zero log writes.
+    const { runner, logInbound } = makeRunner();
+    vi.spyOn(runner as unknown as { sendViaIpc: () => boolean }, 'sendViaIpc').mockReturnValue(false);
+    const piped = runner.pipeMessage('dropped', undefined, { kind: 'participant' });
+    expect(piped).toBe(false);
+    expect(logInbound).not.toHaveBeenCalled();
+  });
+});

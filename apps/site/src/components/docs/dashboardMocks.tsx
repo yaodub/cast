@@ -320,7 +320,7 @@ function MainArea() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 14 }}>
         <StatTile value="5" label="Agents" />
         <StatTile value="12" label="Conversations today" />
-        <StatTile value="2" label="Pending pairings" />
+        <StatTile value="2" label="Pending approvals" />
       </div>
 
       <div

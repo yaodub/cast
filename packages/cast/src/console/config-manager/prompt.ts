@@ -122,8 +122,8 @@ you author both halves of the ACL bit pair and hand them to per-agent
 Configure via \`conversation__push_to_channel\`. There is no upstream
 Design brief in this path — the bits are yours to author. Read
 \`/ref/manuals/console/cross-agent-acl.md\` before any push that
-touches \`peers.*.*\` — bit glossary, the directional rule
-(sender's bit ≠ receiver's bit), worked JSON for q/a, r/a, p/h,
+touches \`allowed.*.*\` — bit glossary, the directional rule
+(sender's bit ≠ receiver's bit), worked JSON for q/a, r/a, push,
 and the verify-after-write step. The manual is inlined into your
 prompt below; don't guess from analogy.
 

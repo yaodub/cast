@@ -16,9 +16,13 @@ import { queryAll, queryOne } from '../lib/db-query.js';
 import { logger } from '../logger.js';
 import { installMessageLogSchema, MessageLogStore } from '../lib/message-log-store.js';
 import { installTokenUsageSchema, TokenUsageStore } from '../lib/token-usage-store.js';
+import { installApprovalsSchema, ApprovalsStore } from '../lib/approvals-store.js';
+import { installOwnerClaimsSchema, OwnerClaimsStore } from '../lib/owner-claims-store.js';
 
-import { parseJsonSafe } from '../lib/utils.js';
 import { extractIdentity } from '../auth/address.js';
+
+export type { ApprovalRow, ApprovalStatus } from '../lib/approvals-store.js';
+export type { OwnerClaimRow } from '../lib/owner-claims-store.js';
 
 // --- Zod schemas & derived types ---
 
@@ -35,6 +39,11 @@ const OutboundRequestRowSchema = z.object({
   channel: z.string(),
   participant: z.string(),
   status: z.string(),
+  // The wire-format kind, fixed at emit. The request row is the round-trip
+  // authorization capability; `kind` is what it may redeem — a `query` redeems
+  // one `<cast:answer>`, a fire-and-forget `request` redeems only a bounce, never
+  // an answer (the r-bit anti-injection promise). Read at reply-delivery time.
+  kind: z.enum(['query', 'request']),
   created_at: z.string(),
 });
 type OutboundRequestRow = z.infer<typeof OutboundRequestRowSchema>;
@@ -67,23 +76,9 @@ const InboundRequestRowSchema = z.object({
 });
 type InboundRequestRow = z.infer<typeof InboundRequestRowSchema>;
 
-const ApprovalRowSchema = z.object({
-  id: z.string(),
-  tool: z.string(),
-  args: z.string(),
-  summary: z.string(),
-  details: z.string().nullable(),
-  participant: z.string(),
-  channel: z.string().nullable(),
-  conversation_key: z.string().nullable(),
-  status: z.enum(['pending', 'approved', 'rejected', 'expired', 'interrupted']),
-  created_at: z.string(),
-  expires_at: z.string().nullable(),
-  resolved_at: z.string().nullable(),
-  reason: z.string().nullable(),
-});
-export type ApprovalRow = z.infer<typeof ApprovalRowSchema>;
-export type ApprovalStatus = ApprovalRow['status'];
+/** Status filter for `listRequests`. The named values mirror the request
+ *  lifecycle statuses both tables use; `'all'` disables the filter. */
+export type RequestStatusFilter = 'open' | 'fulfilled' | 'rejected' | 'interrupted' | 'closed' | 'all';
 
 const EventLevelSchema = z.enum(['error', 'warn', 'info']);
 export type EventLevel = z.infer<typeof EventLevelSchema>;
@@ -131,24 +126,13 @@ export type LogEventFn = (
   opts?: { conversationKey?: string; context?: Record<string, unknown> },
 ) => void;
 
-interface InsertApprovalData {
-  id: string;
-  tool: string;
-  args: Record<string, unknown>;
-  summary: string;
-  details?: string;
-  participant: string;
-  channel?: string;
-  conversationKey?: string;
-  expiresAt?: string;
-}
-
 interface RecordOutboundRequestData {
   requestId: string;
   targetAgent: string;
   targetChannel: string;
   channel: string;
   participant: string;
+  kind: 'query' | 'request';
   status?: string;
 }
 
@@ -183,6 +167,8 @@ export class AgentDb {
   private db: Database.Database;
   readonly messages: MessageLogStore;
   readonly tokens: TokenUsageStore;
+  readonly approvals: ApprovalsStore;
+  readonly ownerClaims: OwnerClaimsStore;
 
   constructor(dbPath: string) {
     fs.mkdirSync(path.dirname(dbPath), { recursive: true });
@@ -191,8 +177,12 @@ export class AgentDb {
     this.createSchema();
     installMessageLogSchema(this.db);
     installTokenUsageSchema(this.db);
+    installApprovalsSchema(this.db);
+    installOwnerClaimsSchema(this.db);
     this.messages = new MessageLogStore(this.db);
     this.tokens = new TokenUsageStore(this.db);
+    this.approvals = new ApprovalsStore(this.db);
+    this.ownerClaims = new OwnerClaimsStore(this.db);
   }
 
   // =========================================================================
@@ -234,9 +224,9 @@ export class AgentDb {
 
   recordOutboundRequest(data: RecordOutboundRequestData): void {
     this.db.prepare(`
-      INSERT INTO outbound_requests (request_id, target_agent, target_channel, channel, participant, status)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(data.requestId, data.targetAgent, data.targetChannel, data.channel, data.participant, data.status ?? 'open');
+      INSERT INTO outbound_requests (request_id, target_agent, target_channel, channel, participant, status, kind)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(data.requestId, data.targetAgent, data.targetChannel, data.channel, data.participant, data.status ?? 'open', data.kind);
   }
 
   recordInboundRequest(data: RecordInboundRequestData): void {
@@ -325,17 +315,28 @@ export class AgentDb {
     ).run(cutoffIso).changes;
   }
 
-  /** List requests for a (channel, participant) context. Returns both inbound and outbound. */
-  listRequests(channel: string, participant: string): { inbound: InboundRequestRow[]; outbound: OutboundRequestRow[] } {
+  /** List requests for a (channel, participant) context, filtered by status.
+   *  Default `'open'` is the working set — the outbox of outstanding round-trips;
+   *  pass `'all'` or a terminal status for history. Rows are never deleted
+   *  (they're the audit trail); this filter is what keeps the working view
+   *  small, and `request__close`/`request__close_all` are how stale entries
+   *  leave it. Returns both inbound and outbound. */
+  listRequests(
+    channel: string,
+    participant: string,
+    status: RequestStatusFilter = 'open',
+  ): { inbound: InboundRequestRow[]; outbound: OutboundRequestRow[] } {
+    const statusCond = status === 'all' ? '' : ' AND status = ?';
+    const params = status === 'all' ? [channel, participant] : [channel, participant, status];
     const inbound = queryAll(
-      this.db.prepare('SELECT * FROM inbound_requests WHERE channel = ? AND participant = ? ORDER BY created_at DESC'),
+      this.db.prepare(`SELECT * FROM inbound_requests WHERE channel = ? AND participant = ?${statusCond} ORDER BY created_at DESC`),
       InboundRequestRowSchema,
-      channel, participant,
+      ...params,
     );
     const outbound = queryAll(
-      this.db.prepare('SELECT * FROM outbound_requests WHERE channel = ? AND participant = ? ORDER BY created_at DESC'),
+      this.db.prepare(`SELECT * FROM outbound_requests WHERE channel = ? AND participant = ?${statusCond} ORDER BY created_at DESC`),
       OutboundRequestRowSchema,
-      channel, participant,
+      ...params,
     );
     return { inbound, outbound };
   }
@@ -381,91 +382,6 @@ export class AgentDb {
     ).run(channel, participant);
 
     return { closedInbound: openInbound, closedOutboundCount: outboundResult.changes };
-  }
-
-  // =========================================================================
-  // Approval tracking
-  // =========================================================================
-
-  insertApproval(data: InsertApprovalData): void {
-    this.db.prepare(
-      `INSERT INTO approvals (id, tool, args, summary, details, participant, channel, conversation_key, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      data.id, data.tool, JSON.stringify(data.args), data.summary,
-      data.details ?? null, data.participant, data.channel ?? null,
-      data.conversationKey ?? null, new Date().toISOString(), data.expiresAt ?? null,
-    );
-  }
-
-  getApproval(id: string): ApprovalRow | undefined {
-    return queryOne(
-      this.db.prepare('SELECT * FROM approvals WHERE id = ?'),
-      ApprovalRowSchema,
-      id,
-    );
-  }
-
-  updateApprovalStatus(id: string, status: ApprovalStatus, reason?: string): void {
-    this.db.prepare(
-      'UPDATE approvals SET status = ?, resolved_at = ?, reason = ? WHERE id = ?',
-    ).run(status, new Date().toISOString(), reason ?? null, id);
-  }
-
-  /**
-   * Mark every still-pending approval as 'interrupted'. Called from the
-   * shutdown path so an operator returning post-restart sees the orphaned
-   * approvals as terminal rather than perpetually-pending. Existing branches
-   * use `status !== 'pending'` to gate re-resolution, so 'interrupted' rows
-   * are treated correctly (skip-and-warn) by `approval-handler.ts`.
-   */
-  markPendingApprovalsInterrupted(): number {
-    return this.db.prepare(
-      "UPDATE approvals SET status = 'interrupted', resolved_at = ?, reason = ? WHERE status = 'pending'",
-    ).run(new Date().toISOString(), 'server shutdown').changes;
-  }
-
-  listPendingApprovals(participant?: string): ApprovalRow[] {
-    if (participant) {
-      return queryAll(
-        this.db.prepare("SELECT * FROM approvals WHERE status = 'pending' AND participant = ? ORDER BY created_at DESC"),
-        ApprovalRowSchema,
-        participant,
-      );
-    }
-    return queryAll(
-      this.db.prepare("SELECT * FROM approvals WHERE status = 'pending' ORDER BY created_at DESC"),
-      ApprovalRowSchema,
-    );
-  }
-
-  /**
-   * Returns true if any approved row in the given conversation, for any of `tools`,
-   * has args matching `argsMatch`. Approval validity is bounded by the conversation
-   * itself — rows from past conversations are invisible to this query because they
-   * carry a different conversation_key. Used by approval filters to inherit trust
-   * across related tools within the same conversation.
-   */
-  hasApprovalInConversation(input: {
-    conversationKey: string;
-    tools: string[];
-    argsMatch: (args: Record<string, unknown>) => boolean;
-  }): boolean {
-    if (input.tools.length === 0) return false;
-    const placeholders = input.tools.map(() => '?').join(',');
-    const rows = queryAll(
-      this.db.prepare(
-        `SELECT * FROM approvals WHERE status = 'approved' AND conversation_key = ? AND tool IN (${placeholders}) ORDER BY created_at DESC`,
-      ),
-      ApprovalRowSchema,
-      input.conversationKey, ...input.tools,
-    );
-    for (const row of rows) {
-      const parsed = parseJsonSafe(row.args, z.record(z.string(), z.unknown()));
-      if (!parsed) continue;
-      if (input.argsMatch(parsed)) return true;
-    }
-    return false;
   }
 
   // =========================================================================
@@ -549,6 +465,7 @@ export class AgentDb {
         channel          TEXT NOT NULL,
         participant      TEXT NOT NULL,
         status           TEXT NOT NULL DEFAULT 'open',
+        kind             TEXT NOT NULL DEFAULT 'query',
         created_at       TEXT NOT NULL DEFAULT (datetime('now'))
       );
 
@@ -578,22 +495,6 @@ export class AgentDb {
         created_at            TEXT NOT NULL DEFAULT (datetime('now'))
       );
 
-      CREATE TABLE IF NOT EXISTS approvals (
-        id               TEXT PRIMARY KEY,
-        tool             TEXT NOT NULL,
-        args             TEXT NOT NULL,
-        summary          TEXT NOT NULL,
-        details          TEXT,
-        participant      TEXT NOT NULL,
-        channel          TEXT,
-        conversation_key TEXT,
-        status           TEXT NOT NULL DEFAULT 'pending',
-        created_at       TEXT NOT NULL,
-        expires_at       TEXT,
-        resolved_at      TEXT,
-        reason           TEXT
-      );
-
       CREATE TABLE IF NOT EXISTS events (
         id               INTEGER PRIMARY KEY AUTOINCREMENT,
         ts               TEXT NOT NULL,
@@ -610,6 +511,10 @@ export class AgentDb {
     // Idempotent schema additions for DBs created before a column existed.
     // SQLite has no native "ADD COLUMN IF NOT EXISTS" — gate on PRAGMA table_info.
     this.ensureColumn('inbound_requests', 'return_to_qualifier', 'TEXT');
+    // The `approvals` table moved to the `approvals-store.ts` bundle.
+    // Existing DBs get its generalized columns from the one-time upgrade script
+    // (scripts/migrations/0.2-to-0.3), not a lazy ensureColumn — fresh DBs get them
+    // from the bundle's CREATE TABLE.
   }
 }
 

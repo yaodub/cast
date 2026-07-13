@@ -39,8 +39,6 @@ Where this gets violated:
   multi-page `prompt.md` that anticipates every edge case rides
   every turn. Scaffolding principle (`what-is-an-agent.md`) is the
   economic version too: provide structure, not definition.
-- **`peers.md` listing peers the agent never queries.** Layer 6;
-  dead weight if the agent doesn't reach for it in normal operation.
 - **`skills.md` written as tutorial.** Every line costs tokens
   (`design.md`). One-line bullets, not pedagogy.
 - **Eager capability load.** Extensions enabled globally when only

@@ -28,7 +28,6 @@ const IdentityWithHandleRow = z.object({
   id: z.string(),
   declared_name: z.string(),
   created_at: z.string(),
-  paired_via: z.string().nullable(),
   handle: z.string().nullable(),
 });
 const AgentNameGuidRow = z.object({ name: z.string(), guid: z.string() });
@@ -66,7 +65,6 @@ export interface IdentityRecord {
   id: string;
   declaredName: string;
   createdAt: string;
-  pairedVia: string | null;
   handles: string[];
 }
 
@@ -80,7 +78,7 @@ export interface AgentVerifyResult {
 
 export interface IdentityProvider {
   resolve(handle: string): ResolvedIdentity | null;
-  register(handle: string, declaredName: string, pairedVia?: string): ResolvedIdentity;
+  register(handle: string, declaredName: string): ResolvedIdentity;
   updateDeclaredName(identityId: string, name: string): void;
   getIdentity(identityId: string): IdentityRecord | null;
   /** Handles owned by an identity (reverse of `resolve`). List-typed: today 0..1, multi-transport-ready. `local` → []. */
@@ -101,8 +99,7 @@ function createIdentitySchema(database: Database.Database): void {
     CREATE TABLE IF NOT EXISTS identities (
       id TEXT PRIMARY KEY,
       declared_name TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      paired_via TEXT
+      created_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS handle_mappings (
       handle TEXT PRIMARY KEY,
@@ -189,15 +186,15 @@ export class LocalIdentityProvider implements IdentityProvider {
     return { id: asIdentityId(row.id), declaredName: row.declared_name, handle };
   }
 
-  register(handle: string, declaredName: string, pairedVia?: string): ResolvedIdentity {
+  register(handle: string, declaredName: string): ResolvedIdentity {
     declaredName = declaredName.slice(0, 255);
     const id = this.generateIdentityId();
     const now = new Date().toISOString();
 
     this.db.transaction(() => {
       this.db.prepare(
-        'INSERT INTO identities (id, declared_name, created_at, paired_via) VALUES (?, ?, ?, ?)',
-      ).run(id, declaredName, now, pairedVia ?? null);
+        'INSERT INTO identities (id, declared_name, created_at) VALUES (?, ?, ?)',
+      ).run(id, declaredName, now);
 
       this.db.prepare(
         'INSERT INTO handle_mappings (handle, identity_id) VALUES (?, ?)',
@@ -221,13 +218,12 @@ export class LocalIdentityProvider implements IdentityProvider {
         id: identityId,
         declaredName: identityId.slice(identityId.indexOf(':') + 1),
         createdAt: '',
-        pairedVia: null,
         handles: [],
       };
     }
 
     const rows = queryAll(this.db.prepare(
-      `SELECT i.id, i.declared_name, i.created_at, i.paired_via, h.handle
+      `SELECT i.id, i.declared_name, i.created_at, h.handle
        FROM identities i
        LEFT JOIN handle_mappings h ON i.id = h.identity_id
        WHERE i.id = ?`,
@@ -240,7 +236,6 @@ export class LocalIdentityProvider implements IdentityProvider {
       id: first.id,
       declaredName: first.declared_name,
       createdAt: first.created_at,
-      pairedVia: first.paired_via,
       handles: rows.flatMap((r) => r.handle ? [r.handle] : []),
     };
   }
@@ -322,7 +317,7 @@ export class LocalIdentityProvider implements IdentityProvider {
 
   listIdentities(): IdentityRecord[] {
     const rows = queryAll(this.db.prepare(
-      `SELECT i.id, i.declared_name, i.created_at, i.paired_via, h.handle
+      `SELECT i.id, i.declared_name, i.created_at, h.handle
        FROM identities i
        LEFT JOIN handle_mappings h ON i.id = h.identity_id
        ORDER BY i.created_at DESC`,
@@ -337,7 +332,6 @@ export class LocalIdentityProvider implements IdentityProvider {
           id: row.id,
           declaredName: row.declared_name,
           createdAt: row.created_at,
-          pairedVia: row.paired_via,
           handles: [],
         };
         byId.set(row.id, record);

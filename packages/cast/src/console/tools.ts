@@ -23,6 +23,7 @@ import { isToolDisabled } from '@getcast/agent-schema/v1';
 import { mcpTransport } from '../container/mcp-transport.js';
 import { logger } from '../logger.js';
 import { generateId } from '../lib/utils.js';
+import { startMcpKeepalive } from '../lib/mcp-keepalive.js';
 
 import { registerMessageLogTools } from '../agent/register-message-log-tools.js';
 import { registerConversationEndTool, registerPushToChannelTool } from '../agent/mcp-server.js';
@@ -192,6 +193,7 @@ export function registerConsoleTools(
 interface ConsoleSession {
   transport: StreamableHTTPServerTransport;
   server: McpServer;
+  stopKeepalive: () => void;
 }
 
 export function startConsoleMcpServer(
@@ -200,10 +202,11 @@ export function startConsoleMcpServer(
   deps: ConsoleMcpDeps,
 ): { ready: Promise<void>; close: () => Promise<void>; port?: number } {
   if (mcpTransport().mode === 'socket') {
-    try { fs.unlinkSync(socketPath); } catch { /* ignore */ }
-    // Only mkdir the socket parent in socket mode — TCP doesn't use the
-    // socket path for listening, so creating that parent dir would be a
-    // dead directory.
+    // No clean-stale unlink: `socketPath` carries a per-spawn nonce
+    // (sessionCastSocketPath), so it never collides with a prior instance's live
+    // socket. Crash leftovers are swept at agent init (cleanupStaleSockets).
+    // Only mkdir the socket parent in socket mode — TCP doesn't listen on the
+    // path, so that dir would be dead.
     fs.mkdirSync(path.dirname(socketPath), { recursive: true });
   }
 
@@ -237,9 +240,13 @@ export function startConsoleMcpServer(
       await transport.handleRequest(req, res);
 
       if (transport.sessionId) {
-        sessions.set(transport.sessionId, { transport, server });
+        const stopKeepalive = startMcpKeepalive(server, { agentFolder: ctx.hostFolder, console: ctx.consoleName, sessionId: transport.sessionId });
+        sessions.set(transport.sessionId, { transport, server, stopKeepalive });
         transport.onclose = () => {
-          if (transport.sessionId) sessions.delete(transport.sessionId);
+          const sid = transport.sessionId;
+          if (!sid) return;
+          sessions.get(sid)?.stopKeepalive();
+          sessions.delete(sid);
         };
       }
       return;

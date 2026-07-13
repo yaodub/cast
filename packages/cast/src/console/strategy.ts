@@ -75,10 +75,6 @@ export interface ConsoleMcpDeps {
   };
   /** Access to the per-agent SQLite DB — Configure's configure__list_participants. */
   getAgentDb?: () => AgentDb;
-  /** Generate a 6-digit pairing code for a handle — Configure's configure__pair_user. */
-  pairUser?: (handle: string) => string;
-  /** Revoke a paired user by identity id — Configure's configure__revoke_user. */
-  revokeUser?: (identityId: string) => { ok: boolean; error?: string };
   /** List extension secrets (key names + isSet flags only, never values) — Configure. */
   listExtensionSecrets?: () => ExtensionSecretStatus[];
   /** Emit a ui_directive to the operator's SSE stream — shared admin__navigate tool.

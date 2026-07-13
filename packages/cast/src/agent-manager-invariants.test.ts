@@ -316,7 +316,7 @@ import fs from 'fs';
 
 // --- Fixtures ---
 
-const TEST_ACL = JSON.stringify({ owner: 'operator', peers: {} });
+const TEST_ACL = JSON.stringify({ owner: 'operator', allowed: {} });
 
 function resetFsMocks(): void {
   vi.mocked(fs.existsSync).mockImplementation((p: unknown) => {

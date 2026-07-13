@@ -1,13 +1,18 @@
 import { Sidebar } from './sidebar';
 import { ChatArea } from './chat-area';
-import { PairingPrompt } from './pairing-prompt';
 import * as store from '../lib/store';
 import { getActiveHandle } from '../../lib/identity';
 
 export function MainLayout() {
   const agent = store.activeAgent.value;
   const agentData = store.agents.value.find((a) => a.alias === agent);
-  const isPaired = !!agentData;
+  // A granted agent carries its real channel set; an ungranted one (still in
+  // the directory, no grant yet) gets a plain default-channel chat. You just
+  // type — there is no "request access" step. An ungranted first message is
+  // held and the system replies that approval is pending; on grant your real
+  // message replays and the agent answers it. Once granted, `agentData`
+  // appears and its real channels take over.
+  const channels = agentData?.channels ?? [{ name: 'default', bits: '' }];
 
   return (
     // Frame layout — root holds the sidebar's deep-teal color and main
@@ -30,13 +35,12 @@ export function MainLayout() {
             </div>
           </div>
         )}
-        {agent && !isPaired && <PairingPrompt agent={agent} />}
-        {agent && isPaired && (
+        {agent && (
           <ChatArea
             messages={store.messages.value}
             activeAgent={store.activeAgent.value}
             activeChannel={store.activeChannel.value}
-            channels={agentData.channels}
+            channels={channels}
             error={store.error.value}
             typing={store.typing.value}
             lifecycle={store.lifecycle.value}

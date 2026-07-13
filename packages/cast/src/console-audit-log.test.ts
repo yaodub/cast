@@ -26,7 +26,7 @@ vi.mock('./config.js', async () => {
   };
 });
 
-import { appendChangelog } from './console/shared/audit-log.js';
+import { appendChangelog } from './lib/audit-log.js';
 
 describe('appendChangelog', () => {
   it('writes an entry to state/admin-changelog.jsonl', () => {
@@ -51,14 +51,14 @@ describe('appendChangelog', () => {
 
   it('appends (not overwrites) across calls', () => {
     const folder = 'audit-test-b';
-    appendChangelog(folder, { actor: 'local', action: 'pair_user', identity: 'u:abc@srv' });
-    appendChangelog(folder, { actor: 'local', action: 'revoke_user', identity: 'u:abc@srv' });
+    appendChangelog(folder, { actor: 'local', action: 'access_granted', identity: 'u:abc@srv' });
+    appendChangelog(folder, { actor: 'local', action: 'access_revoked', identity: 'u:abc@srv' });
 
     const logPath = path.join(TMP_ROOT, folder, 'state', 'admin-changelog.jsonl');
     const lines = fs.readFileSync(logPath, 'utf-8').trimEnd().split('\n');
     expect(lines).toHaveLength(2);
-    expect(JSON.parse(lines[0]).action).toBe('pair_user');
-    expect(JSON.parse(lines[1]).action).toBe('revoke_user');
+    expect(JSON.parse(lines[0]).action).toBe('access_granted');
+    expect(JSON.parse(lines[1]).action).toBe('access_revoked');
   });
 
   it('creates the state/ directory if it does not exist', () => {
@@ -66,7 +66,7 @@ describe('appendChangelog', () => {
     const stateDir = path.join(TMP_ROOT, folder, 'state');
     expect(fs.existsSync(stateDir)).toBe(false);
 
-    appendChangelog(folder, { actor: 'local', action: 'pair_user' });
+    appendChangelog(folder, { actor: 'local', action: 'access_granted' });
     expect(fs.existsSync(stateDir)).toBe(true);
   });
 });

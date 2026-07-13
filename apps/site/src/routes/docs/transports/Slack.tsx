@@ -12,7 +12,7 @@ export function TransportsSlack() {
       url="/docs/transports/slack"
       crumbs={['docs', 'plugins', 'transports', 'slack']}
       title="slack"
-      lede="A Slack app over Socket Mode — direct messages reach an agent through a bot you create at api.slack.com and pair to the server."
+      lede="A Slack app over Socket Mode — direct messages reach an agent through a bot you create at api.slack.com and connect to the server."
       toc={[
         { label: 'Getting the tokens' },
         { label: 'Route configuration' },

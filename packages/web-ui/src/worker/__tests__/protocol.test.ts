@@ -189,7 +189,7 @@ describe('WorkerToTab parsing', () => {
   });
 
   it('parses hello-ack frames', () => {
-    const frame = { kind: 'hello-ack', workerVersion: 'v0.2.0' };
+    const frame = { kind: 'hello-ack', workerVersion: 'v0.3.0' };
     expect(WorkerToTab.safeParse(frame).success).toBe(true);
   });
 });

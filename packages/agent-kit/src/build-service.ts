@@ -106,8 +106,12 @@ export async function buildService(templateServiceDir: string, outputServiceDir:
   execSync('pnpm install --ignore-workspace', { cwd: buildTmpDir, stdio: 'pipe' });
 
   // esbuild bundle — resolve registry deps from the temp dir's real node_modules,
-  // resolve workspace packages via alias to their source .ts files
-  const createRequireShim = `import { createRequire } from 'module'; const require = createRequire(import.meta.url);`;
+  // resolve workspace packages via alias to their source .ts files.
+  // The banner's import binding is uniquely named: it's raw text esbuild can't
+  // scope-analyze, so a bundled dep with its own top-level
+  // `import { createRequire } from "node:module"` (common in Deno-transpiled /
+  // dnt-built ESM, e.g. yahoo-finance2) would otherwise redeclare `createRequire`.
+  const createRequireShim = `import { createRequire as __castCreateRequire } from 'node:module'; const require = __castCreateRequire(import.meta.url);`;
   try {
     await esbuild({
       entryPoints: [entryPoint],

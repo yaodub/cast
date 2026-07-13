@@ -38,9 +38,9 @@ array of `SlackRoute` objects:
 One Slack app serves one agent. Multiple apps run side-by-side via
 multiple route entries.
 
-## Pairing flow
+## Onboarding flow
 
-Operator-initiated:
+Operator sets up the transport:
 
 1. Operator creates a Slack app at `api.slack.com/apps`.
 2. Operator mints bot + app tokens and installs the app to a
@@ -49,8 +49,10 @@ Operator-initiated:
 4. Operator reconciles/restarts transports.
 
 User IDs mint upon first DM. The user's identity is created on first
-contact; the operator pairs the resulting identity in per-agent
-Configure to grant ACL access.
+contact; the first ungranted message is held while the agent's owner
+approves access in-band (allow-once, or allow-always to persist the
+grant). The owner can also pre-grant the identity in per-agent
+Configure.
 
 ## Security
 

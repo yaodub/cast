@@ -81,7 +81,7 @@ export function AdvancedBackups() {
             <td style={proseTd}>Yes</td>
             <td style={proseTd}>
               Blueprint, config (model, ACL, extension credentials), state (conversation
-              log, tasks, pairings, attachments), memory, home, and the keypair. The full
+              log, tasks, access grants, attachments), memory, home, and the keypair. The full
               breakdown is on{' '}
               <DocsLink href="/docs/build/agent-folder">Agent folder anatomy</DocsLink>.
             </td>

@@ -361,7 +361,6 @@ describe('priorityOf', () => {
     ['prompt.md', 1],
     ['whoami.md', 1],
     ['skills.md', 1],
-    ['peers.md', 1],
     ['channels/default/prompt.md', 1],
     ['channels/a/b/prompt.md', 1], // nested channel still T1
     ['channels/default/skills.md', 1],

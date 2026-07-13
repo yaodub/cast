@@ -159,7 +159,7 @@ const PROMPT_LAYERS: Layer[] = [
   { num: '3',   tag: '<agent-profile-skills>',  source: 'profile.skills',       sourceMono: true, desc: "Profile-level skills — e.g. the standard profile's framework-tag handling." },
   { num: '4',   tag: 'blueprint/identity/prompt.md', tagNote: 'no wrapping tag', desc: "Persona and core behavior — the agent's “who I am” text." },
   { num: '5',   tag: '<agent-identity>',        source: 'blueprint/identity/whoami.md', sourceMono: true, desc: 'Structured identity facts (name, role, owner).' },
-  { num: '6',   tag: '<agent-peers>',           source: 'blueprint/identity/peers.md',  sourceMono: true, desc: 'Author-supplied peer relationships, alongside the live agent__list_peers tool.' },
+  { num: '6',   tag: '<agent-peers>',           source: 'server-derived from ACL', desc: 'Granted first-degree peer reach, computed from acl.json, alongside the live agent__list_peers discovery tool.' },
   { num: '7',   tag: '<agent-skills>',          source: 'blueprint/identity/skills.md', sourceMono: true, desc: 'Domain-specific guidance the agent should carry across all conversations.' },
   { num: '7.5', tag: '<channel-contract>',      source: 'server-derived from ACL', conditional: 'inserted only when the channel enforces a fixed reply protocol', desc: "Required shape of the agent's reply on this channel — what its output must look like to be accepted." },
   { num: '8',   tag: '<channel-instructions>',  source: 'blueprint/channels/NAME/prompt.md', sourceMono: true, desc: 'Per-channel instructions — tone, scope, escalation rules.' },
@@ -375,7 +375,8 @@ export function ApiContext() {
 <cast:lifecycle>BODY</cast:lifecycle>
 <cast:watch path="GLOB" since="ISO_TIMESTAMP" through="ISO_TIMESTAMP">FILE_LIST</cast:watch>
 <cast:push fromAgent="NAME" fromParticipant="ID" fromChannel="NAME">BODY</cast:push>
-<cast:rejection request="ID">REASON</cast:rejection>`}</Example>
+<cast:rejection request="ID">REASON</cast:rejection>
+<cast:pending request="ID">REASON</cast:pending>`}</Example>
           <div>
             Non-user triggers arrive wrapped in one of these. Full attribute schemas
             and validation rules on <DocsLink href="/docs/runtime/wire-format">Runtime › Wire format</DocsLink>.

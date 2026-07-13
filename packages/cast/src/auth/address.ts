@@ -179,9 +179,9 @@ export function extractIdentity(addr: string): IdentityId {
   return asIdentityId(slashIdx === -1 ? addr : addr.slice(0, slashIdx));
 }
 
-/** Extract handle from address. Compound → handle part; agent → undefined (no transport handle). */
+/** Extract handle from address. Compound → handle part; agent or ext → undefined (no transport handle). */
 export function extractHandle(addr: string): Handle | undefined {
-  if (isAgent(addr)) return undefined;
+  if (isAgent(addr) || isExtAddress(addr)) return undefined;
   const slashIdx = addr.indexOf('/');
   return asHandle(slashIdx === -1 ? addr : addr.slice(slashIdx + 1));
 }

@@ -11,7 +11,7 @@ export function TransportsTelegram() {
       url="/docs/transports/telegram"
       crumbs={['docs', 'plugins', 'transports', 'telegram']}
       title="telegram"
-      lede="The Telegram bot API — direct messages and group chats reach an agent through a bot you mint with BotFather and pair to the server."
+      lede="The Telegram bot API — direct messages and group chats reach an agent through a bot you mint with BotFather and connect to the server."
       toc={[
         { label: 'Getting a bot token' },
         { label: 'Route configuration' },

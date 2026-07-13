@@ -13,7 +13,7 @@ All-Agents Configure, All-Agents Review.
 | Console role | What it touches | Network |
 |---------|----------------|---------|
 | **Design** (per-agent + All-Agents Design) — authoring | the agent's identity (`manifest.json` — name, description, lifecycle status) and `blueprint/` (prompt, skills, channels, service source, assets) | full |
-| **Configure** (per-agent + All-Agents Configure) — ops | `config/` (ACL, provisions, MCP servers, model), extension secrets, paired users, service lifecycle | sdk-only |
+| **Configure** (per-agent + All-Agents Configure) — ops | `config/` (ACL, provisions, MCP servers, model), extension secrets, user access, service lifecycle | sdk-only |
 | **Review** (fleet-only) — read-only QA gate | every agent's blueprint + config (no state, no secrets) | sdk-only |
 
 ## What an agent is
@@ -158,8 +158,8 @@ service. Per-extension credentials live in Configure. **Extensions are
 how the agent reaches outward**, and which ones an agent has is a
 blueprint decision.
 
-**Transports** are chat *carriers*. They route messages between paired
-users and the agent's user channels, configured server-side in
+**Transports** are chat *carriers*. They route messages between users
+and the agent's user channels, configured server-side in
 `$CAST_CONFIG_DIR/routes.json` and per-agent in `config/transport.json`.
 **Nothing in the blueprint defines transports.** They are how external
 participants reach the agent — bound in Configure, not authored.
@@ -182,14 +182,14 @@ rather than carrying a fixed list here.
 
 **Default user-chat surface: the web chat at `/chat/*`.** Always on, no
 server-side config. A visitor opens `/chat/`, registers a display name
-(a server-minted handle), and pairs with any agent they have access to
-by exchanging a code. Other carriers extend reach via Configure setup.
+(a server-minted handle), and reaches any agent they're permitted to.
+Other carriers extend reach via Configure setup.
 
-**Pairing direction.** Web pairing is user-initiated — the handle is
-minted at registration, so Configure can't generate a code until the
-user surfaces. For externally-addressable carriers, the operator can
-initiate from Configure because the handle is already known; the code
-is delivered out of band through the medium itself.
+**How access is acquired.** A user surfaces by registering (web) or
+through a known handle (externally-addressable carriers), then reaches
+the agent. An ungranted first contact is held while the agent's owner
+allows or denies it in-band; an allow-always answer persists the grant
+and the user's later messages route normally.
 
 ## Handoff principle
 
@@ -424,7 +424,7 @@ choice was made at all.
 
 **Commitments carry their own rationale.** Tools with durable side
 effects — creating agents, pushing to a session, navigating the
-operator, flipping to ready, pairing a user, restarting a service —
+operator, flipping to ready, granting a user, restarting a service —
 require a rationale field on the call itself: `outcome_inference`,
 `handoff_brief`, `operator_takeaways`, and the like. The field *is* the
 commitment — you can't invoke the tool without it, and it renders back to

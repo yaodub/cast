@@ -1,11 +1,10 @@
 /**
  * Agents fleet rollup at `/agents`.
  *
- * Sidebar carries the per-agent directory (avatars, aliases, draft badges,
- * pairing badges) — duplicating that as a card list here would be pure
- * redundancy. This page answers "what's the state of the fleet right now?"
- * instead: a small stat strip + an attention list (drafts pending review,
- * outstanding pairing requests).
+ * Sidebar carries the per-agent directory (avatars, aliases, draft badges)
+ * — duplicating that as a card list here would be pure redundancy. This
+ * page answers "what's the state of the fleet right now?" instead: a small
+ * stat strip + an attention list (drafts pending review).
  *
  * Future: cross-agent posture rollup, last-activity timeline, fleet search.
  */
@@ -17,7 +16,7 @@ import type { PageManualEntry } from '@getcast/admin-schema/v1';
 import type { JSX } from 'preact';
 
 export const pageManual: PageManualEntry = {
-  purpose: 'Fleet rollup — total agent count, drafts in flight, fleet-wide active conversations, plus an attention list for drafts pending review and outstanding pairing requests. Reachable via the All Agents tile in the sidebar. The sidebar itself carries the per-agent directory; this page is the fleet-level snapshot.',
+  purpose: 'Fleet rollup — total agent count, drafts in flight, fleet-wide active conversations, plus an attention list for drafts pending review. Reachable via the All Agents tile in the sidebar. The sidebar itself carries the per-agent directory; this page is the fleet-level snapshot.',
 };
 
 function StatTile({ value, label }: { value: number | string; label: string }): JSX.Element {
@@ -43,13 +42,10 @@ function AttentionChip({ href, label, count }: { href: string; label: string; co
 
 export function AgentsListPage(): JSX.Element {
   const agents = trpc.agent.list.useQuery();
-  const pairingCounts = trpc.agent.pendingPairingCounts.useQuery();
 
   const list = agents.data ?? [];
   const drafts = list.filter((a) => a.status === 'draft');
   const activeConvs = list.reduce((sum, a) => sum + a.activeConversations, 0);
-  const pendingPairs = pairingCounts.data ?? [];
-  const pairingTotal = pendingPairs.reduce((sum, r) => sum + r.count, 0);
 
   return (
     <div class="space-y-8">
@@ -87,46 +83,25 @@ export function AgentsListPage(): JSX.Element {
             />
           </div>
 
-          {drafts.length === 0 && pairingTotal === 0 ? (
+          {drafts.length === 0 ? (
             <section class="bg-gray-900 border border-gray-800 rounded-md p-5 text-sm text-gray-500">
-              All caught up — no drafts pending and no outstanding pairing requests.
+              All caught up — no drafts pending review.
             </section>
           ) : (
             <section class="bg-gray-900 border border-gray-800 rounded-md p-5 space-y-4">
               <h2 class="text-sm font-medium text-gray-300">Needs attention</h2>
 
-              {drafts.length > 0 && (
-                <div class="space-y-2">
-                  <div class="flex items-center gap-2 text-xs text-gray-500">
-                    <span class="w-1.5 h-1.5 rounded-full bg-amber-400" />
-                    {drafts.length} {drafts.length === 1 ? 'draft pending review' : 'drafts pending review'}
-                  </div>
-                  <div class="flex flex-wrap gap-2 pl-4">
-                    {drafts.map((d) => (
-                      <AttentionChip key={d.alias} href={`/agents/${d.alias}`} label={d.alias} />
-                    ))}
-                  </div>
+              <div class="space-y-2">
+                <div class="flex items-center gap-2 text-xs text-gray-500">
+                  <span class="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                  {drafts.length} {drafts.length === 1 ? 'draft pending review' : 'drafts pending review'}
                 </div>
-              )}
-
-              {pairingTotal > 0 && (
-                <div class="space-y-2">
-                  <div class="flex items-center gap-2 text-xs text-gray-500">
-                    <span class="w-1.5 h-1.5 rounded-full bg-amber-400" />
-                    {pairingTotal} outstanding pairing {pairingTotal === 1 ? 'request' : 'requests'}
-                  </div>
-                  <div class="flex flex-wrap gap-2 pl-4">
-                    {pendingPairs.map((r) => (
-                      <AttentionChip
-                        key={r.alias}
-                        href={`/agents/${r.alias}/access`}
-                        label={r.alias}
-                        count={r.count}
-                      />
-                    ))}
-                  </div>
+                <div class="flex flex-wrap gap-2 pl-4">
+                  {drafts.map((d) => (
+                    <AttentionChip key={d.alias} href={`/agents/${d.alias}`} label={d.alias} />
+                  ))}
                 </div>
-              )}
+              </div>
             </section>
           )}
         </>

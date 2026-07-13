@@ -36,26 +36,8 @@ import {
   handleValidate,
   handleListParticipants,
   handleListExtensionSecrets,
-  handlePairUser,
-  handleRevokeUser,
 } from './console/configure/tools.js';
-import { readPairedUsers, writePairedUsers } from './auth/pairing.js';
 
-/**
- * Per-test revoke stub. Mirrors `AgentManager.unpair()` minus the bus
- * emit (we're testing the Configure MCP handler's changelog/error
- * behavior here, not the bus signal). Replaces the deleted free
- * function `revokePairedUser`.
- */
-function revokeViaFile(folder: string, identityId: string): { ok: boolean; error?: string } {
-  const users = readPairedUsers(folder);
-  if (!(identityId in users)) {
-    return { ok: false, error: `No paired user with identity \`${identityId}\`.` };
-  }
-  delete users[identityId];
-  writePairedUsers(folder, users);
-  return { ok: true };
-}
 import { listExtensionSecrets } from './extensions/list-secrets.js';
 import { registerExtension } from './extensions/registry.js';
 import { _setMockWatcher } from './lib/config-reader.js';
@@ -281,74 +263,6 @@ describe('handleListExtensionSecrets', () => {
     const deps: ConsoleMcpDeps = { listExtensionSecrets: () => [] };
     const result = handleListExtensionSecrets(deps);
     expect(firstText(result)).toContain('No extensions');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// handlePairUser
-// ---------------------------------------------------------------------------
-
-describe('handlePairUser', () => {
-  it('returns a code and writes a changelog entry', () => {
-    const folder = 'pu-ok';
-    const deps: ConsoleMcpDeps = { pairUser: () => '123456' };
-    const result = handlePairUser(ctx(folder), deps, 'tg:12345', 'Sam can message content-writer on the default channel');
-    expect(result.isError).toBeFalsy();
-    expect(firstText(result)).toContain('123456');
-    expect(firstText(result)).toContain('/pair 123456');
-    expect(firstText(result)).toContain('Sam can message content-writer');
-
-    const log = readChangelog(folder);
-    expect(log).toHaveLength(1);
-    expect(log[0].action).toBe('pair_user');
-    expect(log[0].handle).toBe('tg:12345');
-    expect(log[0].code).toBe('123456');
-    expect(log[0].actor).toBe('local');
-    expect(log[0].accessScope).toBe('Sam can message content-writer on the default channel');
-  });
-
-  it('fails cleanly if deps.pairUser throws', () => {
-    const folder = 'pu-fail';
-    const deps: ConsoleMcpDeps = { pairUser: () => { throw new Error('boom'); } };
-    const result = handlePairUser(ctx(folder), deps, 'tg:1', 'scope test');
-    expect(result.isError).toBe(true);
-    expect(firstText(result)).toContain('Failed');
-
-    expect(readChangelog(folder)).toHaveLength(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// handleRevokeUser + revokePairedUser helper
-// ---------------------------------------------------------------------------
-
-describe('handleRevokeUser', () => {
-  it('succeeds when the identity is paired, writes changelog', () => {
-    const folder = 'ru-ok';
-    fs.mkdirSync(path.join(TMP_ROOT, folder, 'state'), { recursive: true });
-    fs.writeFileSync(
-      path.join(TMP_ROOT, folder, 'state', 'paired-users.json'),
-      JSON.stringify({ 'u:abc@srv': { '*': 'io' } }),
-    );
-
-    const deps: ConsoleMcpDeps = { revokeUser: (id) => revokeViaFile(folder, id) };
-    const result = handleRevokeUser(ctx(folder), deps, 'u:abc@srv');
-    expect(result.isError).toBeFalsy();
-    expect(firstText(result)).toContain('Revoked paired user');
-
-    const raw = fs.readFileSync(path.join(TMP_ROOT, folder, 'state', 'paired-users.json'), 'utf-8');
-    expect(JSON.parse(raw)).toEqual({});
-    expect(readChangelog(folder)[0].action).toBe('revoke_user');
-    expect(readChangelog(folder)[0].identityId).toBe('u:abc@srv');
-  });
-
-  it('errors when the identity is not paired, no changelog entry', () => {
-    const folder = 'ru-missing';
-    const deps: ConsoleMcpDeps = { revokeUser: (id) => revokeViaFile(folder, id) };
-    const result = handleRevokeUser(ctx(folder), deps, 'u:ghost@srv');
-    expect(result.isError).toBe(true);
-    expect(firstText(result)).toContain('No paired user');
-    expect(readChangelog(folder)).toHaveLength(0);
   });
 });
 

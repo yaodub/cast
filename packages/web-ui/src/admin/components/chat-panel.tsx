@@ -90,7 +90,7 @@ const EMPTY_TEXT_AGENT: Record<'design' | 'configure', string> = {
   design:
     "Hi! I work on this one agent with you — what it does, who it talks to, what tools and skills it has. Whether we're shaping it from scratch or adjusting how it works, just tell me what you're after. I'm in preview and still being sharpened — if I get stuck, the agent's files are plain text you can edit by hand or hand to Claude Code. What should this agent do?",
   configure:
-    "Hi! I handle the practical setup for this one agent — secrets, integrations, who's paired with it, when its service runs. I'm in preview and still being sharpened — if I get stuck, the files are plain text you can edit by hand or hand to Claude Code. What needs setting up or changing?",
+    "Hi! I handle the practical setup for this one agent — secrets, integrations, who has access to it, when its service runs. I'm in preview and still being sharpened — if I get stuck, the files are plain text you can edit by hand or hand to Claude Code. What needs setting up or changing?",
 };
 
 const POSTURE_LABEL: Record<ConsolePosture, string> = {

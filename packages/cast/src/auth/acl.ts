@@ -3,16 +3,28 @@
  *
  * Reads `config/acl.json` on every call (hot-reload, no restart needed).
  *
- * Permission model: seven bits (ioaqrph) per peer, per channel.
- *   i = inbound conversation, o = outbound conversation,
+ * Permission model: six bits (ioaqrp) per peer, per channel.
+ *   i = inbound conversation (and channel membership),
+ *   o = outbound conversation,
  *   a = answer (accept inbound queries/requests),
  *   q = query (send outbound queries, expect answer),
  *   r = request (send fire-and-forget; receiver uses `a`),
- *   p = push (cross-agent: sender's user becomes a participant on target's channel),
- *   h = host push (accept incoming push; start/continue conversation with the
- *       sender's named user).
+ *   p = push containment (this agent may route a carried user into the peer
+ *       agent). Reactive-only in practice — written by the owner-approval path
+ *       (`grantAclEdge`), never hand-authored; see the push note below.
  *
- * Pairing: q/a, r/a, p/h. `r` is sender-side only — the receiver uses the existing
+ * Two axes: access (`i`/`a` — who may reach this agent) and containment
+ * (`o`/`q`/`r`/`p` — what this agent may initiate). A working edge needs both ends.
+ * Cross-agent push (hand a user off to another agent) is two-sided once reactive:
+ * containment is the sender's `p`-edge to the target agent (decided by
+ * the SENDER's owner — "may X route users into Y"), access is the carried user's
+ * `io` on the target (decided by the TARGET's owner — "may this user converse
+ * here"). The former `p→io` fold held only for STATIC push, where the carried
+ * user's pre-existing `io` bounded everything and `p` was redundant; reactive push
+ * lets the sender bootstrap access the user lacked, so `p`'s routing meaning
+ * returns as a distinct containment bit. (`h` stays gone.)
+ *
+ * Pairing: q/a, r/a. `r` is sender-side only — the receiver uses the existing
  * `a` bit; query vs request intent lives in the payload tag (`<cast:query>` /
  * `<cast:request>`, parsed by `format.ts`), not in a separate receiver bit.
  * The receiver renders the same tag the sender chose so the receiving agent
@@ -20,18 +32,20 @@
  * receiver does the work without composing `<cast:answer>`).
  *
  * Peer-key globs: `a:*` matches any agent identity; `console:*` matches any console
- * identity. `u:*` is disallowed (users must pair explicitly). Exact peer match beats
+ * identity. `u:*` is disallowed (users are granted individually). Exact peer match beats
  * glob. Channel-side `*` wildcard behavior unchanged — matches user-defined channels,
  * does not match `__*` infra channels.
  *
  * Agent-identity bit restriction: peer keys starting with `a:` (both the `a:*` glob
- * and exact `a:<guid>@<issuer>` keys) may only carry the `q`, `r`, `a` bits. The
- * conversational bits `i`/`o`/`p`/`h` are reserved for user (`u:*`) and console
- * (`console:*`) identities. Agents communicate with each other through the
- * request/answer pair only — push (`p`/`h`) has no cycle-detection metadata and
- * regular conversation (`i`/`o`) has no causation chain, so admitting either between
- * agents would open a loop substrate with no structural guard. The rule is enforced
- * at schema parse: a violating acl.json fails to parse and `checkAcl` returns deny.
+ * and exact `a:<guid>@<issuer>` keys) may only carry the `q`, `r`, `a`, `p` bits
+ * (`AGENT_PEER_ALLOWED_BITS`). The conversational bits `i`/`o` are reserved for
+ * user (`u:*`) and console (`console:*`) identities. Agents communicate with each
+ * other through the request/answer pair and push-routing only — regular
+ * conversation (`i`/`o`) between agents has no causation chain, so admitting it
+ * would open a loop substrate with no structural guard. (`p` is a containment-only
+ * edge: it lets X route a carried user into Y; it does NOT make X a conversant of
+ * Y.) The rule is enforced at schema parse: a violating acl.json fails to parse and
+ * `checkAcl` returns deny.
  *
  * Semantics:
  *   - operator tier always has full access (`isOperatorTier`)
@@ -49,21 +63,25 @@ import {
   MANAGER_CONSOLE_FOLDERS,
   SYSTEM_OWNED_CHANNELS,
 } from './console-grants.js';
+import fs from 'fs';
 import { agentPath } from '../config.js';
 import type { Bus } from '../gateway/bus.js';
 import { readText } from '../lib/config-reader.js';
 import { logger } from '../logger.js';
-import { readPairedUsers } from './pairing.js';
+import { writeAtomic } from '../lib/utils.js';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-/** All permission bits. Returned for owner / local. */
-const ALL_BITS = 'ioaqrph';
+/** All permission bits. Returned for owner / operator / local — the full-access
+ *  short-circuit. Includes `p` (push containment) so an operator- or
+ *  owner-initiated cross-agent push clears the sender containment gate the same
+ *  way it clears `o`/`q`/`r`: a trusted principal may route anywhere. */
+const ALL_BITS = 'ioaqrp';
 
 export interface AclResult {
-  /** Permission bits for this identity+channel ("io", "a", "ioaqrph", "" = no access). */
+  /** Permission bits for this identity+channel ("io", "a", "ioaqr", "" = no access). */
   bits: string;
   rejectMessage: string | null;
 }
@@ -73,51 +91,121 @@ export function hasBit(bits: string, bit: string): boolean {
   return bits.includes(bit);
 }
 
+/**
+ * `q ⊇ r` capability hierarchy: holding `q` (query — an answer returns)
+ * implies `r` (request — fire-and-forget), since if you can ask-and-get-an-answer you
+ * can certainly ask without one. Holding only `r` does NOT imply `q`. A check-time
+ * implication, never stored — store `q`, imply `r`. Use this instead of a bare
+ * `hasBit(bits, 'r')` at every outbound query/request gate.
+ */
+export function canEmit(bits: string, kind: 'query' | 'request'): boolean {
+  return kind === 'query' ? hasBit(bits, 'q') : (hasBit(bits, 'q') || hasBit(bits, 'r'));
+}
+
 // ---------------------------------------------------------------------------
 // Schema
 // ---------------------------------------------------------------------------
 
-/** Per-peer map: channel name → permission bit string. "*" = wildcard. */
-const PeerChannelSchema = z.record(z.string(), z.string());
+/** Per-peer map: channel name → permission bit string. "*" = wildcard.
+ *  Bit values are the six-bit set `ioaqrp` (`p` restored as the reactive
+ *  push-containment edge; the former `h` stays gone — strict reject so an
+ *  un-migrated file carrying it fails loudly). Run the `0.2→0.3` migration first. */
+const PeerChannelSchema = z.record(
+  z.string(),
+  z.string().regex(/^[ioaqrp]*$/, 'invalid permission bits — allowed: i o a q r p (h was folded into i/o; run the 0.2→0.3 migration)'),
+);
 
 /**
- * Peer-key schema. Rejects `u:*` — users must pair explicitly; there is no
+ * Peer-key schema. Rejects `u:*` — users are granted individually; there is no
  * bulk-grant primitive for user identities. `a:*` and `console:*` globs are
  * permitted; interpreted at lookup time in `checkAclConfig`.
  */
 const PeerKeySchema = z.string().refine(
   (k) => k !== 'u:*',
-  'u:* wildcard peer key not permitted; users must pair explicitly',
+  'u:* wildcard peer key not permitted; users are granted individually',
 );
 
 /** Bits permitted on peer keys whose identity prefix is `a:` (agent). See the
- *  agent-identity bit restriction in the file docstring for rationale. */
-const AGENT_PEER_ALLOWED_BITS = 'qra';
+ *  agent-identity bit restriction in the file docstring for rationale. `p` (push
+ *  containment) is reactive-only in practice — only `grantAclEdge` writes
+ *  it — but it is admitted here so a reactively-granted edge round-trips the schema. */
+const AGENT_PEER_ALLOWED_BITS = 'qrap';
 
 export const AclSchema = z
   .object({
     owner: z.string().default('operator'),
-    peers: z.record(PeerKeySchema, PeerChannelSchema).default({}),
+    // The grant map: peer → channel → bits. The single canonical key (no aliases);
+    // defaults to `{}` for an agent with no grants.
+    allowed: z.record(PeerKeySchema, PeerChannelSchema).default({}),
+    // Three-state ACL: hard-reject tombstones — same peer→channel→bits
+    // shape, opposite polarity. Validated + stored here; DORMANT until the
+    // reactive-approval path reads it.
+    rejected: z.record(PeerKeySchema, PeerChannelSchema).default({}),
     reject_message: z.string().nullable().default(null),
+    // The owner conversation's pinned channel: where owner-directed
+    // approvals land. Paired with `owner` (the identity) — together they are the
+    // owner conversation. Null = unpinned (owner-directed approvals fall back to
+    // the operator inbox). Set by the ownership-pairing redeem, or hand-edited.
+    approval_channel: z.string().nullable().default(null),
   })
   .strict()
   .superRefine((acl, ctx) => {
-    for (const [peerKey, channels] of Object.entries(acl.peers)) {
-      if (!peerKey.startsWith('a:')) continue;
-      for (const [channel, bits] of Object.entries(channels)) {
-        const forbidden = [...bits].filter((b) => !AGENT_PEER_ALLOWED_BITS.includes(b));
-        if (forbidden.length === 0) continue;
-        ctx.addIssue({
-          code: 'custom',
-          path: ['peers', peerKey, channel],
-          message:
-            `Agent identity "${peerKey}" cannot hold bits "${forbidden.join('')}" on channel "${channel}". ` +
-            `Agent-to-agent communication is restricted to q/r/a (query/request/answer); ` +
-            `i/o/p/h are reserved for user (u:*) and console (console:*) identities.`,
-        });
+    // Agent identities (a:) are restricted to q/r/a — applies to both polarities.
+    const checkAgentBits = (map: Record<string, Record<string, string>>, field: string) => {
+      for (const [peerKey, channels] of Object.entries(map)) {
+        if (!peerKey.startsWith('a:')) continue;
+        for (const [channel, bits] of Object.entries(channels)) {
+          const forbidden = [...bits].filter((b) => !AGENT_PEER_ALLOWED_BITS.includes(b));
+          if (forbidden.length === 0) continue;
+          ctx.addIssue({
+            code: 'custom',
+            path: [field, peerKey, channel],
+            message:
+              `Agent identity "${peerKey}" cannot hold bits "${forbidden.join('')}" on channel "${channel}". ` +
+              `Agent-to-agent communication is restricted to q/r/a (query/request/answer); ` +
+              `i/o are reserved for user (u:*) and console (console:*) identities.`,
+          });
+        }
+      }
+    };
+    checkAgentBits(acl.allowed, 'allowed');
+    checkAgentBits(acl.rejected, 'rejected');
+    // ext:* is an injection origin, never an approval controller. An
+    // ext owner would route the agent's approvals to a principal that cannot
+    // respond. Reject at parse. (ext grant edges are derived from the live
+    // subscription in `resolveMergedPeers`, never hand-authored, so an `ext:`
+    // owner or peer key in the file is always a mistake.)
+    if (acl.owner.startsWith('ext:')) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['owner'],
+        message: 'owner cannot be an "ext:*" address — extensions are injection origins, never approval controllers.',
+      });
+    }
+    // q ⊇ r hierarchy: rejecting `r` while granting `q` on the same edge is a
+    // contradiction (q implies r) — caught at parse time.
+    for (const [peerKey, channels] of Object.entries(acl.rejected)) {
+      for (const [channel, rejBits] of Object.entries(channels)) {
+        if (!rejBits.includes('r')) continue;
+        if ((acl.allowed[peerKey]?.[channel] ?? '').includes('q')) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['rejected', peerKey, channel],
+            message:
+              `Cannot reject "r" while granting "q" on "${peerKey}"/"${channel}" — ` +
+              `q ⊇ r (query implies request).`,
+          });
+        }
       }
     }
-  });
+  })
+  .transform((acl) => ({
+    owner: acl.owner,
+    allowed: acl.allowed,
+    rejected: acl.rejected,
+    reject_message: acl.reject_message,
+    approval_channel: acl.approval_channel,
+  }));
 
 type AclConfig = z.infer<typeof AclSchema>;
 
@@ -140,6 +228,21 @@ function normalizePeerKey(bus: Bus, raw: string): string {
   return bus.resolveAddress(raw) ?? raw;
 }
 
+/**
+ * Validate the configured owner as an approval controller. The owner must be a
+ * routable principal: the `operator` sentinel, an operator-tier handle
+ * (`cli:`/`admin:`), or a user identity (`u:`). Anything else — a legacy bare
+ * word like the pre-0.3 `"local"`, a typo, an unresolvable alias, or an agent
+ * (`a:`) — falls back to `operator`, so owner-directed approvals land in the
+ * operator inbox instead of routing to a destination that resolves to nothing
+ * (invalid/unresolvable owner → operator sentinel, enforced at resolve
+ * time so a bad value degrades gracefully rather than black-holing approvals).
+ */
+function normalizeOwner(owner: string): string {
+  if (owner === 'operator' || isOperatorTier(owner) || owner.startsWith('u:') || isAgent(owner)) return owner;
+  return 'operator';
+}
+
 function resolveAclPeers(bus: Bus, peers: Record<string, Record<string, string>>): Record<string, Record<string, string>> {
   const out: Record<string, Record<string, string>> = {};
   for (const [key, chans] of Object.entries(peers)) {
@@ -159,12 +262,15 @@ function resolveAclPeers(bus: Bus, peers: Record<string, Record<string, string>>
 function resolveMergedPeers(
   bus: Bus,
   agentFolder: string,
-): { peers: Record<string, Record<string, string>>; owner: string; rejectMessage: string | null } | null {
+): { peers: Record<string, Record<string, string>>; rejected: Record<string, Record<string, string>>; owner: string; approvalChannel: string | null; rejectMessage: string | null } | null {
   const raw = readText(agentPath(agentFolder, 'config', 'acl.json'));
   if (!raw) return null;
   try {
     const acl = AclSchema.parse(JSON.parse(raw));
-    const peers = { ...readPairedUsers(agentFolder), ...resolveAclPeers(bus, acl.peers) };
+    // Single ACL store: acl.json holds ALL live grants — operator-authored
+    // and runtime owner-approved alike. The acl-edge approval writes the granted
+    // edge straight into acl.json.allowed (grantAclEdge); there is no second store.
+    const peers = resolveAclPeers(bus, acl.allowed);
     // Close the alias loophole: the parse-time agent-bit restriction
     // (AclSchema.superRefine) runs on RAW keys, so a config alias that resolves
     // to an agent (e.g. "billing" → a:<guid>) escapes it. Re-apply the
@@ -180,12 +286,141 @@ function resolveMergedPeers(
         }
       }
     }
-    return { peers, owner: normalizePeerKey(bus, acl.owner), rejectMessage: acl.reject_message };
+    return {
+      peers,
+      // The reject tombstone map: acl.json's `rejected` (operator-authored plus
+      // runtime reject-always tombstones from tombstoneAclEdge). Read by
+      // `aclVerdict` to distinguish 'rejected' from 'askable'.
+      rejected: resolveAclPeers(bus, acl.rejected),
+      owner: normalizeOwner(normalizePeerKey(bus, acl.owner)),
+      // The pinned channel is a channel name, not a peer key — passed through as-is.
+      approvalChannel: acl.approval_channel,
+      rejectMessage: acl.reject_message,
+    };
   } catch (err) {
     // Parse error → deny (fail closed)
     logger.warn({ agentFolder, err }, 'Failed to parse acl.json — denying access');
     return null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// acl-edge writers — the single-store grant/tombstone path
+//
+// The owner-approved acl-edge approval persists its outcome straight into
+// config/acl.json: allow-always adds the bit to `allowed`, reject-always adds it
+// to `rejected` (mutually exclusive per edge). One store, hand-editable, the same
+// file `resolveMergedPeers` reads. Reads fresh from disk (not the watcher cache)
+// so a read-modify-write never loses a concurrent edit's prior state.
+// ---------------------------------------------------------------------------
+
+function setAclBit(map: Record<string, Record<string, string>>, peer: string, channel: string, bit: string): void {
+  const channels = map[peer] ?? (map[peer] = {});
+  let bits = channels[channel] ?? '';
+  for (const b of bit) if (!bits.includes(b)) bits += b; // `bit` may be one or more bits (e.g. 'io')
+  channels[channel] = bits;
+}
+
+function clearAclBit(map: Record<string, Record<string, string>>, peer: string, channel: string, bit: string): void {
+  const channels = map[peer];
+  const bits = channels?.[channel];
+  if (!channels || !bits) return;
+  const next = [...bits].filter((b) => !bit.includes(b)).join('');
+  if (next) {
+    channels[channel] = next;
+  } else {
+    delete channels[channel];
+    if (Object.keys(channels).length === 0) delete map[peer];
+  }
+}
+
+/** Read-modify-write config/acl.json. A missing or unparseable file starts from defaults. */
+function mutateAcl(agentFolder: string, fn: (acl: AclConfig) => void): void {
+  const aclPath = agentPath(agentFolder, 'config', 'acl.json');
+  let acl: AclConfig;
+  try {
+    acl = AclSchema.parse(JSON.parse(fs.readFileSync(aclPath, 'utf-8')));
+  } catch {
+    acl = AclSchema.parse({});
+  }
+  fn(acl);
+  fs.mkdirSync(agentPath(agentFolder, 'config'), { recursive: true });
+  writeAtomic(aclPath, JSON.stringify(acl, null, 2) + '\n');
+}
+
+/** Persist an owner-approved edge into acl.json: `peer` gains `bit` (one or more
+ *  bits, e.g. 'a' or 'io') on `channel`. Clears any tombstone for those bits. */
+export function grantAclEdge(agentFolder: string, peer: string, channel: string, bit: string): void {
+  mutateAcl(agentFolder, (acl) => {
+    setAclBit(acl.allowed, peer, channel, bit);
+    clearAclBit(acl.rejected, peer, channel, bit);
+  });
+}
+
+/** Persist an owner reject-always into acl.json: `peer` is tombstoned for `bit` on `channel`. Clears any grant. */
+export function tombstoneAclEdge(agentFolder: string, peer: string, channel: string, bit: string): void {
+  mutateAcl(agentFolder, (acl) => {
+    setAclBit(acl.rejected, peer, channel, bit);
+    clearAclBit(acl.allowed, peer, channel, bit);
+  });
+}
+
+/**
+ * Set the agent's owner identity and the channel its owner-directed approvals
+ * land in (the owner conversation), in one atomic write. The owner-claim
+ * redemption path's single mutation: binds the verified redeemer as owner and
+ * pins where approvals route. Pass `owner: 'operator'` + `channel: null` to
+ * revert to the default sentinel (and unpin the conversation). The only writer
+ * of `owner`/`approval_channel` outside hand-editing acl.json.
+ */
+export function setOwner(agentFolder: string, owner: string, approvalChannel: string | null): void {
+  mutateAcl(agentFolder, (acl) => {
+    acl.owner = owner;
+    acl.approval_channel = approvalChannel;
+  });
+}
+
+/**
+ * Plain-remove an `allowed` edge: delete `(peer, channel)` from the grant map
+ * entirely, pruning the peer if it has no other channels. Leaves `rejected`
+ * untouched — the peer returns to *askable* (it may request again), not banned.
+ * The operator's revoke affordance in the Access tab. Idempotent: a missing edge
+ * is a no-op.
+ */
+export function revokeAclEdge(agentFolder: string, peer: string, channel: string): void {
+  mutateAcl(agentFolder, (acl) => {
+    const channels = acl.allowed[peer];
+    if (!channels || !(channel in channels)) return;
+    delete channels[channel];
+    if (Object.keys(channels).length === 0) delete acl.allowed[peer];
+  });
+}
+
+/**
+ * The agent's resolved owner identity from its `acl.json` `owner` field, or null
+ * if the acl can't be read. Returns the literal `'operator'` sentinel for the
+ * default owner. Used by owner-approves routing to pick the approval
+ * controller.
+ */
+export function getOwner(bus: Bus, agentFolder: string): string | null {
+  return resolveMergedPeers(bus, agentFolder)?.owner ?? null;
+}
+
+/**
+ * The agent's **owner conversation**: the owner identity paired with the
+ * channel its approvals land in. Returns null when there is no pinned
+ * conversation to route to — the `'operator'` sentinel owner (no conversation;
+ * the inbox handles it) or a real owner with no `approval_channel` set. Used by
+ * owner-directed approval routing to land the request in the owner's own
+ * conversation rather than a default-resolved one.
+ */
+export function getOwnerConversation(
+  bus: Bus,
+  agentFolder: string,
+): { id: string; channel: string } | null {
+  const merged = resolveMergedPeers(bus, agentFolder);
+  if (!merged || merged.owner === 'operator' || !merged.approvalChannel) return null;
+  return { id: merged.owner, channel: merged.approvalChannel };
 }
 
 /** Look up permission bits for a resolved address on a given channel. */
@@ -259,6 +494,58 @@ export function lookupDescriptorAcl(
   if (!peerChannels) return '';
   const isInfra = channel.startsWith('__');
   return (isInfra ? peerChannels[channel] : (peerChannels[channel] ?? peerChannels['*'])) ?? '';
+}
+
+/**
+ * Three-state ACL verdict for a single (address, channel, bit), used by the
+ * reactive-approval path. Distinct from `checkAcl` (binary, unchanged — so
+ * its ~14 callers are untouched):
+ *   - 'granted'  — `checkAcl` already grants the bit (operator / system / allowed).
+ *   - 'rejected' — an explicit tombstone in the `rejected` map covers it (hard no),
+ *                  or there is no acl.json / a parse error (secure default).
+ *   - 'askable'  — neither: an ungranted *intra-pod* edge a controller may grant
+ *                  live. Cross-agent is intra-pod, so this gate never yields the
+ *                  perimeter 'deny' (egress is a separate surface).
+ */
+export function aclVerdict(
+  bus: Bus,
+  agentFolder: string,
+  resolvedAddress: string,
+  channel: string | undefined,
+  bit: string,
+): 'granted' | 'askable' | 'rejected' {
+  if (checkAcl(bus, agentFolder, resolvedAddress, channel).bits.includes(bit)) return 'granted';
+  const merged = resolveMergedPeers(bus, agentFolder);
+  if (!merged) return 'rejected';
+  const rejectedBits = lookupDescriptorAcl({ peers: merged.rejected }, resolvedAddress, channel ?? 'default');
+  return rejectedBits.includes(bit) ? 'rejected' : 'askable';
+}
+
+/**
+ * Three-state verdict on an identity's CONCRETE placement on a channel — the
+ * membership-aware sibling of `aclVerdict`. `granted` requires a concrete grant
+ * (`membershipBits`: no operator/owner god-mode, no `a:*`/`console:*` glob, no `*`
+ * channel-wildcard widening), so a god-mode principal with no real placement
+ * resolves to `askable`, not `granted`. Rejected tombstones still win, read from
+ * the same merged table.
+ *
+ * Used by the push receiver ACCESS gate: a conduit agent must not ferry
+ * an unplaced god-mode principal (operator, configured `u:` owner) past the
+ * destination owner. The concrete read is the same floor the binary gate-3
+ * (`membershipBits`) enforced; this adds the reactive `askable` tier above it.
+ */
+export function membershipVerdict(
+  bus: Bus,
+  agentFolder: string,
+  resolvedAddress: string,
+  channel: string,
+  bit: string,
+): 'granted' | 'askable' | 'rejected' {
+  if (membershipBits(bus, agentFolder, resolvedAddress, channel).includes(bit)) return 'granted';
+  const merged = resolveMergedPeers(bus, agentFolder);
+  if (!merged) return 'rejected';
+  const rejectedBits = lookupDescriptorAcl({ peers: merged.rejected }, resolvedAddress, channel);
+  return rejectedBits.includes(bit) ? 'rejected' : 'askable';
 }
 
 /** Get all channel permissions for a peer from an agent's ACL. Returns undefined if peer not found. */
@@ -374,18 +661,21 @@ export function isOperatorOrOwner(bus: Bus, agentFolder: string, resolvedAddress
  * the receiver must have for delivery to be authorized. Pairs with sender-
  * side verbs as documented in the bit reference at the top of this file:
  *   message    → `i`  (inbound conversation; pairs with sender `o`)
- *   push       → `h`  (host push; pairs with sender `p`)
  *   request    → `a`  (answer; pairs with sender `q`/`r`)
+ *
+ * A push is gated as a `message` (the fold): inserting a turn into a user's
+ * conversation is an `i`-bit delivery, same as any inbound message — the
+ * `p`/`h` pair is gone. The `type: 'push'` packet survives as the delivery
+ * vehicle; only its gate bit moved (`h` → `i`).
  *
  * Use this everywhere a receiver needs to gate inbound traffic — keeps the
  * verb table in one place so adding an operation type means updating one
  * site, not grepping for `hasBit(_, 'i')` etc.
  */
-export type ReceiverOperation = 'message' | 'push' | 'request';
+export type ReceiverOperation = 'message' | 'request';
 
-export function pickVerb(op: ReceiverOperation): 'i' | 'h' | 'a' {
+export function pickVerb(op: ReceiverOperation): 'i' | 'a' {
   switch (op) {
-    case 'push':    return 'h';
     case 'request': return 'a';
     case 'message': return 'i';
   }
@@ -400,19 +690,23 @@ export function pickVerb(op: ReceiverOperation): 'i' | 'h' | 'a' {
  * `verb` is returned for logging/observability — receivers usually log
  * which bit they checked when denying.
  */
-export function gateInbound(bits: string, op: ReceiverOperation): { allowed: boolean; verb: 'i' | 'h' | 'a' } {
+export function gateInbound(bits: string, op: ReceiverOperation): { allowed: boolean; verb: 'i' | 'a' } {
   const verb = pickVerb(op);
   return { allowed: hasBit(bits, verb), verb };
 }
 
-function checkAclConfig(acl: AclConfig, identity: string, channel: string): AclResult {
+function checkAclConfig(
+  acl: { owner: string; peers: Record<string, Record<string, string>>; reject_message: string | null },
+  identity: string,
+  channel: string,
+): AclResult {
   // Owner gets full access (owner, peer keys, and identity all normalized by caller)
   if (acl.owner === identity) {
     return { bits: ALL_BITS, rejectMessage: null };
   }
 
   // Exact peer match first; then prefix glob (e.g. 'a:*', 'console:*').
-  // 'u:*' is rejected at schema parse — users must pair explicitly.
+  // 'u:*' is rejected at schema parse — users are granted individually.
   let peerChannels = acl.peers[identity];
   if (!peerChannels) {
     const colonIdx = identity.indexOf(':');

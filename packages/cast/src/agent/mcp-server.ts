@@ -37,6 +37,7 @@ import { mcpTransport } from '../container/mcp-transport.js';
 import { loadChannelsConfig } from '../conversations/channel-config.js';
 import { createPathResolver } from '../lib/agent-paths.js';
 import { appendFeedRow } from '../lib/feed-format.js';
+import { startMcpKeepalive } from '../lib/mcp-keepalive.js';
 import { readAgentConfig } from '../container/container-runner.js';
 import type { ResourceEntry } from '@getcast/agent-schema/v1';
 
@@ -65,7 +66,11 @@ import type { FileWatchService } from './file-watch-service.js';
  */
 export type DeliveryResult =
   | { ok: true; requestId: string }
-  | { ok: false; reason: string };
+  | { ok: false; reason: string }
+  // Held pending an owner approval (push containment) — not a failure;
+  // the push goes through if/when the sender's owner grants the `p`-edge. Carries
+  // an agent-facing `reason` (the held notice), rendered without the error flag.
+  | { ok: false; held: true; reason: string };
 
 /**
  * Local intra-agent delivery. The `actor` argument is the trust-tier
@@ -152,12 +157,13 @@ export interface McpServerDeps {
   resolveAgentByLabel?: (label: string) => string | undefined;
   /** Route a rejection for a closed inbound request. */
   routeRejection?: RejectionHandler;
-  /** List peer agents with canonical address, alias, description, and per-channel permission bits. */
+  /** List peer agents with canonical address, alias, description, and per-channel
+   *  permission bits + reach-state (granted / askable / rejected). */
   listPeerAgents?: () => {
     canonical: string;
     alias: string;
     description?: string;
-    channels: { name: string; bits: string; sharded?: boolean }[];
+    channels: { name: string; bits: string; sharded?: boolean; reach: 'granted' | 'askable' | 'rejected' }[];
   }[];
   /** Request conversation end with cooldown. */
   onEndConversation?: (conversationKey: string, cooldownSeconds?: number) =>
@@ -169,6 +175,7 @@ export interface McpServerDeps {
     summary: string;
     details?: string;
     participant: string;
+    approver?: 'participant' | 'owner';
     channel?: string;
     conversationKey?: string;
     expiresIn?: number;
@@ -400,7 +407,12 @@ async function handlePushToChannel(opts: {
     actor, resolvedTarget, channel, args.text, callerParticipant, qualifier,
     callerChannel, callerQualifier,
   );
-  if (!result.ok) return textResult(`Push failed: ${result.reason}`, true);
+  if (!result.ok) {
+    // Held (push containment awaiting owner approval) is informational, not an
+    // error — render the held notice plainly so the agent treats it as pending.
+    if ('held' in result && result.held) return textResult(result.reason);
+    return textResult(`Push failed: ${result.reason}`, true);
+  }
   const viaLabel = args.target_agent ?? resolvedTarget;
   return textResult(`Queued for delivery to ${args.channel} via ${viaLabel}. id: ${result.requestId}. Delivery is asynchronous and at-most-once; if it fails, a cast:rejection notice referencing this id arrives on a later turn.`);
 }
@@ -427,7 +439,7 @@ export function registerPushToChannelTool(
 ): void {
   server.tool(
     'conversation__push_to_channel',
-    `Push a turn into a different channel for the current participant. Opens or continues a parallel conversation for the same user; the target conversation may be cold or active. Delivery is asynchronous and at-most-once: the tool returns once the turn is queued, not after the target processes it. If delivery fails, a cast:rejection notice referencing the returned id arrives on a later turn.`,
+    `Push a turn into a different channel, carrying your current participant. The channel may be on this agent or another (target_agent); opens or continues that user's conversation there, cold or active. The participant is fixed to your current user — to reach a different person, use conversation__push_to_participant. Delivery is asynchronous and at-most-once: the tool returns once the turn is queued, not after the target processes it. If delivery fails, a cast:rejection notice referencing the returned id arrives on a later turn.`,
     {
       channel: z.string().describe('Target channel name (e.g., "default"). For sharded channels, use "name~qualifier" to address a specific sub-conversation (e.g., "research~daily").'),
       text: z.string().describe('Message content for the target channel conversation'),
@@ -945,7 +957,7 @@ export function registerTools(server: McpServer, ctx: McpAgentContext, deps: Mcp
     };
     server.tool(
       'conversation__push_to_participant',
-      `Push a turn into another participant's conversation on this agent. The target participant's runner sees it as a new turn (intra-agent only — no target_agent option). Delivery is asynchronous and at-most-once: the tool returns once the turn is queued, not after the target processes it. If delivery fails, a cast:rejection notice referencing the returned id arrives on a later turn.`,
+      `Push a turn into another participant's conversation in a room on this agent. The agent is fixed to you — intra-agent only, no target_agent option; choose the participant and channel. To carry your own user to another agent instead, use conversation__push_to_channel. The target participant's runner sees it as a new turn. Delivery is asynchronous and at-most-once: the tool returns once the turn is queued, not after the target processes it. If delivery fails, a cast:rejection notice referencing the returned id arrives on a later turn.`,
       {
         target_participant: z.string().describe('Target participant identity as returned by agent__list_participants (e.g. `u:abc@srv`)'),
         channel: z.string().describe('Target channel name. For sharded channels, use "name~qualifier" to address a specific sub-conversation.'),
@@ -967,12 +979,17 @@ export function registerTools(server: McpServer, ctx: McpAgentContext, deps: Mcp
   if (hasRequestContext && !disabled('request__list')) {
     server.tool(
       'request__list',
-      'List open requests for the current channel and participant. Shows both inbound (queries you received) and outbound (queries you sent), with status and age.',
-      {},
-      async () => {
-        const { inbound, outbound } = reqDb.listRequests(reqCh, reqPart);
+      'List your outstanding requests — open round-trips still awaiting an answer (outbound: queries you sent; inbound: queries awaiting your reply). A long list is a backlog to triage, not noise: answer what you can and close stale entries with request__close or request__close_all. History is kept forever; pass status ("rejected" for bounces, "all" for everything) to see it.',
+      {
+        status: z.enum(['open', 'fulfilled', 'rejected', 'interrupted', 'closed', 'all']).default('open')
+          .describe('Filter by lifecycle status. Default "open" — the working set. Terminal statuses or "all" for history/audit.'),
+      },
+      async (args) => {
+        const { inbound, outbound } = reqDb.listRequests(reqCh, reqPart, args.status);
         if (inbound.length === 0 && outbound.length === 0) {
-          return textResult('No requests found for this context.');
+          return textResult(args.status === 'open'
+            ? 'No open requests — nothing outstanding for this context. (History is available via the status argument.)'
+            : `No ${args.status === 'all' ? '' : `${args.status} `}requests found for this context.`);
         }
         const lines: string[] = [];
         if (outbound.length > 0) {
@@ -1107,7 +1124,7 @@ export function registerTools(server: McpServer, ctx: McpAgentContext, deps: Mcp
           wasApproved: (tools: string[], match: (a: Record<string, unknown>) => boolean) => {
             const convKey = ctx.getConversationKey?.() ?? null;
             if (!convKey || !approvalDb) return false;
-            return approvalDb.hasApprovalInConversation({ conversationKey: convKey, tools, argsMatch: match });
+            return approvalDb.approvals.hasApprovalInConversation({ conversationKey: convKey, tools, argsMatch: match });
           },
         };
         server.tool(
@@ -1118,7 +1135,14 @@ export function registerTools(server: McpServer, ctx: McpAgentContext, deps: Mcp
             const typedArgs = args as Record<string, unknown>;
 
             let decision: 'approve' | 'skip' | 'block' = 'approve';
-            if (approval.filter) {
+            // A prior owner-directed allow-always / reject-always for this
+            // (participant, tool) is a standing verdict, consulted before the tool's
+            // own filter. Only the owner can set it (handleResponse gates tier on
+            // owner-directed), so it never reflects a participant self-exemption.
+            const standing = approvalDb?.approvals.standingGrant(ctx.participant!, tool.name) ?? null;
+            if (standing === 'reject') decision = 'block';
+            else if (standing === 'allow') decision = 'skip';
+            else if (approval.filter) {
               try { decision = approval.filter(typedArgs, filterCtx); } catch (err) {
                 logger.warn({ tool: tool.name, err }, 'Approval filter threw — blocking');
                 approvalDb?.logEvent('error', 'service', 'approval_filter_threw', `Approval filter threw for ${tool.name}`, {
@@ -1153,6 +1177,7 @@ export function registerTools(server: McpServer, ctx: McpAgentContext, deps: Mcp
               summary,
               details,
               participant: ctx.participant!,
+              approver: approval.approver,
               channel: ctx.channelName ?? undefined,
               conversationKey: ctx.getConversationKey?.() ?? undefined,
               expiresIn: approval.expiry,
@@ -1198,6 +1223,7 @@ export function registerTools(server: McpServer, ctx: McpAgentContext, deps: Mcp
 interface SocketSession {
   transport: StreamableHTTPServerTransport;
   server: McpServer;
+  stopKeepalive: () => void;
 }
 
 /**
@@ -1210,10 +1236,9 @@ export function startMcpSocketServer(
   ctx: McpAgentContext,
   deps: McpServerDeps,
 ): { ready: Promise<void>; close: () => void; port?: number } {
-  if (mcpTransport().mode === 'socket') {
-    // Clean stale socket from prior crash
-    try { fs.unlinkSync(socketPath); } catch { /* ignore */ }
-  }
+  // No clean-stale unlink: `socketPath` carries a per-spawn nonce
+  // (sessionCastSocketPath), so it never collides with a prior instance's live
+  // socket. Crash leftovers are swept at agent init (cleanupStaleSockets).
 
   // Ensure parent directory exists (used for socket file in socket mode, still needed for path structure)
   fs.mkdirSync(path.dirname(socketPath), { recursive: true });
@@ -1253,9 +1278,13 @@ export function startMcpSocketServer(
 
       // Store session after initialize is processed (sessionId is now set)
       if (transport.sessionId) {
-        sessions.set(transport.sessionId, { transport, server });
+        const stopKeepalive = startMcpKeepalive(server, { agentFolder: ctx.agentFolder, sessionId: transport.sessionId });
+        sessions.set(transport.sessionId, { transport, server, stopKeepalive });
         transport.onclose = () => {
-          if (transport.sessionId) sessions.delete(transport.sessionId);
+          const sid = transport.sessionId;
+          if (!sid) return;
+          sessions.get(sid)?.stopKeepalive();
+          sessions.delete(sid);
         };
       }
       return;

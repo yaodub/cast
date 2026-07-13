@@ -17,7 +17,7 @@ import type { ToolResult } from '../../extensions/registry.js';
 import { loadChannelsConfig } from '../../conversations/channel-config.js';
 import { generateId } from '../../lib/utils.js';
 import { isConsoleChannel } from '../index.js';
-import { appendChangelog } from '../shared/audit-log.js';
+import { appendChangelog } from '../../lib/audit-log.js';
 import { readManifestRaw, setLifecycle } from '../shared/lifecycle.js';
 import { renderValidationReport, validateAgentBlueprint } from '../shared/validation.js';
 import type { ConsoleMcpContext, ConsoleMcpDeps } from '../strategy.js';

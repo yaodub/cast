@@ -45,7 +45,7 @@ export function formatMessages(messages: NewMessage[], timezone?: string): strin
  *  Applied at the untrusted-ingest boundary by `formatParticipantMessage`
  *  (strip → escape → wrap), so the stripped body is what reaches the agent AND
  *  what the message log records — not just the log copy. */
-const FRAMEWORK_TAG_NAMES = 'internal|watch|schedule|service|lifecycle|push|rejection';
+const FRAMEWORK_TAG_NAMES = 'internal|watch|schedule|service|lifecycle|push|rejection|pending';
 const FRAMEWORK_PAIR_RE = new RegExp(
   `<cast:(${FRAMEWORK_TAG_NAMES})\\b[^>]*>[\\s\\S]*?<\\/cast:\\1>`,
   'g',

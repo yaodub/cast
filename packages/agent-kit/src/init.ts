@@ -100,10 +100,12 @@ export async function initAgent(
   // Seed config/acl.json on first init (instance-owned, never overwritten on restamp)
   const aclPath = path.join(agentDir, 'config', 'acl.json');
   if (!fs.existsSync(aclPath)) {
+    // Same shape the admin create-agent path seeds (admin/agent-create.ts):
+    // empty allowed map, no reject_message (code falls back to 'Not authorized.').
+    // Access is granted at runtime via owner approval, not pre-listed here.
     const defaultAcl = {
       owner: 'operator',
-      peers: {},
-      reject_message: 'Not authorized. Use /pair <code> to get access.',
+      allowed: {},
     };
     fs.writeFileSync(aclPath, JSON.stringify(defaultAcl, null, 2) + '\n');
   }

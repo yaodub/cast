@@ -27,8 +27,8 @@ export function registerApprovalTools(server: McpServer, ctx: McpAgentContext): 
     },
     async (args) => {
       const rows = args.status === 'all'
-        ? db.listPendingApprovals()  // status='all' currently maps to pending — full audit listing is intentionally deferred until a reader exists for it.
-        : db.listPendingApprovals(ctx.participant ?? undefined);
+        ? db.approvals.listPendingApprovals()  // status='all' currently maps to pending — full audit listing is intentionally deferred until a reader exists for it.
+        : db.approvals.listPendingApprovals(ctx.participant ?? undefined);
 
       if (rows.length === 0) return textResult('No pending approvals.');
 

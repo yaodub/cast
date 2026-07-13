@@ -23,7 +23,7 @@
  *
  * SM's posture: blueprint + config summaries are enough for all eight finding
  * buckets (blueprint_injection_risk, new_outbound_path, pii_surface_change,
- * paired_user_granted, extension_activated, mcp_server_added,
+ * user_access, extension_activated, mcp_server_added,
  * service_code_staged, cross_surface_leak). When a summary stubs something,
  * fall back to `manager__read` for the full file.
  *

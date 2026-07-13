@@ -13,6 +13,7 @@ Argument: `<folder>` (optional).
 
 - **With folder** → anchor at `$CAST_AGENTS_DIR/<folder>/` (default `~/.cast/agents/<folder>/`). Treat the cast repo as read-only context.
 - **Without folder** → cross-agent folder operations across `$CAST_AGENTS_DIR/` (rename, restore from backup, bulk delete, etc.).
+- **New agent** → scaffold it first (admin "create agent," or `pnpm agent init`), which provisions the identity keypair, ACL, and registration; then author its blueprint and service. Don't hand-create a bare folder — the server ignores it until it carries a valid `manifest.json` + `secrets/agent.key`, and its `AGENTS_DIR` reconciler only registers a folder that is already complete when it appears.
 
 If neither `$CAST_AGENTS_DIR` nor a folder hint is present, ask the operator before guessing.
 

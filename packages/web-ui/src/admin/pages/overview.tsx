@@ -6,9 +6,7 @@
  * snapshot of the same four areas. Each section summarizes the
  * relevant data and links into the detail page.
  *
- * Agent fleet lives at `/agents` (AgentsListPage). Pairing requests
- * are surfaced here as a cross-cutting alert because they are
- * server-level operator tasks.
+ * Agent fleet lives at `/agents` (AgentsListPage).
  */
 import { useMemo } from 'preact/hooks';
 import { Link } from 'wouter';
@@ -18,7 +16,7 @@ import type { PageManualEntry } from '@getcast/admin-schema/v1';
 import type { JSX } from 'preact';
 
 export const pageManual: PageManualEntry = {
-  purpose: 'Server overview — messaging, identities, activity, and settings status snapshots, plus pairing-request alerts. Cold-start landing for the admin shell; reachable via the Cast wordmark in the sidebar. Agent fleet is on the All Agents page (/agents).',
+  purpose: 'Server overview — messaging, identities, activity, and settings status snapshots. Cold-start landing for the admin shell; reachable via the Cast wordmark in the sidebar. Agent fleet is on the All Agents page (/agents).',
 };
 
 function formatUptime(ms: number) {
@@ -89,7 +87,6 @@ export function OverviewPage() {
   const status = trpc.status.get.useQuery();
   const routes = trpc.route.list.useQuery();
   const transportTypes = trpc.route.transportTypes.useQuery();
-  const pairingCounts = trpc.agent.pendingPairingCounts.useQuery();
   const idpAgents = trpc.idp.agents.useQuery();
   const idpUsers = trpc.idp.users.useQuery();
   // Last 24h snapshot for the Activity card. Memo'd so the query input
@@ -97,8 +94,6 @@ export function OverviewPage() {
   const since24h = useMemo(() => new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(), []);
   const activityRecent = trpc.host.activityLog.useQuery({ since: since24h, limit: 1 });
   const activityErrors = trpc.host.activityLog.useQuery({ since: since24h, level: 'error', limit: 1 });
-
-  const totalPending = pairingCounts.data?.reduce((sum, r) => sum + r.count, 0) ?? 0;
 
   // Per-transport summary, registry-driven. Order follows the descriptor
   // list (registration order); transports with zero entries are dropped.
@@ -125,30 +120,6 @@ export function OverviewPage() {
           <p class="text-sm text-gray-500 mt-1">Up for {formatUptime(status.data.uptimeMs)}</p>
         )}
       </div>
-
-      {/* Pairing requests — cross-cutting alert */}
-      {totalPending > 0 && (
-        <div class="px-4 py-3 bg-amber-900/20 border border-amber-700/30 rounded-lg space-y-2">
-          <div class="flex items-center gap-2">
-            <span class="w-2.5 h-2.5 rounded-full bg-amber-400 shrink-0" />
-            <span class="text-sm font-medium text-amber-200">
-              {totalPending} outstanding pairing {totalPending === 1 ? 'request' : 'requests'}
-            </span>
-          </div>
-          <div class="flex gap-2 ml-4.5">
-            {pairingCounts.data!.map((r) => (
-              <Link
-                key={r.alias}
-                href={`/agents/${r.alias}/access`}
-                class="inline-flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-amber-200 bg-amber-800/30 hover:bg-amber-800/50 rounded-md transition-colors"
-              >
-                {r.alias}
-                <span class="text-amber-400 font-semibold">{r.count}</span>
-              </Link>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* Four server-scope sections, mirroring the sidebar tiles */}
       <div class="grid grid-cols-2 gap-4">

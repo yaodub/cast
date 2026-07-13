@@ -35,7 +35,7 @@ Cast guarantees **at-most-once** delivery within a process lifetime. Implication
 - **Fire-and-forget paths** (`bus.routeMessage`, `bus.routeEvent`, `void this.route(...)` in MCP tools and console verbs) return after queueing the dispatch — they do not await downstream handler completion. Failures are surfaced via `logger.error`, not via the calling tool's return value.
 - **No retries.** A transient failure in a downstream handler (DB busy, target unregistered, transport down) drops the message. The caller has already returned `{ ok: true }` to its LLM.
 - **Best-effort shutdown.** Graceful shutdown does not flush in-flight bus dispatches before `process.exit`. Messages mid-flight at SIGTERM may be lost. Operator-initiated shutdown is best-effort by design.
-- **The persistence boundary is durable state**, not routing packets — `agent.db`, `gateway.db`, `conversations.jsonl`, `tasks.json`, `paired-users.json`. Any data the system must not lose lives there.
+- **The persistence boundary is durable state**, not routing packets — `agent.db`, `gateway.db`, `conversations.jsonl`, `tasks.json`, `config/acl.json`, `config/user-push.json`. Any data the system must not lose lives there.
 
 When debugging *"the agent reported success but the message never arrived"*, check `logger.error` for the dispatch site — that's where fire-and-forget failures surface.
 
@@ -104,7 +104,7 @@ For *live* events — typing indicators, message_received, lifecycle phases, pus
 **Gotchas with the dogfood path:**
 
 - `/history` shows post-`validateAgentOutput` text only — `<cast:internal>...</cast:internal>` wrapped output lands in `message_log.internal` or the session JSONL, not here.
-- The operator resolves as an operator-tier surface (a bare `admin:`/`cli:` handle, full bits); this path bypasses user-ACL checks you might otherwise see. To exercise real user-ACL paths, use the CLI WebSocket transport (`/cli`) or a configured external transport via real pairing.
+- The operator resolves as an operator-tier surface (a bare `admin:`/`cli:` handle, full bits); this path bypasses user-ACL checks you might otherwise see. To exercise real user-ACL paths, use the CLI WebSocket transport (`/cli`) or a configured external transport with a real granted user.
 - SSE-only transports (browser `ui_directive` navigations, transport-specific rendering) aren't exercised — confirm those fired via host logs instead.
 
 ## Where to look (ordered by usefulness)
@@ -384,6 +384,8 @@ Source agent output → splitQueries() → onRequest hook → ACL check → bus.
 
 Search host logs for `requestId` to trace the full lifecycle.
 
+**Held (askable) edges and `<cast:pending>`.** When the target's receiver-side edge is askable — no grant, no tombstone, the owner simply hasn't decided yet — the request is held and the source gets a non-terminal `<cast:pending>` keyed on the `requestId`, *not* a `<cast:rejection>`. The source's `outbound_requests` row stays `open` throughout; it resolves only on the real outcome (`fulfilled` on the owner-approved answer, `rejected` on a deny or TTL expiry). A row stuck at `open` alongside a raised owner approval is the normal pending state, not a leak. If you instead see the row flip to `rejected` the moment the request is held — before the owner decides — that is the q/a-answer-orphaned regression: the pending notice must ride the `pending` packet, never the terminal `rejection` packet that closes the row and orphans the eventual answer.
+
 ## Reset a session without restarting the server
 
 Sessions live ~30min by default (channel's `idle_timeout`). To force a fresh container with the current prompt/mount config:
@@ -440,7 +442,7 @@ If the defect involves an extension or transport, name it and its non-secret con
 Build the report from non-secret sources only, and sanitize evidence before pasting it. The diagnostic *shape* is what the fixer needs; the contents usually aren't.
 
 - **Never include:** values from `.env` (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, auth tokens), transport credentials from `routes.json`, OAuth material from `auth.json`. The environment block above reads none of these — keep it that way.
-- **Sanitize:** private message bodies (`message_log.text`, gateway `packets.text`, transcript user/assistant content) — quote only the fragment that shows the defect, replace the rest with `[…]`. Paired-user PII — real names, emails, phone numbers, Telegram/email chat IDs. A home path only when the username in it isn't relevant.
+- **Sanitize:** private message bodies (`message_log.text`, gateway `packets.text`, transcript user/assistant content) — quote only the fragment that shows the defect, replace the rest with `[…]`. User PII — real names, emails, phone numbers, Telegram/email chat IDs. A home path only when the username in it isn't relevant.
 - **Keep — useful and non-identifying:** markers and cast tags, tool names and arg *shapes*, error strings, row/byte/turn counts, timestamps and durations, session ids, conversation keys, `requestId`s.
 
 ### Report template

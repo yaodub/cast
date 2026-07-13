@@ -278,10 +278,10 @@ export class ServerScopeConsole implements BusHandler {
    */
   protected readonly deliverToAgent: NonNullable<ConsoleMcpDeps['deliverToAgent']> = async (_actor, targetAgent, channel, text, participant) => {
     // Source-side authorization — defense-in-depth. Receiver still gates inbound
-    // (target's handleMessage runs its own checkAcl with `h` for system channels,
-    // `i` for user channels). The `OutboundQueryTracker` uses the same helper
+    // (target's handleMessage runs its own checkAcl with `i` — post-fold, push
+    // is gated as a message). The `OutboundQueryTracker` uses the same helper
     // with `'q'` for the query path.
-    if (!hasOutboundBit(this.spec.descriptor.address, targetAgent, channel, 'p')) {
+    if (!hasOutboundBit(this.spec.descriptor.address, targetAgent, channel, 'o')) {
       return { ok: false, reason: `${this.spec.descriptor.label} not authorized to push to ${targetAgent} on channel "${channel}"` };
     }
     // Mint a correlation `requestId` — same shape as agent push so the
@@ -406,8 +406,8 @@ export class ServerScopeConsole implements BusHandler {
     const channelName = msg.routing?.channel ?? this.spec.strategy.channelName;
     if (!isOperatorTier(from)) {
       const { bits } = checkAcl(this.bus, this.spec.host.folder, from, channelName);
-      const op = msg.type === 'push' ? 'push' : 'message';
-      const { allowed, verb } = gateInbound(bits, op);
+      // A push is gated as a message (post-fold) — both check `i`.
+      const { allowed, verb } = gateInbound(bits, 'message');
       if (!allowed) {
         logger.warn(
           { from, console: this.spec.consoleName, channel: channelName, bits, requiredVerb: verb },

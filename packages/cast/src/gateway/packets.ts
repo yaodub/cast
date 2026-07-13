@@ -50,6 +50,7 @@ const ApprovalRequestPktSchema = z.object({
   summary: z.string(),
   details: z.string().optional(),
   expiresAt: z.string().optional(),
+  tiered: z.boolean().optional(),
 });
 
 const ApprovalAckPktSchema = z.object({
@@ -59,6 +60,7 @@ const ApprovalAckPktSchema = z.object({
   decision: z.enum(['approved', 'rejected', 'expired']),
   summary: z.string(),
   reason: z.string().optional(),
+  tier: z.enum(['once', 'always']).optional(),
 });
 
 // Preview packets — nested discriminated on `kind`. Only `text` ships in v1;
@@ -135,6 +137,7 @@ export function approvalRequestPkt(
   approvalId: string,
   details?: string,
   expiresIn?: number,
+  tiered?: boolean,
 ): ApprovalRequestPkt {
   const expiresAt = new Date(Date.now() + (expiresIn ?? DEFAULT_APPROVAL_EXPIRY) * 1000).toISOString();
   return {
@@ -146,6 +149,7 @@ export function approvalRequestPkt(
     details,
     approvalId,
     expiresAt,
+    tiered,
     timestamp: new Date().toISOString(),
   };
 }
@@ -178,8 +182,13 @@ export function approvalAckPkt(
   decision: 'approved' | 'rejected' | 'expired',
   summary: string,
   reason?: string,
+  tier?: 'once' | 'always',
 ): ApprovalAckPkt {
-  const label = decision === 'approved' ? 'Approved' : decision === 'rejected' ? 'Rejected' : 'Expired';
+  const base = decision === 'approved' ? 'Approved' : decision === 'rejected' ? 'Rejected' : 'Expired';
+  // `always` prefixes the verb so the ack reads as the action taken — "Always
+  // approved" / "Always rejected" — matching the four button labels. `expired`
+  // carries no tier.
+  const label = tier === 'always' && decision !== 'expired' ? `Always ${decision}` : base;
   return {
     type: 'approval_ack',
     from,
@@ -189,6 +198,7 @@ export function approvalAckPkt(
     decision,
     summary,
     reason,
+    tier,
     timestamp: new Date().toISOString(),
   };
 }

@@ -27,6 +27,7 @@
  * All decision logic (persistence, routing, respawn) lives upstream.
  */
 import type { ChildProcess } from 'child_process';
+import { randomBytes } from 'crypto';
 import mime from 'mime';
 
 import {
@@ -644,6 +645,42 @@ export class ConversationRunner {
    * `<cast:kind>...</cast:kind>` so the agent's prompt can recognize machine
    * stimulus.
    */
+  /**
+   * Record one inbound message in the agent message log. The single write site
+   * shared by both delivery paths — the warm `pipeMessage` (on successful pipe)
+   * and the cold `spawn` (which drains the spawn prompt straight to the
+   * container, bypassing `pipeMessage`). Without the spawn-side call the first
+   * message of every conversation would never reach `message_log`.
+   *
+   * Participant input is already sanitized upstream (`formatParticipantMessage`
+   * strips the framework family at the ingest boundary), so the log records
+   * exactly what the agent received; `rawText` (when supplied) is that sanitized
+   * pre-envelope body. Framework-emitted kinds keep the `<cast:${kind}>` wrapper
+   * (the provenance signal telling scheduled/watch/service/etc. apart from
+   * spontaneous self-talk) and log under sender `system` — so denial corrections
+   * and other framework stimuli stay attributable (`WHERE sender = 'system'`)
+   * instead of masquerading as the user's own words.
+   */
+  private logInboundMessage(
+    text: string,
+    kind: DeliverKind,
+    opts?: { rawText?: string; attrs?: Record<string, string>; attachments?: Attachment[] },
+  ): void {
+    if (!this.messageLog) return;
+    const logText = kind === 'participant'
+      ? (opts?.rawText ?? text)
+      : wrapForKind(text, kind, opts?.attrs);
+    const attachmentsMeta: AttachmentMeta[] | undefined = opts?.attachments?.map((a) => ({
+      label: a.filename, hash: a.hash!, mimeType: a.mimeType, size: a.filesize ?? 0,
+    }));
+    this.messageLog.logInbound(
+      this.participantAddress,
+      kind === 'participant' ? this.participantAddress : 'system',
+      logText, this.channelName, this.conversationKey,
+      attachmentsMeta,
+    );
+  }
+
   pipeMessage(
     text: string,
     attachments?: Attachment[],
@@ -665,23 +702,7 @@ export class ConversationRunner {
       return false;
     }
 
-    const rawText = opts?.rawText;
     const wrapped = wrapForKind(text, kind, opts?.attrs);
-
-    const attachmentsMeta: AttachmentMeta[] | undefined = attachments?.map((a) => ({
-      label: a.filename, hash: a.hash!, mimeType: a.mimeType, size: a.filesize ?? 0,
-    }));
-    // Participant input is already sanitized upstream — `formatParticipantMessage`
-    // strips the framework family at the ingest boundary, so the log records
-    // exactly what the agent received. `rawText` (when supplied) is that
-    // sanitized pre-envelope body. Framework-emitted kinds keep the
-    // `<cast:${kind}>` wrapper in the log — the provenance signal that tells
-    // scheduled/watch/service/etc. fires apart from spontaneous self-talk.
-    const logText = kind === 'participant' ? (rawText ?? text) : wrapped;
-    this.messageLog?.logInbound(
-      this.participantAddress, this.participantAddress, logText, this.channelName, this.conversationKey,
-      attachmentsMeta,
-    );
 
     if (this._state !== 'running' || this.authErrorSeen) return false;
     // Cleanup turn: keep the warm session, but switch the live query to the
@@ -694,6 +715,11 @@ export class ConversationRunner {
       ? resolveModel(readAgentConfig(this.host.folder), { channelName: this.channelName, phase: 'cleanup' })
       : undefined;
     if (!this.sendViaIpc(wrapped, attachments, { kind: wireKind, model: cleanupModel })) return false;
+
+    // Record inbound AFTER a successful pipe (not before the fail returns above),
+    // so a message that fails to pipe and gets re-queued isn't double-logged when
+    // the respawn's cold path (`spawn`) records it instead. See logInboundMessage.
+    this.logInboundMessage(text, kind, { rawText: opts?.rawText, attrs: opts?.attrs, attachments });
 
     logger.info(
       { conversationKey: this.conversationKey, address: this.address },
@@ -758,6 +784,19 @@ export class ConversationRunner {
     const promptText = prompt.map((m) => wrapForKind(m.text, m.kind, m.attrs)).join('\n\n');
     const allAttachments = prompt.flatMap((m) => m.attachments ?? []);
 
+    // Record each drained message inbound. The cold path delivers the spawn
+    // prompt straight to the container without ever calling pipeMessage, so
+    // without this the conversation's opening message (and any that queued while
+    // idle-no-runner) would never reach message_log. Warm messages log via
+    // pipeMessage instead; a crash-replay re-delivers piped messages through
+    // here and logs them again — faithful to the delivery, and duplicate-on-
+    // replay is a tolerated soft failure (see Conversation.requeuePipedOnAbnormalEnd).
+    for (const m of prompt) {
+      this.logInboundMessage(m.text, m.kind ?? 'participant', {
+        rawText: m.rawText, attrs: m.attrs, attachments: m.attachments,
+      });
+    }
+
     const host = this.host;
     const singleShot = this.isSingleShot;
 
@@ -797,13 +836,13 @@ export class ConversationRunner {
       // Skip the await when no MCP path applies — `setupConversationMcp` yields a microtask
       // even on the no-op path, and tests rely on `runContainerAgent` being called
       // synchronously off `route()` when neither console nor mcpDeps is wired.
-      const convMcpPort = (this.consoleName || this.mcpDeps)
+      const convMcp = (this.consoleName || this.mcpDeps)
         ? await this.setupConversationMcp()
         : undefined;
 
       // Build MCP TCP port map (TCP mode only; ports are undefined in socket mode)
-      const mcpPorts = convMcpPort !== undefined
-        ? { cast: convMcpPort, ...this.agentMcpPorts }
+      const mcpPorts = convMcp?.port !== undefined
+        ? { cast: convMcp.port, ...this.agentMcpPorts }
         : this.agentMcpPorts;
 
       // Typing + lifecycle emissions — cleanup-phase suppression is
@@ -847,6 +886,7 @@ export class ConversationRunner {
           address: this.address,
           attachments: containerAttachments,
           mcpPorts,
+          mcpSocketPath: convMcp?.socketPath,
           overrideMounts: this.overrideMounts,
           workdir: this.workdir,
           containerNetwork: this.containerNetwork,
@@ -1165,10 +1205,14 @@ export class ConversationRunner {
    * port number, or undefined when neither path applies (no console + no
    * mcpDeps wired).
    */
-  private async setupConversationMcp(): Promise<number | undefined> {
+  private async setupConversationMcp(): Promise<{ port?: number; socketPath: string } | undefined> {
+    // One nonce per spawn → a socket path this server instance solely owns, so a
+    // superseded runner's close() unlinks only its own path, never this live
+    // socket. The host path is threaded into the container mount; the container
+    // always sees the fixed `/mcp/cast.sock`.
+    const socketPath = sessionCastSocketPath(this.agentFolder, this.conversationKey, randomBytes(3).toString('hex'));
     if (this.consoleName) {
-      const convSocketPath = sessionCastSocketPath(this.agentFolder, this.conversationKey);
-      const mcp = startConsoleMcpServer(convSocketPath, {
+      const mcp = startConsoleMcpServer(socketPath, {
         hostFolder: this.agentFolder,
         agentId: this.address,
         participant: this.replyTo ?? this.participant ?? null,
@@ -1181,11 +1225,10 @@ export class ConversationRunner {
       }, this.consoleDeps ?? {});
       this.mcpCloser = mcp;
       await mcp.ready;
-      return mcp.port;
+      return { port: mcp.port, socketPath };
     }
     if (this.mcpDeps) {
-      const convSocketPath = sessionCastSocketPath(this.agentFolder, this.conversationKey);
-      const mcp = startMcpSocketServer(convSocketPath, {
+      const mcp = startMcpSocketServer(socketPath, {
         agentFolder: this.agentFolder,
         agentId: this.address,
         host: this.host,
@@ -1204,7 +1247,7 @@ export class ConversationRunner {
       }, this.mcpDeps);
       this.mcpCloser = mcp;
       await mcp.ready;
-      return mcp.port;
+      return { port: mcp.port, socketPath };
     }
     return undefined;
   }

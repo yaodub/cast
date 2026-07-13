@@ -63,12 +63,13 @@ describe('buildConsoleMounts', () => {
     //
     //   /agent/blueprint     — where the agent writes
     //   /home/node/.claude   — SDK session state
-    //   /mcp/cast.sock       — MCP tool server (without it the session has zero tools)
     //
+    // /mcp/cast.sock is appended at the spawn chokepoint (container-runner) from
+    // the runner's nonce'd socket path, not by buildConsoleMounts — see Fix 1.
     // /ref/snapshot and /ref/manuals are nice-to-haves, not asserted here.
     expect(containerPaths).toContain('/agent/blueprint');
     expect(containerPaths).toContain('/home/node/.claude');
-    expect(containerPaths).toContain('/mcp/cast.sock');
+    expect(containerPaths).not.toContain('/mcp/cast.sock');
   });
 
   it('Design mount for /agent/blueprint is writable', () => {
@@ -115,10 +116,10 @@ describe('buildConsoleMounts', () => {
     // reach is `config/` only.
     expect(containerPaths).not.toContain('/agent/ext');
 
-    // Base mounts still present — MCP socket is the one that ensures the
-    // session has any tools at all.
+    // Base mounts still present. The MCP socket (without which the session has
+    // zero tools) is appended at spawn (container-runner), not here — see Fix 1.
     expect(containerPaths).toContain('/home/node/.claude');
-    expect(containerPaths).toContain('/mcp/cast.sock');
+    expect(containerPaths).not.toContain('/mcp/cast.sock');
 
     // manifest.json is deliberately NOT mounted — single-file binds fail
     // on Apple Container. Its fields reach the prompt via ConsoleContext.
@@ -228,9 +229,10 @@ describe('buildConsoleMounts', () => {
       expect(m.hostPath.endsWith('/secrets'), `mount ${m.hostPath} references secrets/`).toBe(false);
     }
 
-    // Base mounts still present.
+    // Base mounts still present. The MCP socket is appended at spawn
+    // (container-runner), not by buildConsoleMounts — see Fix 1.
     expect(containerPaths).toContain('/home/node/.claude');
-    expect(containerPaths).toContain('/mcp/cast.sock');
+    expect(containerPaths).not.toContain('/mcp/cast.sock');
   });
 
   it('Security Manager mounts a single /ref/agents view dir + its own /home/agent rw home', () => {
@@ -267,9 +269,10 @@ describe('buildConsoleMounts', () => {
       expect(m.hostPath.endsWith('/ext'), `mount ${m.hostPath} references ext/`).toBe(false);
     }
 
-    // Base mounts still present.
+    // Base mounts still present. The MCP socket is appended at spawn
+    // (container-runner), not by buildConsoleMounts — see Fix 1.
     expect(containerPaths).toContain('/home/node/.claude');
-    expect(containerPaths).toContain('/mcp/cast.sock');
+    expect(containerPaths).not.toContain('/mcp/cast.sock');
   });
 
   it('server-scope mount count stays flat as agent count scales past the 22-mount VirtIO-FS ceiling', () => {

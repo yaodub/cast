@@ -59,7 +59,7 @@ The server builds the system prompt from 10 layers, in order. Later layers appea
 | 3 | Profile | `<agent-profile-skills>` | Profile-level skill instructions |
 | 4 | **`blueprint/identity/prompt.md`** | *(raw, no wrapper)* | **Agent personality and behavior** |
 | 5 | **`blueprint/identity/whoami.md`** | `<agent-identity>` | **Structured identity: name, location, role** |
-| 6 | **`blueprint/identity/peers.md`** | `<agent-peers>` | **Agent peer relationships: who to consult, channels, context** |
+| 6 | **Server-computed from the ACL** | `<agent-peers>` | **Granted first-degree peer reach: which siblings this agent may reach, on which channels** |
 | 7 | **`blueprint/identity/skills.md`** | `<agent-skills>` | **Operational skills and systems** |
 | 8 | **`blueprint/channels/{name}/prompt.md`** | `<channel-instructions>` | **Channel-specific instructions (active channel only)** |
 | 9 | **`shared/ext/service/agent-context.md`** | `<service-context>` | Dynamic context written by the agent service |
@@ -77,21 +77,21 @@ A blueprint names no user. Who the agent is talking to is resolved at the routin
 <participant id="u:a7f3k@d9c1e2" declared-name="Alice" />
 ```
 
-`id` is the bare server-issued identity (operator surfaces carry their bare surface, e.g. `cli:alice`). The transport handle (`tg:12345`) is gateway-local and never reaches the agent. `declared-name` is the name that participant chose, via `/set-name`, pairing, or the transport. To address someone by name, read `declared-name`. Never write a name into `prompt.md`. The same prompt serves every participant, and the agent tells them apart from this element, not from baked-in text.
+`id` is the bare server-issued identity (operator surfaces carry their bare surface, e.g. `cli:alice`). The transport handle (`tg:12345`) is gateway-local and never reaches the agent. `declared-name` is the name that participant chose, via `/set-name` or the transport. To address someone by name, read `declared-name`. Never write a name into `prompt.md`. The same prompt serves every participant, and the agent tells them apart from this element, not from baked-in text.
 
 Treat all participants uniformly. There is no privileged "operator" persona in the blueprint. Operator surfaces (`cli:`/`admin:` handles) hold full bits at the ACL layer, and a hosted multi-user deployment may have no operator participant at all. To tell a human apart from a peer agent, read the inbound source tags: a peer agent's turn arrives wrapped (e.g. `<cast:push fromAgent=...>` / a query envelope) and should be validated before acting on, while a participant's own turn has no such wrapper.
 
-Hardcoding a recipient, an address, or a specific person's name collapses three roles (author, operator, runtime user) into one and yields an agent that can only ever serve one person. Operator-supplied values belong in config (Configure's lane) or a resource slot. Runtime recipients are acquired at runtime: the message being answered, pairing, or discovery (`agent__list_channels` / `agent__list_participants` — scoped to the rooms the calling cell is placed in, so relay cells discover their co-members without any baked address). See `console/what-is-an-agent.md` and `console/design/anti-patterns.md` (Principle 6).
+Hardcoding a recipient, an address, or a specific person's name collapses three roles (author, operator, runtime user) into one and yields an agent that can only ever serve one person. Operator-supplied values belong in config (Configure's lane) or a resource slot. Runtime recipients are acquired at runtime: the message being answered, or discovery (`agent__list_peers` for sibling agents; `agent__list_channels` / `agent__list_participants` — scoped to the rooms the calling cell is placed in, so relay cells discover their co-members without any baked address). See `console/what-is-an-agent.md` and `console/design/anti-patterns.md` (Principle 6).
 
 ### blueprint/identity/
 
-The four contract files the server reads (all live inside `blueprint/identity/`):
+The contract files the server reads (all live inside `blueprint/identity/`):
 
 **`prompt.md`** — Who the agent is and how it behaves. Personality, conversational style, what to do and what not to do. This is the agent's voice. Injected as raw text (no XML wrapper), so it reads naturally in the prompt.
 
 **`whoami.md`** — Structured identity facts. Name, location, role. Wrapped in `<agent-identity>` tags. Often ships as a stub the author (or a Design console session) fills in as the agent's role firms up — at runtime the agent reads it read-only at `/identity` and cannot edit it. Facts the agent learns at runtime belong in `/memory/`; promote the stable ones into `whoami.md` through the authoring path.
 
-**`peers.md`** — Agent peer relationships. Describes other agents this agent works with: what they do, which channels to query, when to consult them, and any constraints. Wrapped in `<agent-peers>` tags. Only for agent-to-agent relationships — human contacts are runtime-discovered via the participant system.
+**Peer reach (Layer 6, `<agent-peers>`).** Not a file — the server computes the agent's granted first-degree reach from its `acl.json` and injects it: which sibling agents it may reach, on which channels. The agent discovers more via `agent__list_peers` (siblings tagged granted / askable / rejected). To shape how an agent engages a peer beyond the grant, put that guidance in `prompt.md` or `skills.md`.
 
 **`skills.md`** — Operational systems the agent uses. Data formats, storage conventions, validation rules. Think of this as reference material — how things work, not who you are. Wrapped in `<agent-skills>` tags.
 
@@ -123,7 +123,7 @@ Operator-managed deployment settings. Separated from `props/` because these cont
 - **`agent.json`** — Runtime knobs: model, per-channel/per-phase `modelOverrides`, network isolation mode, timezone, backup, max conversations. No blueprint dependency.
 - **`provisions.json`** — Admin's deployment-specific values for capability slots: resource paths, extra pip packages, additional disabled tools. Optional — omit when not needed.
 - **`transport.json`** — Transport bindings (e.g., Telegram bot token and channel routing).
-- **`acl.json`** — Access control: `peers.<peer>.<channel> = "<bits>"` per-peer-per-channel grants. Each entry holds this agent's permissions toward that peer on that channel — both inbound-accept bits (`i`, `a`, `h`) and outbound bits (`o`, `q`, `r`, `p`). For any cross-agent edge, both sides write entries in their own `acl.json` — the sender's file records its outbound bit, the receiver's records its inbound bit. Peer identifiers are agent aliases (matching `manifest.name`) or canonical `u:<guid>@<issuer>` for humans; channel is whatever the receiver named it (same name on both sides of an edge). See SPEC.md §8 for the bit table and §16 for the cross-agent check matrix.
+- **`acl.json`** — Access control: `allowed.<peer>.<channel> = "<bits>"` per-peer-per-channel grants, with a matching `rejected` map for standing blocks. Each entry holds this agent's permissions toward that peer on that channel — inbound-accept bits (`i`, `a`) and outbound bits (`o`, `q`, `r`, `p`). For any cross-agent edge, both sides write entries in their own `acl.json` — the sender's file records its outbound bit, the receiver's records its inbound bit. Peer identifiers are agent aliases (matching `manifest.name`) or canonical `u:<guid>@<issuer>` for humans; channel is whatever the receiver named it (same name on both sides of an edge). Grants can also arrive reactively — an ungranted edge is held and the owner approves the first contact; while it waits, the reaching side gets a non-terminal `<cast:pending>` notice (not a rejection), and its outbound request row stays `open` so the eventual approved answer still lands. See SPEC.md §7 for the bit table and §16 for the cross-agent check matrix.
 
 For field-level details, see SPEC.md §8.
 
@@ -192,7 +192,7 @@ Task output is sent to the user. The prompt can instruct the task agent to wrap 
 |------|-------------|
 | `conversation__write_summary` | Save a summary of the current conversation. Used during cleanup. |
 | `conversation__list_summaries` | List recent conversations with summaries, status, and last activity. |
-| `conversation__push_to_channel` | Push a turn into a different channel for the current participant; optionally onto a different agent via `target_agent` (cross-agent requires `p` bit + receiver `h` bit + originating user `i` bit on the target channel). Returns a correlation `id` in the result text — if the receiver later denies the push, a `<cast:rejection request="<id>">` arrives on a future turn so the sender can recognize the failure. The receiving channel's agent has full autonomy (can suppress with `<cast:internal>` tags). |
+| `conversation__push_to_channel` | Push a turn into a different channel for the current participant; optionally onto a different agent via `target_agent` (cross-agent requires the sender's `p` toward the target agent + the carried user's `io` on the target channel). Returns a correlation `id` in the result text — if the receiver later denies the push, a `<cast:rejection request="<id>">` arrives on a future turn so the sender can recognize the failure. The receiving channel's agent has full autonomy (can suppress with `<cast:internal>` tags). |
 | `conversation__push_to_participant` | Push a turn into another participant's conversation on this agent (intra-agent only — no `target_agent`). Returns a correlation `id` for receiver-rejection correlation, same as `push_to_channel`. |
 
 ### Agent tools
@@ -254,6 +254,6 @@ Each extension package contains:
 - `manual/README.md` — mechanical reference (tools, config, secrets, security, admin)
 - `manual/SKILL.md` — behavioral skill (prompt, bootstrap, cleanup)
 
-Read the manual before enabling an extension. The SECURITY section informs the mandatory security assessment (see INSTRUCTIONS.md rule 11).
+Read the manual before enabling an extension. The SECURITY section informs the mandatory security assessment.
 
 For authoring extensions, see `packages/extension-schema/AUTHORING.md`. For manual format, see each extension's `manual/README.md`.

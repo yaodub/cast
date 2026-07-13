@@ -21,7 +21,6 @@ import {
   AGENTS_DIR,
   agentPath,
   mcpDir,
-  sessionCastSocketPath,
   sessionClaudePath,
 } from '../config.js';
 import { mcpTransport } from './mcp-transport.js';
@@ -149,15 +148,11 @@ export function mountTable(
   // TCP mode: skip mounts — container connects via host.docker.internal.
   if (mcpTransport().mode === 'socket') {
     if (conversationKey) {
-      const sockPath = sessionCastSocketPath(agent.folder, conversationKey);
-      if (fs.existsSync(sockPath)) {
-        mounts.push({
-          hostPath: sockPath,
-          containerPath: '/mcp/cast.sock',
-          readonly: false,
-          isSystem: true,
-        });
-      }
+      // The per-conversation `/mcp/cast.sock` is appended at the spawn chokepoint
+      // (container-runner) from this spawn's nonce'd host path — see
+      // `ContainerInput.mcpSocketPath`. Here we mount only the agent-level
+      // service/external sockets; `cast.sock` is excluded because the per-conv
+      // socket owns the `/mcp/cast.sock` slot.
       const sockDir = mcpDir(agent.folder);
       if (fs.existsSync(sockDir)) {
         const agentSocks = fs.readdirSync(sockDir).filter(
@@ -265,4 +260,23 @@ export function buildVolumeMounts(
 ): VolumeMount[] {
   ensureAgentMountDirs(agent, conversationKey);
   return mountTable(agent, conversationKey, resources);
+}
+
+/**
+ * Append this spawn's per-conversation MCP socket as the fixed `/mcp/cast.sock`.
+ *
+ * Owned here (not in `mountTable`/`buildBaseMounts`) so the single nonce'd host
+ * path the runner generates at spawn reaches both the socket server and the
+ * mount — one socket-path owner for both the console and normal-agent paths.
+ *
+ * Returns a NEW array; never mutates `base` (console reuses its `overrideMounts`
+ * across respawns). `existsSync` is false in TCP mode (no socket file is created)
+ * and when no MCP socket applies, so the mount is naturally skipped.
+ */
+export function withMcpSocketMount(base: VolumeMount[], mcpSocketPath: string | undefined): VolumeMount[] {
+  if (!mcpSocketPath || !fs.existsSync(mcpSocketPath)) return base;
+  return [
+    ...base,
+    { hostPath: mcpSocketPath, containerPath: '/mcp/cast.sock', readonly: false, isSystem: true },
+  ];
 }

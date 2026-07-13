@@ -103,19 +103,35 @@ function ApprovalRequestCard({ meta, timestamp }: { meta: Extract<MessageMeta, {
       {meta.expiresAt && (
         <p class="text-gray-600 text-[10px] mt-1">Expires {new Date(meta.expiresAt).toLocaleTimeString()}</p>
       )}
-      <div class="flex gap-2 mt-3">
+      <div class="flex flex-wrap gap-2 mt-3">
         <button
-          onClick={() => respondToApproval(meta.approvalId, 'approved')}
+          onClick={() => respondToApproval(meta.approvalId, 'approved', 'once')}
           class="px-3 py-1.5 rounded-lg bg-teal-700/60 text-teal-200 text-xs font-medium hover:bg-teal-700 transition-colors"
         >
           Approve
         </button>
+        {meta.tiered && (
+          <button
+            onClick={() => respondToApproval(meta.approvalId, 'approved', 'always')}
+            class="px-3 py-1.5 rounded-lg bg-teal-700/60 text-teal-200 text-xs font-medium hover:bg-teal-700 transition-colors"
+          >
+            Always approve
+          </button>
+        )}
         <button
-          onClick={() => respondToApproval(meta.approvalId, 'rejected')}
+          onClick={() => respondToApproval(meta.approvalId, 'rejected', 'once')}
           class="px-3 py-1.5 rounded-lg bg-gray-700/60 text-gray-300 text-xs font-medium hover:bg-gray-600 transition-colors"
         >
           Reject
         </button>
+        {meta.tiered && (
+          <button
+            onClick={() => respondToApproval(meta.approvalId, 'rejected', 'always')}
+            class="px-3 py-1.5 rounded-lg bg-gray-700/60 text-gray-300 text-xs font-medium hover:bg-gray-600 transition-colors"
+          >
+            Always reject
+          </button>
+        )}
       </div>
     </div>
   );
@@ -123,7 +139,11 @@ function ApprovalRequestCard({ meta, timestamp }: { meta: Extract<MessageMeta, {
 
 function ApprovalAckCard({ meta, timestamp }: { meta: Extract<MessageMeta, { type: 'approval_ack' }>; timestamp: string }) {
   const icon = meta.decision === 'approved' ? '✅' : meta.decision === 'rejected' ? '❌' : '⏰';
-  const label = meta.decision.charAt(0).toUpperCase() + meta.decision.slice(1);
+  const base = meta.decision.charAt(0).toUpperCase() + meta.decision.slice(1);
+  // Surface the tier so the ack reads as the action taken: "Always approved" /
+  // "Always rejected" when a standing grant/tombstone was written, plain
+  // "Approved" / "Rejected" for a one-shot. (`expired` carries no tier.)
+  const label = meta.tier === 'always' && meta.decision !== 'expired' ? `Always ${meta.decision}` : base;
   return (
     <div class="max-w-[75%] rounded-xl bg-gray-800/80 px-4 py-3 text-sm">
       <div class="flex items-center gap-2 text-gray-300 font-medium">

@@ -342,7 +342,6 @@ const PRIORITY_PATTERNS: ReadonlyArray<{ pattern: string; priority: number }> = 
   { pattern: 'prompt.md', priority: 1 },
   { pattern: 'whoami.md', priority: 1 },
   { pattern: 'skills.md', priority: 1 },
-  { pattern: 'peers.md', priority: 1 },
   { pattern: 'channels/**/prompt.md', priority: 1 },
   { pattern: 'channels/**/skills.md', priority: 1 },
 

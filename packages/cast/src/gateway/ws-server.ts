@@ -78,7 +78,7 @@ interface LocalWssDeps {
     payload: string;
   }>;
   /** Handle an approval response from a CLI client. */
-  onApprovalResponse?: (agentAddress: string, handle: string, id: string, decision: 'approved' | 'rejected', reason?: string) => void;
+  onApprovalResponse?: (agentAddress: string, handle: string, id: string, decision: 'approved' | 'rejected', reason?: string, tier?: 'once' | 'always') => void;
 }
 
 interface ClientState {
@@ -97,7 +97,7 @@ const WsBaseFields = {
 const WsMessageSchema = z.discriminatedUnion('type', [
   z.object({ ...WsBaseFields, type: z.literal('message'), text: z.string().min(1) }),
   z.object({ ...WsBaseFields, type: z.literal('history'), limit: z.number().int().positive().optional() }),
-  z.object({ ...WsBaseFields, type: z.literal('approval_response'), id: z.string().min(1), decision: z.enum(['approved', 'rejected']), reason: z.string().optional() }),
+  z.object({ ...WsBaseFields, type: z.literal('approval_response'), id: z.string().min(1), decision: z.enum(['approved', 'rejected']), reason: z.string().optional(), tier: z.enum(['once', 'always']).optional() }),
 ]);
 
 export interface WsServer {
@@ -181,7 +181,7 @@ export function setupLocalWss(wss: WebSocketServer, deps: LocalWssDeps): WsServe
             break;
           case 'approval_response':
             if (deps.onApprovalResponse) {
-              deps.onApprovalResponse(agentAddress, data.handle, data.id, data.decision, data.reason);
+              deps.onApprovalResponse(agentAddress, data.handle, data.id, data.decision, data.reason, data.tier);
             }
             break;
         }

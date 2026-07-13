@@ -199,7 +199,7 @@ export function UseServerDashboard() {
           <ConsoleCard
             kind="configure"
             name="Per-agent Configure"
-            desc="Wire this agent to your install — model, secrets, transports, pairings, runtime knobs. Where an Operator spends most of their time."
+            desc="Wire this agent to your install — model, secrets, transports, access, runtime knobs. Where an Operator spends most of their time."
           />
         </div>
       </div>
@@ -232,7 +232,7 @@ export function UseServerDashboard() {
       <p style={proseP}>
         For cross-agent work — composing a multi-agent system, auditing the fleet, agent-to-
         agent permissions — switch to one of the <strong>All Agents</strong> console agents.
-        Per-agent <ConsoleChip kind="configure" /> handles <em>human</em> pairings only;
+        Per-agent <ConsoleChip kind="configure" /> handles <em>human</em> access only;
         agent-to-agent permissions and fleet-wide audits live under All Agents.
       </p>
 

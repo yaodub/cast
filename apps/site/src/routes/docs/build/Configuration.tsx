@@ -80,17 +80,19 @@ export function BuildConfiguration() {
 
       <H2>acl.json — who can reach the agent</H2>
       <p style={proseP}>
-        Access is granted per peer, per channel, as a set of permission bits. An empty{' '}
-        <code>peers</code> map means only the owner can talk to the agent.
+        Access is granted per caller, per channel, as a set of permission bits. An empty{' '}
+        <code>allowed</code> map means only the owner can talk to the agent.
       </p>
 
       <FileSpec name="acl.json" meta="json · access control list">
         <Code lang="json" noHead>{`{
   "owner": "operator",
-  "peers": {
-    "research-agent": { "lookup": "q" }
+  "allowed": {
+    "research-agent": { "lookup": "q" },
+    "u:sam@server": { "default": "io" }
   },
-  "reject_message": "Not authorized. Use /pair <code> to get access."
+  "rejected": {},
+  "reject_message": "Not authorized to reach this agent."
 }`}</Code>
         <ul style={proseUl}>
           <li>
@@ -101,12 +103,17 @@ export function BuildConfiguration() {
             channels they are placed in.
           </li>
           <li>
-            <code>peers</code> — nested map: peer identity → channel name → bit string.
-            Channel <code>"*"</code> matches any user-defined channel (not the
-            console-only <code>__*</code> channels).
+            <code>allowed</code> — nested map: caller identity → channel name → bit string.
+            The caller is a peer agent or a <code>u:</code> user. Channel <code>"*"</code>{' '}
+            matches any user-defined channel (not the console-only <code>__*</code> channels).
           </li>
           <li>
-            <code>reject_message</code> — what unauthorized callers see when denied.
+            <code>rejected</code> — same shape as <code>allowed</code>, but a hard deny. A
+            caller listed here is blocked outright, distinct from an ungranted caller, whose
+            first contact is held for your approval.
+          </li>
+          <li>
+            <code>reject_message</code> — what a blocked caller sees.
           </li>
         </ul>
 
@@ -122,29 +129,32 @@ export function BuildConfiguration() {
             </tr>
           </thead>
           <tbody>
+            <tr><td style={proseTd}><code>o</code></td><td style={proseTd}>outbound</td><td style={proseTd}>this agent sends free-text into the caller's conversation</td></tr>
             <tr><td style={proseTd}><code>q</code></td><td style={proseTd}>outbound</td><td style={proseTd}>this agent queries the peer; reply enters next-turn context</td></tr>
             <tr><td style={proseTd}><code>r</code></td><td style={proseTd}>outbound</td><td style={proseTd}>this agent queries the peer; reply is dropped before context</td></tr>
             <tr><td style={proseTd}><code>p</code></td><td style={proseTd}>outbound</td><td style={proseTd}>this agent hands its user over to the peer</td></tr>
+            <tr><td style={proseTd}><code>i</code></td><td style={proseTd}>inbound</td><td style={proseTd}>this agent accepts free-text from the caller, and hosts a handed-over user's turn</td></tr>
             <tr><td style={proseTd}><code>a</code></td><td style={proseTd}>inbound</td><td style={proseTd}>this agent answers queries (<code>q</code> or <code>r</code>) from the peer</td></tr>
-            <tr><td style={proseTd}><code>h</code></td><td style={proseTd}>inbound</td><td style={proseTd}>this agent hosts pushes (<code>p</code>) from the peer</td></tr>
           </tbody>
         </table>
 
         <p style={proseP}>
           Bits describe what <em>this agent</em> does on the edge, not what the peer
-          does. A cross-agent edge needs two entries — one in each agent's{' '}
-          <code>acl.json</code> — with complementary bits: sender writes <code>q</code>{' '}
-          (or <code>r</code>), receiver writes <code>a</code>; sender writes{' '}
-          <code>p</code>, receiver writes <code>h</code>. The receiver's <code>a</code>{' '}
-          covers both <code>q</code> and <code>r</code> from the sender. Missing either
-          side blocks the edge silently.
+          does. A cross-agent edge needs two entries, one in each agent's{' '}
+          <code>acl.json</code>, with complementary bits: sender writes <code>q</code>{' '}
+          (or <code>r</code>), receiver writes <code>a</code>, which covers both{' '}
+          <code>q</code> and <code>r</code>. For a handover, the sender writes{' '}
+          <code>p</code>, and the handed-over user needs free-text access (<code>i</code>){' '}
+          on the receiver, since the pushed-in turn lands as an inbound message. Without
+          both sides, nothing crosses.
         </p>
       </FileSpec>
 
       <Callout kind="security">
-        Human callers don't appear in <code>acl.json</code> — they're paired explicitly,
-        and their grants live in a separate file managed by the pairing flow. See{' '}
-        <DocsLink href="/docs/use/pairing">Pairing</DocsLink>.
+        Human callers live in <code>acl.json</code> too. When you approve someone, their
+        grant is written into <code>allowed</code> as a <code>u:</code> entry, the same
+        merged table the agent-to-agent edges use. See{' '}
+        <DocsLink href="/docs/use/access">Access</DocsLink>.
       </Callout>
 
       <H2>provisions.json — resource mounts and operator slots</H2>
@@ -267,8 +277,8 @@ export function BuildConfiguration() {
           companion: everything an agent IS before it's wired to your install.
         </li>
         <li>
-          <DocsLink href="/docs/use/pairing">Pairing</DocsLink> — the human-access
-          flow. ACL covers agent-to-agent; pairing covers people.
+          <DocsLink href="/docs/use/access">Access</DocsLink> — how people reach an
+          agent: a held first contact, then your approval, recorded in acl.json.
         </li>
         <li>
           <DocsLink href="/docs/concepts/capabilities">Capabilities</DocsLink> — what

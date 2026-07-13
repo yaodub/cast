@@ -22,22 +22,21 @@ import {
 } from './auth/channel-contract.js';
 
 // Every bit combination of practical interest. We don't enumerate the full
-// 2^7 = 128 power set because most combinations are operationally
-// nonsensical (e.g. `qhp` — agent can query but also accepts pushes?). The
-// covered set is what an operator would plausibly write or what cast-org
-// uses today, plus pathological edges (empty, no-outbound-but-structured,
-// outbound + push, etc.).
+// 2^6 = 64 power set because most combinations are operationally nonsensical
+// (e.g. `op` — a user-conversation bit and a peer-containment bit on one key,
+// which never co-occur). The covered set is what an operator would plausibly
+// write or what cast-org uses today, plus pathological edges (empty,
+// no-outbound-but-structured, push-containment alone, etc.).
 const COVERED_BITS = [
   '',                     // no access
-  'i', 'o', 'a', 'q', 'r', 'p', 'h',  // each bit alone
+  'i', 'o', 'a', 'q', 'r', 'p', // each bit alone (i/o/a/q/r envelopes + p containment)
   'io',                   // typical user channel
   'a',                    // peer answerer (market-intelligence pattern)
   'q',                    // peer querier
   'r',                    // fire-and-forget sender (spec'd, no real users)
   'qa', 'qr', 'ra', 'qra', // mixed structured
   'oqra',                 // free-text + full structured
-  'ph',                   // push pair
-  'ioaqrph',              // all bits (owner/local equivalent)
+  'ioaqr',                // all bits (owner/local equivalent)
 ] as const;
 
 describe('deriveChannelContract', () => {
@@ -48,23 +47,28 @@ describe('deriveChannelContract', () => {
     expect(deriveChannelContract('a').receive.structuredInbound).toBe(true);
     expect(deriveChannelContract('q').send.query).toBe(true);
     expect(deriveChannelContract('r').send.request).toBe(true);
-    expect(deriveChannelContract('p').send.push).toBe(true);
-    expect(deriveChannelContract('h').receive.push).toBe(true);
+  });
+
+  it('push containment (p) is not an envelope bit — sets no contract flag', () => {
+    // `p` governs whether the agent may route a user into a peer (an ACL/routing
+    // concern), not what envelopes flow on the channel. It must not leak into the
+    // envelope contract, so a `p`-only edge derives the same shape as empty.
+    expect(deriveChannelContract('p')).toEqual(deriveChannelContract(''));
   });
 
   it('handles empty bits as fully-denied contract', () => {
     const c = deriveChannelContract('');
     expect(c).toEqual({
-      send: { freeText: false, query: false, request: false, push: false },
-      receive: { freeText: false, structuredInbound: false, push: false },
+      send: { freeText: false, query: false, request: false },
+      receive: { freeText: false, structuredInbound: false },
     });
   });
 
   it('handles full-bits as fully-granted contract', () => {
-    const c = deriveChannelContract('ioaqrph');
+    const c = deriveChannelContract('ioaqr');
     expect(c).toEqual({
-      send: { freeText: true, query: true, request: true, push: true },
-      receive: { freeText: true, structuredInbound: true, push: true },
+      send: { freeText: true, query: true, request: true },
+      receive: { freeText: true, structuredInbound: true },
     });
   });
 
@@ -173,10 +177,11 @@ describe('renderContractForPeerListing', () => {
     expect(lines).toContain('they can query you');
   });
 
-  it('renders push pair', () => {
-    const lines = renderContractForPeerListing(deriveChannelContract('ph'));
-    expect(lines).toContain('you can push');
-    expect(lines).toContain('they can push to you');
+  it('push containment is not an envelope — io channel shows message lines, no push line', () => {
+    const lines = renderContractForPeerListing(deriveChannelContract('io'));
+    expect(lines).toContain('you can message');
+    expect(lines).toContain('they can message you');
+    expect(lines).not.toContain('you can push');
   });
 });
 

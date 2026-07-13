@@ -7,8 +7,8 @@ and gives you a synthesized report. Scales as the fleet grows;
 manually opening each agent's chat to ask is slow at three and
 impossible at ten.
 
-**The shape.** A reviewer agent with `peers.md` listing each
-reviewable agent. Each reviewable agent exposes a `review` (or
+**The shape.** A reviewer agent granted reach to each reviewable
+agent. Each reviewable agent exposes a `review` (or
 similar) channel — single-shot (`idle_timeout: null`) so each
 review cycle starts fresh with no state bleed from prior cycles,
 `disabled_tools` blocks mutation-shaped tools, `acl.json` grants
@@ -100,7 +100,7 @@ The softer variants below preserve the boundary.
   infrequent layer.
 
 **Composes.** `task__schedule` (the cadence),
-`peers.md` and ACL `q`/`a` bits (the access shape),
+ACL `q`/`a` grants (the access shape),
 `<cast:query>` / `<cast:answer>` (the Q&A primitive), single-shot
 review channel on each peer with narrow `disabled_tools` (the
 serving side), the reviewer's own user channel (where the report

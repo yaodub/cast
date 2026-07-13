@@ -9,8 +9,8 @@ Authoring well means committing the agent to a specific "what" and
 trusting it to improvise the "how" within scaffolding.
 
 The agent serves **runtime users — and you are not one of them.** Cast
-agents are chatbots: people reach them at runtime, through pairing and
-transports, and who those people are is unknowable while you author. So a
+agents are chatbots: people reach them at runtime, over transports, and
+who those people are is unknowable while you author. So a
 blueprint names no user and bakes in no recipient, address, or PII. The
 person briefing you in Design is *commissioning* the agent, not being
 served by it — building is not serving. An agent wired to one fixed

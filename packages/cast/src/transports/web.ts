@@ -25,6 +25,7 @@ import type { AnyPacket } from '../gateway/packets.js';
 import { markDeliveredIfAddressedTo } from '../gateway/gateway-db.js';
 import type { IdentityProvider } from '../auth/identity.js';
 import { persistAttachment } from '../lib/attachment-store.js';
+import { parseApprovalCommand } from '../lib/approval-command.js';
 import { MAX_ATTACHMENT_BYTES } from '../config.js';
 import { isDeliverablePacket } from './packet-dispatch.js';
 import { logger } from '../logger.js';
@@ -98,7 +99,8 @@ const WebHandleSchema = z
     'Handle prefix reserved for privileged transport',
   );
 
-const WebMessageSchema = z.discriminatedUnion('type', [
+/** Exported for the transport-boundary parse test (the approval_response tier guard). */
+export const WebMessageSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('message'),
     handle: WebHandleSchema,
@@ -133,6 +135,10 @@ const WebMessageSchema = z.discriminatedUnion('type', [
     id: z.string().min(1),
     decision: z.enum(['approved', 'rejected']),
     reason: z.string().optional(),
+    // Tiered (once/always) decision for owner-directed approvals. Without this
+    // field the discriminated-union parse silently drops it, downgrading every
+    // "Always approve" from the web chat to a one-shot grant.
+    tier: z.enum(['once', 'always']).optional(),
   }),
   z.object({
     type: z.literal('ack'),
@@ -397,7 +403,7 @@ export class WebTransport implements Transport {
 
   private handleRegister(client: WebClientState, name: string): void {
     const handleId = `web:${randomBytes(5).toString('hex')}`;
-    const resolved = this.deps.idp.register(handleId, name, 'web');
+    const resolved = this.deps.idp.register(handleId, name);
     client.binding = {
       phase: 'bound',
       identity: { handle: handleId, participant: resolved.id },
@@ -519,15 +525,13 @@ export class WebTransport implements Transport {
       }
     }
 
-    // Intercept /approve and /reject commands → approval_response
-    const approveMatch = data.text.match(/^\/approve\s+(\S+)/);
-    if (approveMatch) {
-      this.deps.gateway.ingestApprovalResponse(data.handle, agentId, { id: approveMatch[1]!, decision: 'approved' });
-      return;
-    }
-    const rejectMatch = data.text.match(/^\/reject\s+(\S+)(?:\s+(.+))?/);
-    if (rejectMatch) {
-      this.deps.gateway.ingestApprovalResponse(data.handle, agentId, { id: rejectMatch[1]!, decision: 'rejected', reason: rejectMatch[2] });
+    // Intercept /approve and /reject commands → approval_response. Shared parser
+    // (with the CLI) so the once/always tier is honored identically everywhere.
+    const cmd = parseApprovalCommand(data.text);
+    if (cmd) {
+      this.deps.gateway.ingestApprovalResponse(data.handle, agentId, {
+        id: cmd.id, decision: cmd.decision, reason: cmd.reason, tier: cmd.tier,
+      });
       return;
     }
 
@@ -574,7 +578,7 @@ export class WebTransport implements Transport {
 
   private handleApprovalResponse(
     client: WebClientState,
-    data: { handle: string; agent: string; id: string; decision: 'approved' | 'rejected'; reason?: string },
+    data: { handle: string; agent: string; id: string; decision: 'approved' | 'rejected'; reason?: string; tier?: 'once' | 'always' },
   ): void {
     const agentId = this.deps.bus.resolveAddress(data.agent);
     if (!agentId) return;
@@ -597,6 +601,7 @@ export class WebTransport implements Transport {
       id: data.id,
       decision: data.decision,
       reason: data.reason,
+      tier: data.tier,
     });
   }
 

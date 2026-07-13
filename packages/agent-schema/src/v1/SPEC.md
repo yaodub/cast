@@ -41,7 +41,6 @@ The bus is the alias-resolution boundary: `bus.resolveByLabel(alias)` returns th
       prompt.md                      Recommended
       whoami.md                      Optional
       skills.md                      Optional
-      peers.md                       Optional
       onboarding.md                  Optional
       tools/                         Optional (scripts the agent can execute)
     channels/                        Optional
@@ -67,6 +66,7 @@ The bus is the alias-resolution boundary: `bus.resolveByLabel(alias)` returns th
     agent.json                       Optional — runtime knobs (model, network, timezone)
     provisions.json                  Optional — deployment-specific values for capability slots
     acl.json                         Admin-managed access control
+    user-push.json                   Optional — per-agent user↔user push consents (pushee-approved, reactive)
     ext/                             Optional — operator-editable extension config + secrets
       {ext-name}/
         config.json                  Operator overrides
@@ -83,8 +83,6 @@ The bus is the alias-resolution boundary: `bus.resolveByLabel(alias)` returns th
       service/                       Agent service output
         agent-context.md             Dynamic prompt contribution (Layer 9)
   state/                             Server-managed
-    paired-users.json                Runtime-paired user grants (identity → channel → bits)
-    pairing-codes.json               Pairing code state (generated, consumed, expiry)
     attachments/                     Content-addressed blob store
   home/                              Agent workspace
   memory/                            Agent-managed
@@ -169,7 +167,6 @@ When `status: 'draft'`, the agent is *composable* but *not externally responsive
 
 **Passes through unchanged**:
 - `response` / `rejection` payloads — the agent issued the outbound request before drafting; cutting the return path mid-flight would orphan downstream agents waiting on the reply.
-- Pairing flows (`pair_request`, `pair_response`, etc.) — pairing is composition-time, not user-facing traffic.
 - Authoring-sender traffic (operator / console) — design and Configure consoles need to exercise the agent while drafting.
 
 **Not affected by `status: 'draft'`**:
@@ -192,7 +189,7 @@ The server builds the system prompt from 10 layers, concatenated with double new
 | 3 | Profile | `<agent-profile-skills>` | Profile-provided skill guidance (tool descriptions, tag usage) |
 | 4 | `blueprint/identity/prompt.md` | None (raw) | Agent persona and behavior instructions |
 | 5 | `blueprint/identity/whoami.md` | `<agent-identity>` | Structured identity facts |
-| 6 | `blueprint/identity/peers.md` | `<agent-peers>` | Agent peer relationships (who to consult, on what channels, with domain context) |
+| 6 | Server-computed from the ACL | `<agent-peers>` | Granted first-degree peer reach — which sibling agents this agent may reach, on which channels, derived from its own `acl.json` grants |
 | 7 | `blueprint/identity/skills.md` | `<agent-skills>` | Domain-specific skill and tool guidance |
 | 8 | `blueprint/channels/{name}/prompt.md` | `<channel-instructions>` | Channel-specific instructions (active channel only) |
 | 9 | `shared/ext/service/agent-context.md` | `<service-context>` | Dynamic context from the agent service |
@@ -227,9 +224,10 @@ All identity files are in `blueprint/identity/`, mounted read-only at `/identity
 |------|-------------|-------|---------|
 | `prompt.md` | None | 4 | Core persona and behavior instructions |
 | `whoami.md` | `<agent-identity>` | 5 | Structured identity facts (name, role, preferences) |
-| `peers.md` | `<agent-peers>` | 6 | Agent peer relationships — who to consult, channels, domain context |
 | `skills.md` | `<agent-skills>` | 7 | Tool usage guidance, domain skills, system descriptions |
 | `onboarding.md` | — | Not assembled | Available for tooling use during initial setup |
+
+Layer 6 (`<agent-peers>`) has no backing file. The server computes it from the agent's own `acl.json` — the granted first-degree peer reach (which sibling agents this agent may reach, on which channels). There is no `peers.md`; peer self-knowledge tracks the ACL automatically.
 
 The `blueprint/identity/` directory is registered as an additional directory for Claude Agent SDK, enabling CLAUDE.md discovery there.
 
@@ -277,6 +275,8 @@ blueprint/channels/{channel_name}/
 | `use_sharding` | `boolean` | `false` | Enable qualifier-based sub-conversations on this channel (see "Sharding and qualifiers" below). |
 | `disabled_tools` | `string[]` | `[]` | Tool patterns to disable. Exact names, domain globs (`task__*`), or built-in SDK tool names (`WebFetch`). Merged with agent-wide disabled tools. See §Tool Disabling. |
 | `show_co_participants` | `boolean` | `true` | Whether the agent is aware of other participants on this channel, and whether they can see and reach each other. `false` replaces the `<other-participants>` conversation-context element with an explicit disabled marker, hides the channel's members from member-tier `agent__list_participants` callers (own row plus a population-blind policy note, queried from any room), adds the same policy note to `conversation__list_summaries` (whose rows are already caller-scoped for member-tier callers regardless of this flag), and refuses cross-conversation push (`conversation__push_to_participant`) from one co-participant to another. The agent itself and operator surfaces are exempt — it is a member↔member control. Per-participant conversation keying is unconditional and unaffected: the flag gates reach and visibility between participants, not the isolation of a single conversation's transcript. |
+| `sealed` | `boolean` | `false` | Egress seal. When `true`, a conversation on this channel cannot reach outside its cell: no cross-conversation push, no cross-agent query, no peer/channel discovery. The pod perimeter at single-conversation grain, for channels facing untrusted principals or untrusted content. The field is part of the schema; the egress gates that honor it are rolling out, so treat the seal as advisory until then. |
+| `description` | `string` | *(optional)* | What the channel is for ("ask here for meeting availability"), rich enough for a peer to match intent to the right channel. Feeds the discovery directory. |
 
 Implicit channel config (used only when no `channel.json` file exists at all — distinct from field-level defaults): `idle_timeout: 1800000` (30min), `lifecycle: "none"`, `log_messages: true`. User-channel and console-channel histories live in physically separate SQLite files (`agent.db` vs `console.db`) so console planning content never co-mingles with user-channel agent reasoning.
 
@@ -468,76 +468,59 @@ Admin's deployment-specific values — the "answer sheet" for capability slots d
 
 ### acl.json
 
-Operator-managed access control. Defines agent peers and rejection messages. **Never modified by runtime.**
+Access control. A single `identity → channel → bits` grant map covering agent peers and human users alike, plus reject tombstones and a rejection message.
 
 ```json
 {
   "owner": "operator",
-  "peers": {
+  "allowed": {
     "bond": { "*": "ioaq" },
-    "sales": { "query": "a" }
+    "sales": { "query": "a" },
+    "u:45f532a0@d9c1e2": { "default": "io" }
   },
-  "reject_message": "Not authorized. Use /pair <code> to get access."
+  "rejected": {
+    "rival": { "*": "qr" }
+  },
+  "reject_message": "Not authorized."
 }
 ```
 
-Agent peer keys are **aliases** (lowercase alphanumeric + hyphens, no `:` separator — matching `manifest.name`). At runtime, `checkAcl()` normalises each peer key through `bus.resolveAddress()` (exact match then alias fallback), so alias-keyed entries resolve to the canonical `a:<guid>@<issuer>` before the lookup — surviving alias rename at the *resolution* layer while the ACL file still expresses operator intent as a human-readable alias. Canonical-form peers also work (operator preference), but the alias form is preferred and portable across key rotations.
+A key is either an agent **alias** (lowercase alphanumeric + hyphens, no `:` separator — matching `manifest.name`) or a bare identity — a `u:` user, a canonical `a:<guid>@<issuer>` agent, or a `console:` identity. At runtime, `checkAcl()` normalises each key through `bus.resolveAddress()` (exact match then alias fallback), so alias-keyed agent entries resolve to the canonical `a:<guid>@<issuer>` before the lookup — surviving alias rename at the *resolution* layer while the file still expresses operator intent as a human-readable alias. Canonical-form agent keys also work (operator preference), but the alias form is preferred and portable across key rotations. User keys are the canonical `u:` identity.
 
-Peer keys also support prefix globs: `a:*` matches any agent identity, `console:*` matches any console identity. User globs (`u:*`) are rejected at schema-parse time — humans must pair explicitly, there is no bulk-grant primitive. Lookup order: exact identity match → prefix glob → deny.
+Keys also support prefix globs: `a:*` matches any agent identity, `console:*` matches any console identity. User globs (`u:*`) are rejected at schema-parse time — there is no bulk-grant primitive for humans; each user is granted individually. Lookup order: exact identity match → prefix glob → deny.
 
 Channels `__design` and `__configure` are system-owned infrastructure channels. Disk `acl.json` never authoritatively grants or denies them; entries mentioning these channels are silently ignored. Authority lives in code-declared tables (`auth/console-grants.ts`) keyed by console address. See §16 for the cross-agent flow.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `owner` | `string` | `"operator"` | Identity with full authorization. The default `"operator"` is an inert label matching no identity — the operator tier (`cli:`/`admin:` handles) holds full bits without it. Setting a `u:` identity gives that user unconditional reach (pushes); enumeration and cross-participant summary reads stay member-scoped (see the `agent__list_*` rows in §10). |
-| `peers` | `object` | `{}` | Map of agent alias → channel permissions. Agent peers only — human users are managed via pairing in `state/paired-users.json`. |
-| `reject_message` | `string \| null` | `null` | Custom message sent to denied human participants. |
+| `allowed` | `object` | `{}` | The grant map: identity → channel → permission bits. Covers agent peers and human users alike — agent keys (alias or canonical) and `u:` user identities live in the one map. |
+| `rejected` | `object` | `{}` | Hard-reject tombstones — same `identity → channel → bits` shape, opposite polarity. A tombstone is "never grant this edge," distinct from a mere absence; the check denies these edges. Rejecting `r` while granting `q` on the same edge is refused at parse (`q ⊇ r`). |
+| `reject_message` | `string \| null` | `null` | Custom message sent to a denied human participant. |
+| `approval_channel` | `string \| null` | `null` | Names the `owner`'s conversation channel — the channel that, paired with `owner`, designates the owner conversation. `null` leaves it unpinned. |
 
-### state/paired-users.json
+**Permission bits:** Each grant maps channel names to permission bit strings — six bits. They split along two axes — **access** (`i/a`, inbound: who may reach this agent) and **containment** (`o/q/r/p`, outbound: what this agent may initiate). A working edge needs both ends: one party's outbound bit and the counterparty's matching inbound bit.
 
-Runtime-managed ACL grants for paired human users. Written by the pairing flow, never hand-edited. Same format as `acl.json` peers — flat record of identity → channel → bits.
+| Bit | Axis | Direction | What it authorizes |
+|-----|------|-----------|-------------------|
+| `i` | access | them → me | Conversation messages (persistent, bidirectional). Holding `i` on a channel makes the user a member of it, the unit of co-participant visibility and push reach. A pushed-in turn (a cross-agent hand-off, or another participant's push) lands as an `i` delivery — the carried user's access half. |
+| `o` | containment | me → them | Conversation messages (outbound). |
+| `q` | containment | me → them | Query (expect an answer back) |
+| `a` | access | them → me | Answer: accept inbound queries and requests. Holding `a` on a channel makes the peer agent a member of it, as a request counterparty. |
+| `r` | containment | me → them | Request (fire-and-forget; receiver reuses `a`) |
+| `p` | containment | me → them | Push containment: this agent may route a carried participant into a peer agent's conversation. The agent-axis half of cross-agent push (the carried user's `io` is the access half on the receiver). Reactive-only — written by the owner-approval path, not hand-authored. Agent peer keys may carry only `q/r/a/p`; `i`/`o` stay reserved for user and console identities. |
 
-```json
-{
-  "u:45f532a0@d9c1e2": { "default": "io", "briefings": "io" },
-  "u:2e402b49@d9c1e2": { "default": "io" }
-}
-```
+Pairings: `q`↔`a` (query/answer), `r`↔`a` (request reuses `a`; intent distinguished at the `<cast:query>`/`<cast:request>` payload-tag level — the receiver sees whichever tag the sender chose), and `o`↔`i` for conversation. Cross-agent push is two-sided: the sender agent's `p` (containment) pairs with the carried user's `io` on the receiver (access) — see §16.
 
-`checkAcl()` merges both sources at read time: agent peers from `config/acl.json` + paired users from `state/paired-users.json`.
+**Capability hierarchy (`q ⊇ r`):** holding `q` (query) confers `r` (request). An agent granted `q` may emit `<cast:request>` as well as `<cast:query>`. Holding only `r` does not confer `q`. The implication is resolved at the outbound gate, not stored, so a grant need only include `q`.
 
-### state/pairing-codes.json
-
-Pairing code state. Codes are generated at runtime by the server — there are no admin-defined codes. Written by the pairing flow, never hand-edited.
-
-```json
-{
-  "a8k2m1": { "generated": true, "expires": "2026-04-02T12:00:00Z" },
-  "b3x9q7": { "consumed": true, "generated": true }
-}
-```
-
-All codes are single-use. A code entry without `consumed: true` is available; once used, `consumed` is set to `true`. Expired codes are cleaned up lazily.
-
-**Peer permissions:** Each peer maps channel names to permission bit strings.
-
-| Bit | Direction | What it authorizes |
-|-----|-----------|-------------------|
-| `i` | them → me | Conversation messages (persistent, bidirectional). Holding `i` on a channel makes the user a member of it, the unit of co-participant visibility and push reach. |
-| `o` | me → them | Conversation messages (push, outbound) |
-| `q` | me → them | Query (expect an answer back) |
-| `a` | them → me | Answer: accept inbound queries and requests. Holding `a` on a channel makes the peer agent a member of it, as a request counterparty. |
-| `r` | me → them | Request (fire-and-forget; receiver reuses `a`) |
-| `p` | me → them | Push (cross-agent hand-off; sender's current participant becomes target's) |
-| `h` | them → me | Host push (accept incoming push, host the conversation with sender's named user) |
-
-Pairings: `q`↔`a` (query/answer), `r`↔`a` (request reuses `a`; intent distinguished at the `<cast:query>`/`<cast:request>` payload-tag level — the receiver sees whichever tag the sender chose), `p`↔`h` (push/host).
-
-Bits are combined as strings per channel: `"io"`, `"aq"`, `"ioaq"`, `"a"`, `"ph"`, etc. `"*"` = wildcard (all channels not explicitly listed). Specific channel names override the wildcard. The channel wildcard `"*"` does NOT match infra channels (`__*`), which always require an explicit channel grant.
+Bits are combined as strings per channel: `"io"`, `"aq"`, `"ioaq"`, `"a"`, `"qa"`, etc. `"*"` = wildcard (all channels not explicitly listed). Specific channel names override the wildcard. The channel wildcard `"*"` does NOT match infra channels (`__*`), which always require an explicit channel grant.
 
 A `"*"` grant authorizes access but does not confer membership of any specific channel. The membership-based rules (co-participant visibility, cross-conversation push reach, and discovery via `agent__list_channels` / `agent__list_participants`) read concrete per-channel placement only. `membershipBits` does not expand `"*"`, so a wildcard-only grant is a member of nothing for those rules, even while it is authorized to converse.
 
 The `owner` identity and the operator tier (`cli:`/`admin:` handles) always receive full authorization. Server-scope consoles (`console:*`) are authorized through code-declared grants in `auth/console-grants.ts` and do not appear in disk `acl.json`. See §16 for the full check matrix, safety model, and configuration examples.
+
+Grants in this file are not only hand-authored. An edge with neither a grant nor a reject tombstone is *askable*: the triggering message is held while the agent raises an owner-directed approval, and an allow-always answer writes the grant back here. An explicit reject tombstone (or a missing `acl.json` entirely) is a hard deny. See §16 *Reactive Approval Model*. Per-agent user↔user push consents live separately in `config/user-push.json`, keyed `(channel, pusher → pushee)` and approved by the pushee in-band.
 
 ---
 
@@ -805,7 +788,7 @@ The server provides these tools via MCP. Tool names use `domain__action` naming 
 | `conversation__push_to_participant` | Push a turn into another participant's conversation on this agent (intra-agent only; no `target_agent`). Returns a correlation `id` for receiver-rejection correlation, same as `push_to_channel` |
 | `agent__list_channels` | List the channels where the calling cell's participant is placed (the agent itself and operator surfaces see every configured channel). Sharded channels render as `name~*` |
 | `agent__list_participants` | List the members of a channel the caller is placed in, as push-target identities with day-level recency. Optional `channel` param defaults to the current channel; a `name~qualifier` form is accepted and the qualifier ignored (shards share membership). Scoped to the caller's standing: a cell can list exactly what `conversation__push_to_participant` would let it reach, and a query outside its rooms is denied without revealing whether the channel exists. The agent itself and operator surfaces get unfiltered views; with no channel in context they get the agent-wide registry with exact timestamps |
-| `agent__list_peers` | List peer agents with per-channel permissions (query, answer, message directions) |
+| `agent__list_peers` | List sibling agents with per-channel reach, each channel tagged `granted` / `askable` / `rejected` — not only where reach is already granted, but where it could be requested (`askable`) versus hard-denied (`rejected`). Lets an agent discover where it might request reach |
 | `message_log__search` | Search past messages by keyword (requires message logging enabled) |
 | `message_log__recent` | Browse recent messages without keyword search |
 | `message_log__read` | Read a specific message by ID |
@@ -883,6 +866,7 @@ The server supports `<cast:query>`, `<cast:request>`, and `<cast:answer>` tags i
 <cast:request from="boss" request="req:9c2d">Generate the weekly digest.</cast:request>
 <cast:answer from="sales" request="req:7f3a">Q2 pipeline: $2.3M, 15% growth.</cast:answer>
 <cast:rejection from="sales" request="req:7f3a">Target agent is in draft mode — not yet ready to respond.</cast:rejection>
+<cast:pending from="sales" request="req:7f3a">Your request is pending the owner's approval (reference 4817). You'll get a reply once it's decided.</cast:pending>
 ```
 
 Direction distinguished by attribute: `target` (outbound, agent-specified) vs. `from` (inbound, server-added).
@@ -891,6 +875,10 @@ Rejections arrive as `<cast:rejection>` with the same `request` attribute as the
 
 - **Denied queries / requests** — the outbound `<cast:query>` or `<cast:request>` mint persists an `outbound_requests` row; a receiver-side deny routes a typed rejection back keyed on the call's `requestId`.
 - **Denied pushes** — the `conversation__push_to_channel` / `conversation__push_to_participant` tools mint a correlation `id`, surface it in the tool result text, and persist an `outbound_pushes` row. If the receiver later denies (ACL revoked between dispatch and gate, draft mode, originating user lacking `i`), the rejection routes back keyed on the same `id`. The agent matches the `id` from the tool's earlier success to know which push the rejection refers to.
+
+A query or request whose receiver-side edge is *askable* — no grant, no tombstone, the owner simply hasn't decided yet (§16's reactive model) — is held, and the sender gets a non-terminal `<cast:pending>` keyed on the same `requestId`. Unlike `<cast:rejection>`, `<cast:pending>` does **not** transition the outbound row: it stays `open` so the eventual owner-approved `<cast:answer>` still lands on it. (Routing the pending notice over the terminal rejection rail closed the row prematurely and orphaned the answer — the bug this tag fixes.) `<cast:pending>` is framework-minted from a single producer with a fixed framework-authored reason, and it is receive-only — agents never emit it, and the output validator never routes one (see §11 output pipeline: only `internal`/`query`/`request`/`answer` are extracted, so an emitted `<cast:pending>` is silently stripped).
+
+**The `requestId` is the round-trip authorization, not just a correlation key.** The open `outbound_requests` row is the capability the query was emitted under — equally for a standing grant, an allow-once approval, or an allow-always approval. The returning `<cast:answer>` redeems that capability: delivery is gated on the row being `open` and its recorded `kind` being `query`, **not** on a fresh re-check of the standing edge bit. This is what lets an allow-once query receive its answer (the approval persists no standing `q`, yet the answer still lands). The recorded `kind` preserves the r-bit promise — a fire-and-forget `request` redeems only a bounce (`<cast:rejection>`), never an answer, so a stray answer to one is dropped. Revoking an in-flight request is explicit: close it (the row leaves `open`) or tombstone the edge for future calls; emptying the standing bits does not retroactively cancel an answer the owner already authorized.
 
 ### Output Pipeline Order
 
@@ -939,7 +927,7 @@ These directories are managed at runtime. Understanding their contents is useful
 
 Server-managed persistent state. Contains conversation records (`conversations.jsonl`), scheduled tasks (`tasks.json`), the agent database (`agent.db` — message log with FTS5 search, participant registry), the attachment blob store (`attachments/`), and the identity roster (`identity-roster.json`). No other process should write here.
 
-**`identity-roster.json`** — human-readable snapshot of every user identity that has successfully paired with this agent. Updated automatically after each successful pairing. Schema: `{ "<identity-id>": { "name": string } }`. Handles are an IdP concern and stay out of the roster. Not used for runtime identity lookups (the IdP handles that) — serves as operator reference and disaster recovery aid. Portable with the agent folder.
+**`identity-roster.json`** — human-readable snapshot of the user identities this agent knows: a per-agent display-name book keyed by bare identity. Schema: `{ "<identity-id>": { "name": string } }`. Handles are an IdP concern and stay out of the roster. Not used for runtime identity lookups (the IdP handles that) — serves as operator reference and disaster recovery aid. Portable with the agent folder.
 
 **`attachments/`** — content-addressed file store for all inbound and outbound media. Blobs are stored at `{hash[0:2]}/{hash}.{ext}` (SHA-256 content hash with 2-character prefix directory). Deduplication is automatic — identical files produce the same hash. Mounted read-only at `/attachments` in the container. The agent accesses files via paths embedded in `[Attachment]` message tags. Attachment metadata (label, hash, MIME type, size) is stored in the `attachments` JSON column on `agent.db` message rows.
 
@@ -1020,7 +1008,7 @@ Channels are the interface contract: when Agent A can reach Agent B's `sales-que
 | Conversation (`io`) | `i` + `o` | Persistent, bidirectional. Either side can message at any time. This is what humans have with agents today. |
 | Request/Response (`qa`) | `q` + `a` | Transactional one-shot. One side initiates a query, the other responds once. Only the structured `<cast:answer>` tag routes back — bare text output is blocked. |
 | Request (fire-and-forget) | `r` + `a` | Sender issues a `<cast:request>` with no response expected; receiver accepts via its existing `a` bit and sees the `<cast:request>` tag in its formatted inbound (so it knows not to compose `<cast:answer>`). Intent distinguished from query at the payload-tag level. |
-| Push (`ph`) | `p` (sender side) + `h` (target side), both keyed on the user | Cross-agent push via `conversation__push_to_channel`. The sender's current participant (typically the human) becomes the target's conversation participant; the target hosts the conversation with that human. Both `p` and `h` are grants on the originating user (`u:<id>`), not on the peer agent. The agents are conduits. Three-check model: receiver also requires that user to have `i` on the target channel. |
+| Push (two-sided) | sender agent's `p` toward the target (containment) + the carried user's `io` on the target (access) | Cross-agent push via `conversation__push_to_channel`. The sender's current participant (typically the human) becomes the target's conversation participant; the target hosts the conversation with that human. Two axes: the sender agent holds `p` toward the target (it may route a user there — the agent-axis containment), and the carried user holds `io` on the target (it may converse there — the access half), with that user a concrete member of the channel (not via a wildcard or god-mode grant). Both halves are reactive — granted at runtime via owner approval (§16), each to its own owner — not statically prewired. |
 
 Conversation and request/response are distinct security surfaces. Giving an agent `q` on a channel means it can send bounded queries. Giving it `i` means it can have an ongoing conversation — a much larger surface.
 
@@ -1031,13 +1019,25 @@ Conversation and request/response are distinct security surfaces. Giving an agen
 | Agent A queries Agent B on channel X | A has `q` for B | B has `a` for A on X |
 | Agent B responds to A's query | — (system-routed, requestId validated) | — |
 | Agent A sends a fire-and-forget request to B on X | A has `r` for B | B has `a` for A on X |
-| Agent A pushes to Agent B on X | A has `p` for the originating user on X | B has `h` for the originating user on X AND that same user has `i` on X (three-check) |
+| Agent A pushes a carried user to Agent B on X | A has `p` for B on X (containment — A's owner approves "A may route users to B") | B grants the carried user `i`/`io` on X, that user a concrete member of X (access — B's owner approves "this user may converse here"). Same-owner A/B collapses the access approval |
 | Human messages agent on X | — | Agent has `i` for human on X |
 | Agent messages human | Agent has `o` for human | — |
 | Agent A messages Agent B on X | A has `o` for B | B has `i` for A on X |
 | Rejection/error routes back | — (system message) | — |
 
 Both sides must permit: the sender's ACL authorizes outbound (`q` or `o`), and the target's ACL authorizes inbound (`a` or `i`) on the specific channel.
+
+### Reactive Approval Model
+
+Grants in `acl.json` are not only hand-authored — they can be acquired at runtime. Every edge is in one of three states:
+
+- **Granted** — a matching grant exists; traffic flows.
+- **Askable** — no grant and no reject tombstone. The first such message is held while the agent asks its **owner** to decide (allow-once, allow-always, or reject). Allow-always writes the grant into `acl.json`; reject writes a tombstone.
+- **Rejected** — a reject tombstone, or no `acl.json` at all — a hard deny (`reject_message`).
+
+Access is acquired this way without a separate enrollment step. Each edge kind is decided by the owner on its own side: a first-contact conversation (`io` — the agent's owner), an outbound query or request (`q`/`r` — the sender's owner), and each half of a cross-agent push (`p` — the sender's owner; the carried user's `io` — the receiver's owner; same-owner pairs decide once).
+
+A user pushing into *another* user's conversation on the same agent (`conversation__push_to_participant`) is decided by the **pushee**, in-band — not the owner. That consent is stored per-agent in `config/user-push.json`, keyed `(channel, pusher → pushee)`.
 
 ### Request Lifecycle
 
@@ -1056,7 +1056,7 @@ Status values: `open` → `fulfilled` (responded), `rejected` (ACL denied or dec
 
 ### Configuration Example
 
-Every cross-agent edge is two grants, one in each agent's `acl.json`: the sender records its outbound bit (`q`/`r`/`p`), the receiver records the matching inbound bit (`a`/`h`). Set only one side and the edge fails silently, with no error.
+Every cross-agent edge is two grants, one in each agent's `acl.json`: the sender records its outbound bit (`q`/`r`), the receiver records the matching inbound bit (`a`). Set only one side and the edge fails silently, with no error.
 
 Three agents: Boss queries Sales and Research, and Sales also queries Research. Each `q` is paired with the receiver's `a`:
 

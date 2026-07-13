@@ -19,7 +19,7 @@ import { AgentManifestSchema, type AgentManifest } from '@getcast/agent-schema/v
 import { agentPath } from '../../config.js';
 import { writeAtomic } from '../../lib/utils.js';
 
-import { appendChangelog } from './audit-log.js';
+import { appendChangelog } from '../../lib/audit-log.js';
 
 export type LifecycleStatus = 'draft' | 'ready';
 

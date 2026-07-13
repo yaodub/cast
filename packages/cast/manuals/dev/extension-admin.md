@@ -323,7 +323,7 @@ Granularity is capped at section. No per-field / per-button entries — the bot 
 import type { PageManualEntry } from '@getcast/admin-schema/v1';
 
 export const pageManual: PageManualEntry = {
-  purpose: 'Server overview — agent list with live conversation counts, transport route health, pending pairing indicators. Entry point; links out to detail pages.',
+  purpose: 'Server overview — agent list with live conversation counts, transport route health, pending approval indicators. Entry point; links out to detail pages.',
 };
 ```
 

@@ -31,8 +31,8 @@ conversation state per qualifier.
 - `channels/review/cleanup.md` — writes the slice's distillation
   back to the same path at that shard's expiry.
 
-The caller side is a prompt-layer contract. A peer agent's
-`peers.md` (or this agent's own user-channel `prompt.md`, when the
+The caller side is a prompt-layer contract. A caller agent's
+prompt (or this agent's own user-channel `prompt.md`, when the
 shards are self-routed via `push_to_channel`) teaches the
 qualifier-picking rule: the external ID for entity threads
 (`pr-1234`), the topic name for research threads, the caller's own

@@ -36,7 +36,7 @@ export function BuildDistributing() {
         </li>
         <li>
           <code>state/</code> — the server's record of what happened on{' '}
-          <em>your</em> install. Conversations, tasks, attachments, paired users.
+          <em>your</em> install. Conversations, tasks, attachments, access grants.
         </li>
         <li>
           <code>memory/</code> and <code>home/</code> — what the agent wrote about its
@@ -140,9 +140,9 @@ export function BuildDistributing() {
           for the field-level reference.
         </li>
         <li>
-          <strong>Wire any peer ACLs.</strong> If the blueprint declares peer agents
-          in <code>peers.md</code>, the cross-agent edge needs a grant in{' '}
-          <code>config/acl.json</code> on both sides. See{' '}
+          <strong>Grant any cross-agent edges.</strong> If the blueprint expects to reach
+          a peer agent, that edge needs a grant in <code>config/acl.json</code> on both
+          sides. See{' '}
           <DocsLink href="/docs/build/multi-agent">Multi-agent composition</DocsLink>.
         </li>
         <li>
@@ -151,9 +151,9 @@ export function BuildDistributing() {
           throwaway agent.
         </li>
         <li>
-          <strong>Pair the humans who'll talk to it.</strong> Send{' '}
-          <code>/pair</code> from each transport you want the agent reachable on;
-          see <DocsLink href="/docs/use/pairing">Pairing</DocsLink>.
+          <strong>Let in the humans who'll talk to it.</strong> They message the agent on
+          each transport you've enabled, and you approve each first contact from the
+          dashboard. See <DocsLink href="/docs/use/access">Access</DocsLink>.
         </li>
       </ol>
 

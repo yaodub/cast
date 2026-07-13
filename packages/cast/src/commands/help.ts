@@ -11,8 +11,6 @@ export function createHelpCommand(commands: SystemCommandDef[]): SystemCommandDe
       }
       // Include self
       lines.push(`  ${def.description}`);
-      // Always include /pair in help (handled by gateway, not registered here)
-      lines.push('  /pair <code> — pair with an agent using a pairing code');
       return { text: lines.join('\n') };
     },
   };

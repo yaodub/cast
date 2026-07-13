@@ -8,6 +8,7 @@ import WebSocket from 'ws';
 import { z } from 'zod';
 
 import { RECONNECT_DELAY_MS } from '../config.js';
+import { parseApprovalCommand } from '../lib/approval-command.js';
 
 type Status = 'connecting' | 'connected' | 'disconnected' | 'refused';
 
@@ -150,15 +151,15 @@ function createClient(agent: string, opts?: ClientOptions): Client {
     send(text: string, opts?: { channel?: string; qualifier?: string }): void {
       if (ws?.readyState !== WebSocket.OPEN) return;
 
-      // Intercept /approve and /reject commands → approval_response frames
-      const approveMatch = text.match(/^\/approve\s+(\S+)/);
-      if (approveMatch) {
-        ws.send(JSON.stringify({ type: 'approval_response', agent, handle: handleKey, id: approveMatch[1], decision: 'approved' }));
-        return;
-      }
-      const rejectMatch = text.match(/^\/reject\s+(\S+)(?:\s+(.+))?/);
-      if (rejectMatch) {
-        ws.send(JSON.stringify({ type: 'approval_response', agent, handle: handleKey, id: rejectMatch[1], decision: 'rejected', ...(rejectMatch[2] ? { reason: rejectMatch[2] } : {}) }));
+      // Intercept /approve and /reject commands → approval_response frames.
+      // Shared parser (with the web transport) so once/always is honored here too.
+      const cmd = parseApprovalCommand(text);
+      if (cmd) {
+        ws.send(JSON.stringify({
+          type: 'approval_response', agent, handle: handleKey,
+          id: cmd.id, decision: cmd.decision, tier: cmd.tier,
+          ...(cmd.reason ? { reason: cmd.reason } : {}),
+        }));
         return;
       }
 

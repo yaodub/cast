@@ -154,6 +154,7 @@ export function respondToApproval(
   agent: string,
   approvalId: string,
   decision: 'approved' | 'rejected',
+  tier?: 'once' | 'always',
 ): void {
   const conn = requireConnection(identity);
   conn.transport?.send({
@@ -162,6 +163,7 @@ export function respondToApproval(
     agent,
     id: approvalId,
     decision,
+    tier,
   });
 }
 

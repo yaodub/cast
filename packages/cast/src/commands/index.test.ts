@@ -28,7 +28,7 @@ describe('SystemCommandDispatcher', () => {
     it('requires identity', () => {
       const result = dispatcher.dispatch(ctx(null), '/name Alice');
       expect(result).not.toBeNull();
-      expect(result!.text).toContain('pair first');
+      expect(result!.text).toContain('No identity');
     });
 
     it('returns current name when no argument', () => {
@@ -59,7 +59,7 @@ describe('SystemCommandDispatcher', () => {
     it('shows unpaired state', () => {
       const result = dispatcher.dispatch(ctx(null, 'tg:99999'), '/whoami');
       expect(result!.text).toContain('tg:99999');
-      expect(result!.text).toContain('Not paired');
+      expect(result!.text).toContain('No identity');
     });
 
     it('shows identity details', () => {
@@ -77,7 +77,6 @@ describe('SystemCommandDispatcher', () => {
       expect(result!.text).toContain('/name');
       expect(result!.text).toContain('/whoami');
       expect(result!.text).toContain('/help');
-      expect(result!.text).toContain('/pair');
     });
   });
 

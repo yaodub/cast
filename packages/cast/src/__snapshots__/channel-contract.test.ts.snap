@@ -5,12 +5,10 @@ exports[`truth-table snapshots > bits="" produces stable output 1`] = `
   "contract": {
     "receive": {
       "freeText": false,
-      "push": false,
       "structuredInbound": false,
     },
     "send": {
       "freeText": false,
-      "push": false,
       "query": false,
       "request": false,
     },
@@ -26,12 +24,10 @@ exports[`truth-table snapshots > bits="a" produces stable output 1`] = `
   "contract": {
     "receive": {
       "freeText": false,
-      "push": false,
       "structuredInbound": true,
     },
     "send": {
       "freeText": false,
-      "push": false,
       "query": false,
       "request": false,
     },
@@ -53,12 +49,10 @@ exports[`truth-table snapshots > bits="a" produces stable output 2`] = `
   "contract": {
     "receive": {
       "freeText": false,
-      "push": false,
       "structuredInbound": true,
     },
     "send": {
       "freeText": false,
-      "push": false,
       "query": false,
       "request": false,
     },
@@ -75,40 +69,15 @@ Incoming \`<cast:request>\` envelopes are fire-and-forget — handle them via to
 }
 `;
 
-exports[`truth-table snapshots > bits="h" produces stable output 1`] = `
-{
-  "contract": {
-    "receive": {
-      "freeText": false,
-      "push": true,
-      "structuredInbound": false,
-    },
-    "send": {
-      "freeText": false,
-      "push": false,
-      "query": false,
-      "request": false,
-    },
-  },
-  "peerListing": [
-    "they can push to you",
-  ],
-  "prompt": null,
-  "rejection": "Output text was rejected — this channel delivers nothing addressed to this peer. Do not retry this text. If reasoning needs a local record, use \`<cast:internal>…</cast:internal>\` instead.",
-}
-`;
-
 exports[`truth-table snapshots > bits="i" produces stable output 1`] = `
 {
   "contract": {
     "receive": {
       "freeText": true,
-      "push": false,
       "structuredInbound": false,
     },
     "send": {
       "freeText": false,
-      "push": false,
       "query": false,
       "request": false,
     },
@@ -126,12 +95,10 @@ exports[`truth-table snapshots > bits="io" produces stable output 1`] = `
   "contract": {
     "receive": {
       "freeText": true,
-      "push": false,
       "structuredInbound": false,
     },
     "send": {
       "freeText": true,
-      "push": false,
       "query": false,
       "request": false,
     },
@@ -145,17 +112,15 @@ exports[`truth-table snapshots > bits="io" produces stable output 1`] = `
 }
 `;
 
-exports[`truth-table snapshots > bits="ioaqrph" produces stable output 1`] = `
+exports[`truth-table snapshots > bits="ioaqr" produces stable output 1`] = `
 {
   "contract": {
     "receive": {
       "freeText": true,
-      "push": true,
       "structuredInbound": true,
     },
     "send": {
       "freeText": true,
-      "push": true,
       "query": true,
       "request": true,
     },
@@ -164,10 +129,8 @@ exports[`truth-table snapshots > bits="ioaqrph" produces stable output 1`] = `
     "you can query",
     "you can fire fire-and-forget requests",
     "you can message",
-    "you can push",
     "they can query you",
     "they can message you",
-    "they can push to you",
   ],
   "prompt": "Free-form conversation messages on this channel are delivered to the addressee normally.
 You may emit:
@@ -185,12 +148,10 @@ exports[`truth-table snapshots > bits="o" produces stable output 1`] = `
   "contract": {
     "receive": {
       "freeText": false,
-      "push": false,
       "structuredInbound": false,
     },
     "send": {
       "freeText": true,
-      "push": false,
       "query": false,
       "request": false,
     },
@@ -208,12 +169,10 @@ exports[`truth-table snapshots > bits="oqra" produces stable output 1`] = `
   "contract": {
     "receive": {
       "freeText": false,
-      "push": false,
       "structuredInbound": true,
     },
     "send": {
       "freeText": true,
-      "push": false,
       "query": true,
       "request": true,
     },
@@ -240,46 +199,16 @@ exports[`truth-table snapshots > bits="p" produces stable output 1`] = `
   "contract": {
     "receive": {
       "freeText": false,
-      "push": false,
       "structuredInbound": false,
     },
     "send": {
       "freeText": false,
-      "push": true,
       "query": false,
       "request": false,
     },
   },
-  "peerListing": [
-    "you can push",
-  ],
-  "prompt": "This channel does not deliver free-form conversation. Only the structured envelopes listed below reach the addressee; any other text is rejected as undeliverable.
-\`<cast:internal>…</cast:internal>\` is always available for private reasoning you want logged locally; it is never delivered.",
-  "rejection": "Output text was rejected — this channel delivers nothing addressed to this peer. Do not retry this text. If reasoning needs a local record, use \`<cast:internal>…</cast:internal>\` instead.",
-}
-`;
-
-exports[`truth-table snapshots > bits="ph" produces stable output 1`] = `
-{
-  "contract": {
-    "receive": {
-      "freeText": false,
-      "push": true,
-      "structuredInbound": false,
-    },
-    "send": {
-      "freeText": false,
-      "push": true,
-      "query": false,
-      "request": false,
-    },
-  },
-  "peerListing": [
-    "you can push",
-    "they can push to you",
-  ],
-  "prompt": "This channel does not deliver free-form conversation. Only the structured envelopes listed below reach the addressee; any other text is rejected as undeliverable.
-\`<cast:internal>…</cast:internal>\` is always available for private reasoning you want logged locally; it is never delivered.",
+  "peerListing": [],
+  "prompt": null,
   "rejection": "Output text was rejected — this channel delivers nothing addressed to this peer. Do not retry this text. If reasoning needs a local record, use \`<cast:internal>…</cast:internal>\` instead.",
 }
 `;
@@ -289,12 +218,10 @@ exports[`truth-table snapshots > bits="q" produces stable output 1`] = `
   "contract": {
     "receive": {
       "freeText": false,
-      "push": false,
       "structuredInbound": false,
     },
     "send": {
       "freeText": false,
-      "push": false,
       "query": true,
       "request": false,
     },
@@ -315,12 +242,10 @@ exports[`truth-table snapshots > bits="q" produces stable output 2`] = `
   "contract": {
     "receive": {
       "freeText": false,
-      "push": false,
       "structuredInbound": false,
     },
     "send": {
       "freeText": false,
-      "push": false,
       "query": true,
       "request": false,
     },
@@ -341,12 +266,10 @@ exports[`truth-table snapshots > bits="qa" produces stable output 1`] = `
   "contract": {
     "receive": {
       "freeText": false,
-      "push": false,
       "structuredInbound": true,
     },
     "send": {
       "freeText": false,
-      "push": false,
       "query": true,
       "request": false,
     },
@@ -370,12 +293,10 @@ exports[`truth-table snapshots > bits="qr" produces stable output 1`] = `
   "contract": {
     "receive": {
       "freeText": false,
-      "push": false,
       "structuredInbound": false,
     },
     "send": {
       "freeText": false,
-      "push": false,
       "query": true,
       "request": true,
     },
@@ -398,12 +319,10 @@ exports[`truth-table snapshots > bits="qra" produces stable output 1`] = `
   "contract": {
     "receive": {
       "freeText": false,
-      "push": false,
       "structuredInbound": true,
     },
     "send": {
       "freeText": false,
-      "push": false,
       "query": true,
       "request": true,
     },
@@ -429,12 +348,10 @@ exports[`truth-table snapshots > bits="r" produces stable output 1`] = `
   "contract": {
     "receive": {
       "freeText": false,
-      "push": false,
       "structuredInbound": false,
     },
     "send": {
       "freeText": false,
-      "push": false,
       "query": false,
       "request": true,
     },
@@ -455,12 +372,10 @@ exports[`truth-table snapshots > bits="r" produces stable output 2`] = `
   "contract": {
     "receive": {
       "freeText": false,
-      "push": false,
       "structuredInbound": false,
     },
     "send": {
       "freeText": false,
-      "push": false,
       "query": false,
       "request": true,
     },
@@ -481,12 +396,10 @@ exports[`truth-table snapshots > bits="ra" produces stable output 1`] = `
   "contract": {
     "receive": {
       "freeText": false,
-      "push": false,
       "structuredInbound": true,
     },
     "send": {
       "freeText": false,
-      "push": false,
       "query": false,
       "request": true,
     },

@@ -91,6 +91,18 @@ export function ApiWireFormat() {
         notes="<cast:answer> does not generate rejections — if an answer can't be delivered to the original querier, it's silently dropped."
       />
 
+      <ToolDoc
+        name='<cast:pending from="NAME" request="REQUEST_ID">'
+        signature={'<cast:pending from="NAME" request="REQUEST_ID">\n  REASON\n</cast:pending>'}
+        kind="tag"
+        summary={<>A held outbound <M>&lt;cast:query&gt;</M> or <M>&lt;cast:request&gt;</M>. The peer's owner has not yet granted the reach, so the call is parked awaiting that decision. The call is not refused. An answer or a rejection arrives on a later turn once the owner decides, so do not resend. Match <M>request</M> against the id from the originating call.</>}
+        params={[
+          { name: 'from', type: 'string', required: true, desc: 'The peer whose owner is deciding.' },
+          { name: 'request', type: 'string', required: true, desc: 'The id of the parked query or request.' },
+        ]}
+        notes="Non-terminal. The originating request stays open, so the eventual answer still lands on it. Framework-issued and receive-only. The agent never emits this tag."
+      />
+
       <H2>Outbound tags (agent → framework)</H2>
 
       <ToolDoc
@@ -119,6 +131,7 @@ export function ApiWireFormat() {
         params={[
           { name: 'target', type: 'string', required: true, desc: 'Peer alias prefixed with @.' },
         ]}
+        notes="If the peer's owner has not yet granted the reach, a <cast:pending> arrives first while the request waits for approval. The answer or a rejection follows once the owner decides."
       />
 
       <ToolDoc

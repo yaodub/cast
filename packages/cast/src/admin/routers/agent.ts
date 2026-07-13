@@ -13,12 +13,13 @@ import { AgentConfigSchema, AgentManifestSchema, ProvisionsSchema, isUnlocked } 
 import type { AgentManager } from '../../agent/agent-manager.js';
 import { AgentDb } from '../../agent/agent-db.js';
 import { resourcePathEscapesAgentsTree } from '../../container/container-mounts.js';
-import { AclSchema } from '../../auth/acl.js';
-import { AGENTS_DIR, agentPath, listSubdirectories, readCapabilities, readProvisions } from '../../config.js';
+import { AclSchema, revokeAclEdge, getOwner, setOwner as setAclOwner } from '../../auth/acl.js';
+import { appendChangelog } from '../../lib/audit-log.js';
+import { generateOwnerClaimCode } from '../../lib/owner-claims-store.js';
+import { AGENTS_DIR, agentPath, listSubdirectories, readCapabilities, readProvisions, OWNER_CLAIM_TTL_MS } from '../../config.js';
 import { ChannelJsonSchema, DEFAULT_CHANNEL_JSON } from '../../conversations/types.js';
 import { logger } from '../../logger.js';
 import { readJson, readParsed, readText } from '../../lib/config-reader.js';
-import { readPairedUsers, readPairingCodes, writePairingCodes } from '../../auth/pairing.js';
 import { generateId, writeAtomic } from '../../lib/utils.js';
 import { agentUpdateConfigInput, agentUpdateProvisionsInput } from '../schemas.js';
 import { aliasToFolder, publicProcedure, adminProcedure, router } from '../trpc.js';
@@ -125,18 +126,186 @@ export const agentRouter = router({
     }),
 
   /**
-   * Get ACL for an agent — returns blueprint-static peers from `config/acl.json`
-   * only. Paired users are layered on separately via `agent.getPairedUsers`;
-   * the Access tab overlays the two sources to render a unified peer list.
+   * Get ACL for an agent — the single ACL store `config/acl.json`. It holds
+   * ALL live grants: operator-authored peers and runtime owner-approved edges
+   * alike (the acl-edge approval writes granted edges into `allowed`). The Access
+   * tab renders this one source — every grant lives here.
    *
-   * Edits to blueprint-static peers happen via the agent's Configure channel
-   * (chat) or by hand-editing `acl.json`; there is no tRPC mutation for it.
+   * Edits happen via the agent's Configure channel (chat), the owner-approval
+   * flow at runtime, or by hand-editing `acl.json`.
    */
   getAcl: adminProcedure.input(aliasInput).query(({ ctx, input }) => {
     const folder = aliasToFolder(ctx.deps, input.alias);
     const aclPath = agentPath(folder, 'config', 'acl.json');
     const raw = readJson(aclPath);
     return AclSchema.parse(raw ?? {});
+  }),
+
+  /**
+   * Pending approvals visible to the operator for this agent — the per-agent
+   * operator inbox. Redundancy over detection: the
+   * operator sees every approval whose controller is NOT the conversing
+   * participant — both operator-sentinel rows AND rows routed to a human owner.
+   * Owner-directed rows also land in the owner's own conversation; whichever
+   * surface answers first resolves the row, and the loser sees it drop on the
+   * next poll (first-responder-wins, enforced by the pending-status guard in
+   * the approval handler). Participant-deciding tool-call rows (controller =
+   * participant) stay out of the operator inbox.
+   *
+   * Shaped for the Access-tab section: the human `summary`, the subject
+   * identity, the controller it's routed to (for labeling), the type, and the
+   * requested bit parsed out of the acl-edge `payload`.
+   */
+  listPendingApprovals: adminProcedure.input(aliasInput).query(({ ctx, input }) => {
+    const folder = aliasToFolder(ctx.deps, input.alias);
+    const dbPath = agentPath(folder, 'state', 'agent.db');
+    if (!fs.existsSync(dbPath)) return [];
+    const db = new AgentDb(dbPath);
+    try {
+      return db.approvals.listPendingApprovals()
+        .filter((row) => (row.controller ?? row.participant) !== row.participant)
+        .map((row) => {
+          // acl-edge rows carry `{ bit, ... }` in payload; tool-call rows don't.
+          let bit: string | null = null;
+          if (row.payload) {
+            try { bit = (JSON.parse(row.payload) as { bit?: string }).bit ?? null; } catch { /* leave null */ }
+          }
+          return {
+            id: row.id,
+            type: row.type,
+            summary: row.summary,
+            // The actual content the requester is trying to send (the held
+            // message / request body) — surfaced so the operator decides on
+            // what was said, not just the framing summary. Rendered in full.
+            details: row.details ?? null,
+            participant: row.participant,
+            // Who this approval is routed to: the `operator` sentinel, or a human
+            // owner identity. The card labels it so the operator knows whether
+            // they're the primary decider or a backstop over the owner.
+            controller: row.controller ?? 'operator',
+            channel: row.channel,
+            bit,
+            createdAt: row.created_at,
+          };
+        });
+    } finally {
+      db.close();
+    }
+  }),
+
+  /**
+   * Fleet-wide count of operator-visible pending approvals, keyed by alias — for
+   * the admin sidebar badge. Same filter as listPendingApprovals (controller is
+   * not the conversing participant — operator-sentinel plus owner-directed rows),
+   * aggregated so the sidebar renders one poll, not one query per row. Aliases
+   * with zero pending are omitted (the badge reads `count > 0`). Admin-gated: the
+   * public `agent.list` must not leak request counts.
+   */
+  pendingApprovalCounts: adminProcedure.query(({ ctx }) => {
+    const counts: Record<string, number> = {};
+    for (const entity of ctx.deps.bus.listEntities({ type: 'agent' })) {
+      const dbPath = agentPath(entity.folderPath, 'state', 'agent.db');
+      if (!fs.existsSync(dbPath)) continue;
+      const db = new AgentDb(dbPath);
+      try {
+        const n = db.approvals.listPendingApprovals()
+          .filter((row) => (row.controller ?? row.participant) !== row.participant).length;
+        if (n > 0) counts[entity.label] = n;
+      } finally {
+        db.close();
+      }
+    }
+    return counts;
+  }),
+
+  /**
+   * Answer an operator-routed approval from the Access-tab inbox. Routes the
+   * decision through the same path as a transport answer
+   * (`gateway.ingestApprovalResponse`), with an `admin:` operator handle — which
+   * `isAuthorizedAnswerer` accepts as the god-mode backstop. `tier` ('once' /
+   * 'always') is honored because the controller (operator) differs from the
+   * conversing participant; 'always' writes the grant/tombstone into acl.json,
+   * which trips the file watcher and refreshes `getAcl` on its own.
+   */
+  respondApproval: adminProcedure
+    .input(z.object({
+      alias: z.string(),
+      id: z.string().min(1),
+      decision: z.enum(['approved', 'rejected']),
+      tier: z.enum(['once', 'always']),
+    }))
+    .mutation(({ ctx, input }) => {
+      const { mgr } = requireManager(ctx.deps, input.alias);
+      const from = `admin:${ctx.session.token.slice(0, 8)}`;
+      ctx.deps.gateway.ingestApprovalResponse(from, mgr.agentId, {
+        id: input.id,
+        decision: input.decision,
+        tier: input.tier,
+      });
+      return { ok: true };
+    }),
+
+  /**
+   * Plain-remove a granted edge from `config/acl.json` `allowed` — the Access-tab
+   * revoke affordance for both user and agent-peer rows. The peer returns to
+   * *askable* (it may request again); this does not tombstone. Operator action,
+   * not chat-driven (revoking access is not something the agent does on the
+   * operator's behalf).
+   */
+  revokeAclEdge: adminProcedure
+    .input(z.object({ alias: z.string(), peer: z.string().min(1), channel: z.string().min(1) }))
+    .mutation(({ ctx, input }) => {
+      const folder = aliasToFolder(ctx.deps, input.alias);
+      revokeAclEdge(folder, input.peer, input.channel);
+      appendChangelog(folder, {
+        actor: 'local', action: 'access_revoked', peer: input.peer, channel: input.channel,
+      });
+      return { ok: true };
+    }),
+
+  /**
+   * Current owner + any outstanding owner-claim, for the Access-tab owner panel.
+   * `owner` is the resolved owner identity (`operator` sentinel when unbound).
+   * `active` is the live (pending, unexpired) claim code the operator can still
+   * hand out, or null. Re-surfacing the code lets a reload show the outstanding
+   * claim rather than minting a fresh one.
+   */
+  ownerClaim: adminProcedure.input(aliasInput).query(({ ctx, input }) => {
+    const folder = aliasToFolder(ctx.deps, input.alias);
+    const owner = getOwner(ctx.deps.bus, folder) ?? 'operator';
+    const dbPath = agentPath(folder, 'state', 'agent.db');
+    if (!fs.existsSync(dbPath)) return { owner, active: null };
+    const db = new AgentDb(dbPath);
+    try {
+      const row = db.ownerClaims.activeClaim();
+      return { owner, active: row ? { code: row.code, expiresAt: row.expires_at } : null };
+    } finally {
+      db.close();
+    }
+  }),
+
+  /**
+   * Mint a one-time owner-claim code. The operator hands the
+   * returned code to the intended human owner out-of-band; they redeem it by
+   * messaging the agent `/claim <code>`, which binds their transport-
+   * authenticated identity as owner. One-active-per-agent (a new mint supersedes
+   * any un-redeemed predecessor) and time-scoped (`OWNER_CLAIM_TTL_MS`). The code
+   * is the capability — direct recognition-only owner writes are deliberately not
+   * offered (a name is not verification); the only non-claim write is reverting
+   * to the operator sentinel via `setOwner`.
+   */
+  mintOwnerClaim: adminProcedure.input(aliasInput).mutation(({ ctx, input }) => {
+    const folder = aliasToFolder(ctx.deps, input.alias);
+    const dbPath = agentPath(folder, 'state', 'agent.db');
+    const db = new AgentDb(dbPath);
+    try {
+      const code = generateOwnerClaimCode();
+      const expiresAt = new Date(Date.now() + OWNER_CLAIM_TTL_MS).toISOString();
+      db.ownerClaims.mint(code, expiresAt);
+      return { code, expiresAt };
+    } finally {
+      db.close();
+    }
   }),
 
   /**
@@ -208,55 +377,6 @@ export const agentRouter = router({
       return [{ conversationKey: e.conversationKey, channel: e.channelName, participant: e.participant, lastActive: e.lastActive, status: e.status }];
     });
   }),
-
-  // -------------------------------------------------------------------------
-  // Access — paired users + pairing codes
-  // -------------------------------------------------------------------------
-
-  /** Get paired users for an agent. */
-  getPairedUsers: adminProcedure.input(aliasInput).query(({ ctx, input }) => {
-    const folder = aliasToFolder(ctx.deps, input.alias);
-    return readPairedUsers(folder);
-  }),
-
-  /** Unpair a user — remove their ACL grants from paired-users.json. */
-  unpairUser: adminProcedure
-    .input(z.object({ alias: z.string(), identityId: z.string() }))
-    .mutation(({ ctx, input }) => {
-      const { mgr } = requireManager(ctx.deps, input.alias);
-      const result = mgr.unpair(input.identityId);
-      if (!result.ok) {
-        throw new TRPCError({ code: 'NOT_FOUND', message: 'User not found in paired users' });
-      }
-      return { ok: true };
-    }),
-
-  /** Get pairing codes for an agent. */
-  getPairingCodes: adminProcedure.input(aliasInput).query(({ ctx, input }) => {
-    const folder = aliasToFolder(ctx.deps, input.alias);
-    const codes = readPairingCodes(folder);
-    return Object.entries(codes).map(([code, state]) => ({
-      code,
-      consumed: state.consumed ?? false,
-      forHandle: state.for_handle ?? null,
-      expires: state.expires ?? null,
-      expired: state.expires ? Date.now() > new Date(state.expires).getTime() : false,
-    }));
-  }),
-
-  /** Revoke a pairing code — mark as consumed. */
-  revokePairingCode: adminProcedure
-    .input(z.object({ alias: z.string(), code: z.string() }))
-    .mutation(({ ctx, input }) => {
-      const folder = aliasToFolder(ctx.deps, input.alias);
-      const codes = readPairingCodes(folder);
-      if (!(input.code in codes)) {
-        throw new TRPCError({ code: 'NOT_FOUND', message: 'Pairing code not found' });
-      }
-      codes[input.code] = { ...codes[input.code]!, consumed: true };
-      writePairingCodes(folder, codes);
-      return { ok: true };
-    }),
 
   // -------------------------------------------------------------------------
   // Provisions — capabilities slots + operator-filled values
@@ -349,24 +469,6 @@ export const agentRouter = router({
       writeAtomic(provisionsPath, JSON.stringify(existing, null, 2));
       return { ok: true };
     }),
-
-  /** Pending pairing request counts across all agents. */
-  pendingPairingCounts: adminProcedure.query(({ ctx }) => {
-    const entities = ctx.deps.bus.listEntities({ type: 'agent' });
-    const results: { alias: string; count: number }[] = [];
-    for (const entity of entities) {
-      const codes = readPairingCodes(entity.folderPath);
-      const now = Date.now();
-      let count = 0;
-      for (const state of Object.values(codes)) {
-        if (state.consumed) continue;
-        if (state.expires && now > new Date(state.expires).getTime()) continue;
-        count++;
-      }
-      if (count > 0) results.push({ alias: entity.label, count });
-    }
-    return results;
-  }),
 
   /** Restart agent service process — bypasses crash-recovery backoff. */
   restartService: adminProcedure
@@ -541,21 +643,18 @@ export const agentRouter = router({
     }),
 
   /**
-   * Change the ACL owner identity. No chat-based flow — setting owner is
-   * an operator action, not something the agent can do on the operator's
-   * behalf (that would be a prompt-injection surface).
-   *
-   * Exposed for a future Access-tab UI affordance; no caller today. The
-   * blueprint-static path is hand-editing `config/acl.json`.
+   * Set the ACL owner identity. Operator action, never chat-driven (that would
+   * be a prompt-injection surface). In practice the Access-tab panel calls this
+   * only to revert to the `operator` sentinel — binding a *human* owner goes
+   * through the verification loop (`mintOwnerClaim` + `/claim` redeem), because a
+   * recognized name is not a verified identity. Reverting also unpins the owner
+   * conversation (`approval_channel` → null) so a stale pin can't linger.
    */
   setOwner: adminProcedure
     .input(z.object({ alias: z.string(), owner: z.string().min(1) }))
     .mutation(({ ctx, input }) => {
       const { folder } = requireManager(ctx.deps, input.alias);
-      const aclPath = agentPath(folder, 'config', 'acl.json');
-      const existing = readParsed(aclPath, AclSchema, AclSchema.parse({}));
-      existing.owner = input.owner;
-      writeAtomic(aclPath, JSON.stringify(existing, null, 2) + '\n');
+      setAclOwner(folder, input.owner, null);
       return { ok: true, owner: input.owner };
     }),
 });

@@ -5,8 +5,7 @@
  */
 import fs from 'fs';
 
-import { agentPath, sessionCastSocketPath, sessionClaudePath } from '../config.js';
-import { mcpTransport } from '../container/mcp-transport.js';
+import { agentPath, sessionClaudePath } from '../config.js';
 import type { VolumeMount } from '../container/container-mounts.js';
 import type { Host } from '../types.js';
 
@@ -24,16 +23,11 @@ export function buildBaseMounts(agent: Host, conversationKey: string): VolumeMou
   fs.mkdirSync(claudeDir, { recursive: true });
   mounts.push({ hostPath: claudeDir, containerPath: '/home/node/.claude', readonly: false });
 
-  // MCP socket mount: add unconditionally in socket mode. The socket file
-  // won't exist yet at mount-build time (it's created later by
-  // startConsoleMcpServer in conversation-runner), but we await mcp.ready
-  // before launching the container — so by the time Apple Container reads
-  // the mount flags, the file is on disk. TCP mode skips this; the agent
-  // container connects via host.docker.internal using CAST_MCP_PORTS.
-  if (mcpTransport().mode === 'socket') {
-    const sockPath = sessionCastSocketPath(agent.folder, conversationKey);
-    mounts.push({ hostPath: sockPath, containerPath: '/mcp/cast.sock', readonly: false });
-  }
+  // The per-conversation `/mcp/cast.sock` mount is appended at the spawn
+  // chokepoint (container-runner) from the nonce'd host path the runner created
+  // (`startConsoleMcpServer`, awaited before launch). Owning it there lets the
+  // console and normal-agent paths share one socket-path owner. TCP mode creates
+  // no socket file, so the append is naturally skipped.
 
   return mounts;
 }

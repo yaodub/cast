@@ -30,7 +30,7 @@ external integrations the agent uses to act on external data and
 services; their per-extension manuals at `/ref/manuals/extensions/<name>/`
 are the authoritative reference for each. Extensions are distinct
 from **transports** (the chat carriers that route inbound messages
-from paired users to the agent's channels — server-level,
+from users to the agent's channels — server-level,
 Configure-bound, no blueprint footprint); see `console/overview.md`
 § *Extensions vs. transports* for the full disambiguation.
 
@@ -183,8 +183,8 @@ verbs are even present here).
 ### Co-participant visibility (`show_co_participants`)
 
 A channel is a cross-participant surface. Its members are the
-identities placed on it: a user by pairing, a peer agent by the
-answer grant it holds here. Members are the channel's co-participants,
+identities placed on it: a user by an inbound (`i`) grant, a peer agent
+by the answer grant it holds here. Members are the channel's co-participants,
 and `show_co_participants` enables or disables whether they see and
 reach each other.
 
@@ -224,9 +224,10 @@ ACL is seven bits (`ioaqrph`) scoped per peer identity per channel.
 **Each bit is directional from *this* agent's perspective**, all
 stored in this agent's own `config/acl.json`:
 
-- **Inbound gates** (`i`, `a`, `h`) — what this agent accepts from the
-  peer on this channel: regular conversation (`i`), answers to queries
-  it sent / queries from the peer (`a`), hosted pushes (`h`).
+- **Inbound gates** (`i`, `a`) — what this agent accepts from the
+  peer on this channel: regular conversation (`i`, which also hosts a
+  pushed-in user), answers to queries it sent / queries from the peer
+  (`a`).
 - **Outbound permits** (`o`, `q`, `r`, `p`) — what this agent is
   allowed to send to the peer on this channel: regular conversation
   (`o`), queries expecting answer (`q`), fire-and-forget requests
@@ -260,8 +261,8 @@ ACL (which identities need which bits on which channels, and on which
 side) is a Design-time decision. Mention what each side needs in your
 handoff to Configure; don't leave it implicit.
 
-Composes with: channel design (the unit of access), peer agent wiring
-(cross-agent peers need `r`/`p`/`h` bits — see
+Composes with: channel design (the unit of access), peer agent reach
+(cross-agent peers carry `q`/`r`/`a`/`p` bits — see
 `multi-agent-composition.md` for the shape choice and
 `/ref/manuals/console/cross-agent-acl.md` for the ACL JSON Configure
 writes), source attribution (the receiver knows which identity
@@ -453,8 +454,7 @@ alias (for per-caller state on the receiver), the participant
 identity (when a single agent serves many users), a topic name
 (`daily`, `weekly`, `release-notes`), a time bucket
 (`2026-05`), an external ID (`pr-1234`). Document the choice in the
-caller's prompt so the rule is explicit, not implicit — same as you
-would for which agent to ask in `peers.md`.
+caller's prompt so the rule is explicit, not implicit.
 
 **What to put in a receiver's prompt.** When authoring the sharded
 channel's `prompt.md`, write it for *one slice at a time*. The
@@ -505,8 +505,8 @@ axes:
   different channel on this agent.* Self-routing across the agent's
   own channels.
 - **`push_to_channel` with `target_agent`** — *same participant, peer
-  agent's channel.* Cross-agent push along the user's pairing edge;
-  the receiver opens or resumes a conversation with that participant.
+  agent's channel.* Cross-agent push: the receiver opens or resumes a
+  conversation with that participant.
 - **`push_to_participant`** (intra-agent only) — *different
   participant on this agent.* Directed messaging between participants
   who share this agent. Use cases include: nudging a participant with
@@ -523,8 +523,9 @@ queries agent B; agent B independently decides to push to Bob if its
 prompt says so. This forces the receiver to authorize the participant
 move under its own ACL, not the sender's.
 
-Composes with: ACL (cross-agent push needs `p` on sender +
-`h` + `i` on receiver), source attribution (the receiver sees
+Composes with: ACL (cross-agent push needs `p` on the sender toward the
+target agent + the carried user's `io` on the receiver), source
+attribution (the receiver sees
 `<cast:push>` with `fromAgent` / `fromParticipant` / `fromChannel`
 attrs and can branch), `<cast:internal>` (silent push),
 channel-scoped tool gating (you can disable push on a channel that
@@ -823,8 +824,9 @@ has a name and a test.
 
 The framework's prompt assembly fires a fixed set of layers at
 turn-start (Cast protocol → profile prompt → profile skills →
-identity files (`prompt.md` / `whoami.md` / `peers.md` / `skills.md`) →
-channel `prompt.md` → service-injected `agent-context.md` →
+identity files (`prompt.md` / `whoami.md` / `skills.md`) → computed
+peer-reach (`<agent-peers>`) → channel `prompt.md` → service-injected
+`agent-context.md` →
 server-built `<conversation-context>` carrying up to three
 previous-session summaries). On a new conversation's first turn, the
 channel's `bootstrap.md` runs as a one-shot query and its output is
@@ -876,13 +878,12 @@ any maintenance — without guessing:
 - `channels/<name>/channel.json` — lifecycle, tools, sharding,
   logging
 - `channels/<name>/{prompt,bootstrap,cleanup}.md` — handler logic
-- `identity/{prompt,whoami,peers,skills}.md` — agent-wide layers
+- `identity/{prompt,whoami,skills}.md` — agent-wide layers
   this channel inherits
 - `props/capabilities.json` — agent-wide `disabled_tools`,
   extensions, resource slot declarations
-- For peer-facing channels: the *caller's* `peers.md` and
-  `acl.json` too — both sides must agree on the channel name and
-  ACL bits, or the edge silently breaks
+- For peer-facing channels: the `acl.json` grants on both sides — they
+  must agree on the channel name and bits, or the edge silently breaks
 - The intended ACL grants for `config/acl.json` (Configure writes
   the file; Design specifies the shape)
 
@@ -1010,8 +1011,9 @@ the cost of behavior changes lands with you.
   spec discipline above (every loader names its file, every channel
   its lifecycle, every loop its closer). Read a few early; carry
   the moves forward.
-- `multi-agent-composition.md` — channel-name alignment, the three
-  edge shapes (q/a, r/a, p/h), and the handoff to Configure for
+- `multi-agent-composition.md` — advertising the interface, the three
+  edge shapes (q/a, r/a, push), the reachability posture, and the
+  handoff to Configure for
   ACL grant authorship.
 - `/ref/manuals/console/cross-agent-acl.md` — Configure's manual for
   ACL JSON (bit glossary, directional rule, worked examples). Read

@@ -5,9 +5,12 @@
  * crowd the AgentManager constructor. The deps object captures references to the
  * caller's owned state — call this once during construction and stash the result.
  */
-import { checkAcl, hasBit, listChannelMembers, listPlacedChannels, membershipBits } from '../auth/acl.js';
-import { extractIdentity, isAgent, isMember, isReadTier } from '../auth/address.js';
-import { canPushCrossConversation, channelAuthDenial } from '../auth/conversation-context.js';
+import { z } from 'zod';
+
+import { aclVerdict, listChannelMembers, listPlacedChannels, membershipBits } from '../auth/acl.js';
+import { extractIdentity, isAgent, isMember, isReadTier, isUser } from '../auth/address.js';
+import { canPushCrossConversation, channelAuthDenial, resolveCallerContext } from '../auth/conversation-context.js';
+import { userPushVerdict } from '../auth/user-push-store.js';
 import { loadChannelsConfig } from '../conversations/channel-config.js';
 import type { Bus } from '../gateway/bus.js';
 import { escapeXml } from '../lib/format.js';
@@ -16,6 +19,7 @@ import type { RouteResult } from '../types.js';
 import { generateId } from '../lib/utils.js';
 
 import type { AgentDb } from './agent-db.js';
+import { mintCorrelationCode } from './agent-bus-handler.js';
 import type { DeliveryResult, McpServerDeps } from './mcp-server.js';
 import type { ApprovalHandler } from './approval-handler.js';
 import type { Routing, SiblingAgentInfo } from './agent-bus-payload.js';
@@ -57,6 +61,190 @@ export interface AgentMcpDepsContext {
   ) => { accepted: boolean; cooldownSeconds: number; reason?: string };
   /** Per-agent file-watch service. Late-bound via getter — initialized after AgentManager.init(). */
   getFileWatchService: () => FileWatchService;
+}
+
+/**
+ * A held cross-agent push. On an askable `p`-containment edge the
+ * would-be push is stashed in the owner approval's payload and re-emitted verbatim
+ * (`emitPush`) once the SENDER's owner grants `p`. The push analogue of
+ * `HeldOutboundRequest` (q/r) — the resume re-runs the push dispatch, not a request.
+ * `channel`/`qualifier` address the TARGET; `participant` is the carried user;
+ * `caller*` is the sender's own cell (where a decline notice lands).
+ */
+export const HeldPushSchema = z.object({
+  target: z.string(),
+  channel: z.string(),
+  qualifier: z.string().optional(),
+  text: z.string(),
+  requestId: z.string(),
+  participant: z.string(),
+  callerChannel: z.string().optional(),
+  callerQualifier: z.string().optional(),
+});
+export type HeldPush = z.infer<typeof HeldPushSchema>;
+
+/**
+ * Record + dispatch a cross-agent push — the shared emit tail used by the granted
+ * path in `deliverToAgent` and by the owner-grant re-emit. Idempotent on
+ * the caller's `requestId` (minted once at hold/emit time so the re-emit reuses it).
+ */
+export function emitPush(
+  deps: { agentId: string; bus: Bus; agentDb: AgentDb },
+  held: HeldPush,
+): void {
+  deps.agentDb.recordOutboundPush({
+    requestId: held.requestId,
+    targetAgent: held.target,
+    targetChannel: held.channel,
+    channel: held.callerChannel ?? '',
+    participant: held.participant,
+    qualifier: held.callerQualifier,
+  });
+  // Fire-and-forget — bus dispatch is a fast queue handoff. Log failures so silent
+  // drops are visible in dogfood (mirrors the inline dispatch this replaced).
+  void deps.bus.routeMessage(deps.agentId, held.target, {
+    type: 'push' as const,
+    text: held.text,
+    requestId: held.requestId,
+    returnToParticipant: held.participant,
+    returnToChannel: held.callerChannel ?? '',
+    returnToQualifier: held.callerQualifier,
+    routing: { channel: held.channel, qualifier: held.qualifier },
+  }).catch((err) => {
+    logger.error(
+      { err, source: deps.agentId, target: held.target, requestId: held.requestId },
+      'emitPush dispatch failed',
+    );
+  });
+}
+
+/**
+ * Hold an askable cross-agent push and raise an owner-directed acl-edge approval for
+ * the `p`-containment edge `this-agent → target` — the push analogue of
+ * the q/r `raiseOutboundContainmentApproval`. Routes to THIS agent's owner; on grant
+ * `resolveAclEdge` re-emits the held push (and on always persists `p`). Dedups per
+ * outbound edge so a retrying agent doesn't stack approvals. Returns the held
+ * `DeliveryResult` the push tool renders back to the agent.
+ */
+function raisePushContainmentApproval(
+  ctx: AgentMcpDepsContext,
+  displayTarget: string,
+  held: HeldPush,
+): DeliveryResult {
+  const approvals = ctx.getApprovals();
+  if (approvals.pendingAclEdge(held.target, held.channel, ['p'])) {
+    return {
+      ok: false as const,
+      held: true as const,
+      reason: `A push to ${displayTarget} on "${held.channel}" is already awaiting your owner's approval. The push goes through once they grant it; no need to retry.`,
+    };
+  }
+  const ref = mintCorrelationCode();
+  approvals.createRequest({
+    type: 'acl-edge',
+    approver: 'owner',
+    participant: held.target,
+    channel: held.channel,
+    summary: `This agent (ref ${ref}) wants to route a user into ${displayTarget} on "${held.channel}".`,
+    details: held.text,
+    payload: JSON.stringify({ bit: 'p', ref, held }),
+  });
+  return {
+    ok: false as const,
+    held: true as const,
+    reason: `Push held (ref ${ref}). Your owner must approve routing a user into ${displayTarget} on "${held.channel}" before the first push goes through. You'll be notified on a later turn.`,
+  };
+}
+
+/** TTL for a pending user↔user push approval: 1 day. After this the
+ *  pushee can no longer act on it; the held push is dropped and the pusher gets a
+ *  decline. Longer than the default approval expiry — a person, not a synchronous
+ *  caller, is on the other end. */
+const USER_PUSH_TTL_SECONDS = 86400;
+
+/** The minimal context an intra-agent push delivery needs — the receiving agent's
+ *  id, its db (outbound-push bookkeeping), and the self-route callback. A subset of
+ *  `AgentMcpDepsContext` so the emit/decline helpers can also be driven from
+ *  `agent-manager` (the user-push approval resume) without the full deps object. */
+type LocalPushDeps = Pick<AgentMcpDepsContext, 'agentId' | 'agentDb' | 'route'>;
+
+/**
+ * A held intra-agent push. On an askable user↔user edge the would-be
+ * push is stashed in the pushee-approval payload and replayed verbatim
+ * (`emitLocalPush`) once the pushee consents. `participant` is the pushee;
+ * `caller*` is the pusher's own cell (where the answer/decline lands). `requestId`
+ * is minted once at hold time so the replay reuses it.
+ */
+export const HeldLocalPushSchema = z.object({
+  channel: z.string(),
+  text: z.string(),
+  participant: z.string(),
+  callerChannel: z.string().optional(),
+  callerParticipant: z.string().optional(),
+  qualifier: z.string().optional(),
+  callerQualifier: z.string().optional(),
+  requestId: z.string(),
+});
+export type HeldLocalPush = z.infer<typeof HeldLocalPushSchema>;
+
+/**
+ * Record + self-route an intra-agent push — the shared emit tail used by the
+ * granted path in `dispatchLocalPush` and by the user-push approval resume.
+ * Idempotent on `requestId`. Fire-and-forget; a delivery failure echoes a
+ * `<cast:rejection>` back into the pusher's cell (the intra-agent analogue of the
+ * cross-agent bus rejection round-trip).
+ */
+export function emitLocalPush(deps: LocalPushDeps, held: HeldLocalPush): void {
+  deps.agentDb.recordOutboundPush({
+    requestId: held.requestId,
+    targetAgent: deps.agentId,
+    targetChannel: held.channel,
+    channel: held.callerChannel ?? '',
+    participant: held.callerParticipant ?? '',
+    qualifier: held.callerQualifier,
+  });
+  const attrs = pushTierAttrs({
+    receiverAgent: deps.agentId,
+    senderAgent: deps.agentId,
+    callerParticipant: held.callerParticipant,
+    callerChannel: held.callerChannel,
+    targetChannel: held.channel,
+  });
+  void deps.route(
+    deps.agentId, deps.agentId, held.text,
+    { channel: held.channel, qualifier: held.qualifier, targetParticipant: held.participant },
+    undefined, undefined, undefined, 'push', attrs,
+  ).then((result) => {
+    if (!result.ok) handleLocalPushFailure(deps, held, result.error);
+  }).catch((err: unknown) => {
+    handleLocalPushFailure(deps, held, err instanceof Error ? err.message : String(err));
+  });
+}
+
+/** Echo a `<cast:rejection>` into the pusher's own cell. Shared by a live push that
+ *  fails delivery (`handleLocalPushFailure`) and a held user-push the pushee
+ *  declined or let lapse (`declineLocalPush`). */
+function echoPushRejection(deps: LocalPushDeps, held: HeldLocalPush, reason: string): void {
+  if (held.callerChannel === undefined || held.callerParticipant === undefined) {
+    // Self-fire origin (scheduler/service) — no caller cell to echo into.
+    logger.warn({ agentId: deps.agentId, requestId: held.requestId }, 'Push rejection has no caller cell; echo skipped');
+    return;
+  }
+  const tag = `<cast:rejection from="${escapeXml(deps.agentId)}" request="${escapeXml(held.requestId)}">${escapeXml(reason)}</cast:rejection>`;
+  void deps.route(
+    deps.agentId, deps.agentId, tag,
+    { channel: held.callerChannel, qualifier: held.callerQualifier, targetParticipant: held.callerParticipant },
+  ).catch((err) => {
+    // Echo is best-effort — a rejection is not a push, so this cannot recurse.
+    logger.error({ err, agentId: deps.agentId, requestId: held.requestId }, 'Push rejection echo could not be delivered');
+  });
+}
+
+/** Decline a held user↔user push (pushee rejected, or the 1-day TTL lapsed) — echo
+ *  a rejection into the pusher's cell so its held turn resolves. No outbound-row
+ *  update: a held push was never recorded (the row is minted only on emit). */
+export function declineLocalPush(deps: LocalPushDeps, held: HeldLocalPush, reason: string): void {
+  echoPushRejection(deps, held, reason);
 }
 
 /**
@@ -109,6 +297,28 @@ function dispatchLocalPush(
       channelConfig: loadChannelsConfig(ctx.folder)[channel],
     });
     if (!verdict.allowed) {
+      // Reactive user↔user consent: a non-member USER pusher reaching a
+      // member USER pushee may REQUEST the pushee's in-band consent (the per-edge
+      // user-push store). Owner-tier never reaches here; only the caller-standing
+      // (non-member) denial is pushee-overridable — posture/structural denials stay
+      // hard. granted (a prior allow-always) → deliver; askable → hold + raise to
+      // the pushee; rejected (tombstone) → hard deny.
+      if (isReactiveUserPushCandidate(ctx, channel, participant, callerParticipant)) {
+        const held: HeldLocalPush = {
+          channel, text, participant,
+          callerChannel, callerParticipant, qualifier, callerQualifier,
+          requestId: generateId('req'),
+        };
+        const uv = userPushVerdict(ctx.folder, channel, callerParticipant ?? '', participant);
+        if (uv === 'granted') {
+          emitLocalPush(ctx, held);
+          return Promise.resolve({ ok: true as const, requestId: held.requestId });
+        }
+        if (uv === 'askable') {
+          return Promise.resolve(raiseUserPushApproval(ctx, held));
+        }
+        return Promise.resolve({ ok: false as const, reason: `${participant} has declined pushes from you on "${channel}".` });
+      }
       return Promise.resolve({ ok: false as const, reason: verdict.reason });
     }
     // Existence is a typo-catch, not a trust gate — checked AFTER the verdict
@@ -128,87 +338,79 @@ function dispatchLocalPush(
       reason: 'Cannot push to your own active conversation. Output the text directly as your response — it will be delivered to the participant automatically.',
     });
   }
-  // Mint correlation ID and persist the outbound push row before
-  // dispatch. The row anchors the `<cast:rejection>` echo: sender-side
-  // rejection handling tries `outbound_requests` first and falls back
-  // to `outbound_pushes`. Intra-agent failures (the local dispatch below
-  // settling not-ok or rejecting) mark this row and echo directly.
-  const requestId = generateId('req');
-  ctx.agentDb.recordOutboundPush({
-    requestId,
-    targetAgent: ctx.agentId,
-    targetChannel: channel,
-    channel: callerChannel ?? '',
-    participant: callerParticipant ?? '',
-    qualifier: callerQualifier,
-  });
-  // Fire-and-forget — route into our own pipeline on the target channel.
-  // Tier attrs derived by the shared helper from raw origin inputs.
-  const attrs = pushTierAttrs({
-    receiverAgent: ctx.agentId,
-    senderAgent: ctx.agentId,
-    callerParticipant,
-    callerChannel,
-    targetChannel: channel,
-  });
-  // At-most-once stays (no await — verbs return after queueing), but the
-  // failure must be observable: a spawn-time error settles the deliver
-  // resolver with {ok:false} (it does not reject), so both legs are handled.
-  void ctx.route(
-    ctx.agentId,
-    ctx.agentId,
-    text,
-    { channel, qualifier, targetParticipant: participant },
-    undefined,
-    undefined,
-    undefined,
-    'push',
-    attrs,
-  ).then((result) => {
-    if (!result.ok) {
-      handleLocalPushFailure(ctx, requestId, callerChannel, callerParticipant, callerQualifier, result.error);
-    }
-  }).catch((err: unknown) => {
-    handleLocalPushFailure(
-      ctx, requestId, callerChannel, callerParticipant, callerQualifier,
-      err instanceof Error ? err.message : String(err),
-    );
-  });
-  return Promise.resolve({ ok: true as const, requestId });
+  const held: HeldLocalPush = {
+    channel, text, participant,
+    callerChannel, callerParticipant, qualifier, callerQualifier,
+    requestId: generateId('req'),
+  };
+  emitLocalPush(ctx, held);
+  return Promise.resolve({ ok: true as const, requestId: held.requestId });
 }
 
 /**
- * Intra-agent push failure path. The cross-agent rail surfaces failures via a
- * bus `type:'rejection'` round-trip; local dispatch has no bus hop, so the
- * same `<cast:rejection request="…">` contract is produced directly: mark the
- * outbound row, then echo the tag into the caller's cell so the LLM that
- * received "queued for delivery" learns the delivery died.
+ * Intra-agent push failure path. The cross-agent rail surfaces failures via a bus
+ * `type:'rejection'` round-trip; local dispatch has no bus hop, so the same
+ * `<cast:rejection request="…">` contract is produced directly: mark the outbound
+ * row, then echo into the caller's cell so the LLM that received "queued for
+ * delivery" learns the delivery died.
  */
-function handleLocalPushFailure(
+function handleLocalPushFailure(deps: LocalPushDeps, held: HeldLocalPush, reason: string): void {
+  logger.warn({ agentId: deps.agentId, requestId: held.requestId, reason }, 'Intra-agent push delivery failed');
+  deps.agentDb.updateOutboundPushStatus(held.requestId, 'rejected');
+  echoPushRejection(deps, held, reason);
+}
+
+/** Is this denied push a reactive user↔user candidate? Only a non-member
+ *  USER pusher reaching a concrete-member USER pushee — the one denial the pushee's
+ *  consent may override. Posture/structural denials (target-not-user, posture
+ *  isolation) keep the hard deny; the operator's channel config is not pushee-
+ *  overridable, and a non-member pushee has no conversation to push into. */
+function isReactiveUserPushCandidate(
   ctx: AgentMcpDepsContext,
-  requestId: string,
-  callerChannel: string | undefined,
-  callerParticipant: string | undefined,
-  callerQualifier: string | undefined,
-  reason: string,
-): void {
-  logger.warn({ agentId: ctx.agentId, requestId, reason }, 'Intra-agent push delivery failed');
-  ctx.agentDb.updateOutboundPushStatus(requestId, 'rejected');
-  if (callerChannel === undefined || callerParticipant === undefined) {
-    // Self-fire origin (scheduler/service) — no caller cell to echo into.
-    logger.warn({ agentId: ctx.agentId, requestId }, 'Push failure has no caller cell; echo skipped');
-    return;
+  channel: string,
+  pushee: string,
+  pusher: string | undefined,
+): boolean {
+  if (!pusher || !isUser(pusher) || !isUser(pushee)) return false;
+  if (resolveCallerContext(pusher, channel, ctx.agentId, ctx.bus, ctx.folder).class !== 'non-member') return false;
+  return membershipBits(ctx.bus, ctx.folder, pushee, channel).includes('i');
+}
+
+/**
+ * Hold an askable user↔user push and raise a pushee-directed approval —
+ * the participant analogue of the owner-directed acl-edge approval. The PUSHEE is
+ * the controller (decides in-band, in their own conversation); on allow-always the
+ * `(channel, pusher → pushee)` grant persists to the user-push store, on
+ * allow-once the single push delivers, on reject it is declined back to the pusher.
+ * Dedups per edge. Returns the held `DeliveryResult` the push tool renders back.
+ */
+function raiseUserPushApproval(ctx: AgentMcpDepsContext, held: HeldLocalPush): DeliveryResult {
+  const pusher = held.callerParticipant ?? '';
+  const pushee = held.participant;
+  const approvals = ctx.getApprovals();
+  if (approvals.pendingUserPush(held.channel, pusher, pushee)) {
+    return {
+      ok: false as const,
+      held: true as const,
+      reason: `Your push to ${pushee} on "${held.channel}" is already awaiting their approval. It goes through once they accept; no need to retry.`,
+    };
   }
-  const tag = `<cast:rejection from="${escapeXml(ctx.agentId)}" request="${escapeXml(requestId)}">${escapeXml(reason)}</cast:rejection>`;
-  void ctx.route(
-    ctx.agentId,
-    ctx.agentId,
-    tag,
-    { channel: callerChannel, qualifier: callerQualifier, targetParticipant: callerParticipant },
-  ).catch((err) => {
-    // Echo is best-effort — a rejection is not a push, so this cannot recurse.
-    logger.error({ err, agentId: ctx.agentId, requestId }, 'Push failure echo could not be delivered');
+  approvals.createRequest({
+    type: 'user-push',
+    approver: 'participant',
+    controller: pushee,
+    participant: pusher,
+    channel: held.channel,
+    summary: `${pusher} wants to send a message into your conversation on "${held.channel}".`,
+    details: held.text,
+    payload: JSON.stringify({ channel: held.channel, pusher, pushee, held }),
+    expiresIn: USER_PUSH_TTL_SECONDS,
   });
+  return {
+    ok: false as const,
+    held: true as const,
+    reason: `Push held — ${pushee} must approve it. They have 1 day to respond; if they don't, the push is dropped and you'll get a decline.`,
+  };
 }
 
 export function buildAgentMcpDeps(
@@ -252,49 +454,41 @@ export function buildAgentMcpDeps(
           reason: 'Per-agent consoles cannot push directly to other agents. Route cross-agent handoffs through the Design Manager or Config Manager.',
         });
       }
-      // User-agent cross-agent path. Source-side authorization is the `p`
-      // bit (push), keyed on the originating user (`participant`), per the
-      // user-keyed p/h model in acl.ts. NOT `q` (q/a pair) and NOT `i` (a
-      // receiver-side check the receiver runs itself when bus.routeMessage
-      // dispatches into its handleBusMessage — the receiver's `case 'push'`
-      // branch, for an agent sender, gates on the originating user's `h`
-      // and `i` on the target channel). See agent-bus-handler.ts for the
-      // three-check.
+      // User-agent cross-agent path. Containment is the sender's `p`-edge to the
+      // TARGET AGENT, keyed on the agent axis like q/r — NOT the carried
+      // user's `o`, which conflated "this user may drive X's outbound" with "X may
+      // reach Y". Three-state: granted → push; askable → hold + raise to X's owner;
+      // rejected → deny. The receiver runs its own ACCESS check (the carried user's
+      // `io`) when `bus.routeMessage` dispatches into its `case 'push'` handler —
+      // see agent-bus-handler.ts.
       if (!ctx.agentDb.participantExists(participant)) {
         return Promise.resolve({ ok: false as const, reason: `Unknown participant: ${participant}` });
       }
-      const { bits } = checkAcl(ctx.bus, ctx.folder, participant, channel);
-      if (!hasBit(bits, 'p')) {
-        return Promise.resolve({ ok: false as const, reason: `Participant "${participant}" not authorized to push to channel "${channel}"` });
+      // The would-be push, built once: emitted now (granted) or held in the owner-
+      // approval payload and re-emitted on grant (askable). `requestId` is minted
+      // here so a hold reuses the same id on re-emit; a receiver-side rejection
+      // routes a `type: 'rejection'` back referencing it (sender's rejection handler
+      // looks it up — `agent-bus-handler.ts` case 'rejection').
+      const held: HeldPush = {
+        target: targetAgent, channel, qualifier, text,
+        requestId: generateId('req'), participant,
+        callerChannel, callerQualifier,
+      };
+      const verdict = aclVerdict(ctx.bus, ctx.folder, targetAgent, channel, 'p');
+      if (verdict === 'granted') {
+        emitPush({ agentId: ctx.agentId, bus: ctx.bus, agentDb: ctx.agentDb }, held);
+        return Promise.resolve({ ok: true as const, requestId: held.requestId });
       }
-      // Mint correlation ID and persist the outbound push row before
-      // dispatch. Receiver-side ACL deny will route a
-      // `type: 'rejection'` back referencing this `requestId`; the
-      // sender's rejection handler (`agent-bus-handler.ts` case
-      // 'rejection') looks the ID up here.
-      const requestId = generateId('req');
-      ctx.agentDb.recordOutboundPush({
-        requestId,
-        targetAgent,
-        targetChannel: channel,
-        channel: callerChannel ?? '',
-        participant,
-        qualifier: callerQualifier,
+      if (verdict === 'askable') {
+        return Promise.resolve(raisePushContainmentApproval(ctx, targetAgent, held));
+      }
+      // rejected (tombstone, or no acl / no `p`). Push containment is enforcement-
+      // only — not a discoverable capability — so the decline carries no reach hint
+      // (the agent learns its push reach by attempting).
+      return Promise.resolve({
+        ok: false as const,
+        reason: `Not authorized to route users into ${targetAgent} on "${channel}". Your owner has not approved this push route.`,
       });
-      // Fire-and-forget — bus dispatch is fast (queue handoff), no await.
-      // At-most-once: log dispatch failure so silent drops are visible in dogfood.
-      void ctx.bus.routeMessage(ctx.agentId, targetAgent, {
-        type: 'push' as const,
-        text,
-        requestId,
-        returnToParticipant: participant,
-        returnToChannel: callerChannel ?? '',
-        returnToQualifier: callerQualifier,
-        routing: { channel, qualifier },
-      }).catch((err) => {
-        logger.error({ err, source: ctx.agentId, target: targetAgent, channel, participant, requestId }, 'deliverToAgent dispatch failed');
-      });
-      return Promise.resolve({ ok: true as const, requestId });
     },
     // Discovery deps — the scoping boundary for the two list tools. Both
     // mirror the push verdict's caller standing: the read tier (system context
@@ -391,16 +585,24 @@ export function buildAgentMcpDeps(
     listPeerAgents: () => {
       const siblings = ctx.listSiblingAgents?.() ?? [];
       return siblings
-        .filter((s) => s.channels.length > 0)
+        // Phase 4 discovery: show a peer if it has any reachable (granted OR
+        // askable) channel — not just granted ones (the old `channels.length > 0`
+        // hid every ungranted sibling, so the agent could never discover a peer to
+        // request reach to). A fully tombstoned peer is hard-denied everywhere, so
+        // omit it and its rejected channels.
+        .filter((s) => s.channels.some((ch) => ch.reach !== 'rejected'))
         .map((s) => ({
           canonical: s.canonical,
           alias: s.alias,
           description: s.description,
-          channels: s.channels.map((ch) => ({
-            name: ch.name,
-            bits: ch.bits,
-            ...(ch.sharded ? { sharded: true } : {}),
-          })),
+          channels: s.channels
+            .filter((ch) => ch.reach !== 'rejected')
+            .map((ch) => ({
+              name: ch.name,
+              bits: ch.bits,
+              reach: ch.reach,
+              ...(ch.sharded ? { sharded: true } : {}),
+            })),
         }));
     },
     routeRejection: async (
@@ -424,7 +626,7 @@ export function buildAgentMcpDeps(
     },
     requestApproval: (data) => {
       const approvalId = ctx.getApprovals().createRequest(data);
-      const pendingCount = ctx.agentDb.listPendingApprovals(data.participant).length;
+      const pendingCount = ctx.agentDb.approvals.listPendingApprovals(data.participant).length;
       logger.info(
         { agentFolder: ctx.folder, approvalId, tool: data.tool, pendingCount },
         'Approval requested',

@@ -103,8 +103,8 @@ function BandedDiagram() {
         </text>
         {[
           { x: 0, label: 'you', sub: 'owner', allowed: true },
-          { x: 130, label: 'collaborator', sub: 'paired', allowed: true },
-          { x: 260, label: 'unknown', sub: 'no key', allowed: false },
+          { x: 130, label: 'collaborator', sub: 'approved', allowed: true },
+          { x: 260, label: 'unknown', sub: 'not approved', allowed: false },
         ].map((p, i) => {
           const stroke = p.allowed ? 'var(--y2k-ink)' : '#B0203A';
           const dash = p.allowed ? '' : '4 3';

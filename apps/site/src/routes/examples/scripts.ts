@@ -61,7 +61,7 @@ export const buildSections: Record<string, BuildSection[]> = {
     {
       heading: 'Connecting each friend',
       prose:
-        "Designing the assistant is one thing; getting each friend actually connected to it is another. That handoff lives in the configure console — separate from the design — because pairing each person's identity to the transport they actually use is per-deployment operator work, not part of who the assistant is.",
+        "Designing the assistant is one thing; getting each friend actually connected to it is another. That handoff lives in the configure console, separate from the design, because granting each person access on the transport they actually use is per-deployment operator work, not part of who the assistant is.",
       pair: [
         {
           from: 'user',
@@ -70,7 +70,7 @@ export const buildSections: Record<string, BuildSection[]> = {
         {
           from: 'agent',
           via: 'design',
-          text: "Each person reaches the same assistant through whichever transport they actually use. The assistant doesn't change; the wiring does.\n\n· Sam → Telegram\n· Priya → Slack\n· you → web\n\nSame conversation lane for all of you (the default); different transports per person. Each only ever sees their own private space and the shared itinerary. Pairing — mapping each identity to the right transport handle — happens in configure once we wrap design here, since handles are per-deployment.",
+          text: "Each person reaches the same assistant through whichever transport they actually use. The assistant doesn't change. Only how each person reaches it does.\n\n· Sam → Telegram\n· Priya → Slack\n· you → web\n\nSame conversation lane for all of you (the default), different transports per person. Each only ever sees their own private space and the shared itinerary. Access happens in configure once we wrap design here: each person messages from their own transport, and you approve them the first time. Handles are per-deployment, so it's deployment work, not design.",
         },
         {
           from: 'user',
@@ -79,7 +79,7 @@ export const buildSections: Record<string, BuildSection[]> = {
         {
           from: 'agent',
           via: 'configure',
-          text: "All configure-console things, all straightforward:\n\n· Sam loses his phone — I'd rotate his pairing tokens; he reconnects on a new device. His identity (and threads) stays his.\n· Sam adds WhatsApp later — second pairing code; both Telegram and WhatsApp now reach his identity.\n· A fourth friend joins mid-planning — I'd pair them in like the others; you decide what they see (probably the shared itinerary plus their own private space; probably not retroactive group decisions if you want to keep that intentional).\n\nNone of these change the assistant — it's all in the identity-and-transport layer.",
+          text: "All configure-console things, all straightforward:\n\n· Sam loses his phone: same Telegram account on the new one, and he's recognized automatically. His identity and threads stay his.\n· Sam adds WhatsApp later: he messages from it, you approve that first contact, and both Telegram and WhatsApp now reach his identity.\n· A fourth friend joins mid-planning: I'd let them in like the others. You decide what they see (probably the shared itinerary plus their own private space, probably not retroactive group decisions if you want to keep that intentional).\n\nNone of these change the assistant. It's all in the identity-and-transport layer.",
         },
       ],
     },

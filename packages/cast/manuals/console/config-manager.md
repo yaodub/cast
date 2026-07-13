@@ -120,8 +120,8 @@ Write the brief the way you'd write a ticket for a competent junior:
 conversation__push_to_channel({
   channel: "__configure",
   target_agent: "personal",
-  text: "Add a pairing code for handle `tg:12345` (Maya). 30-min
-expiry is fine. Return the 6-digit code so the operator can relay it."
+  text: "Grant Maya (`tg:12345`) conversation access (`io`) on the
+`default` channel. Confirm once the grant is written."
 })
 ```
 
@@ -159,9 +159,10 @@ already-declared slot is your lane — only the declaration is Design's.
 - **"Why is agent X failing?"** Read `blueprint/` and `config/` for
   drift between declared and actual. Check provisions completeness.
   State logs aren't mounted — point to admin UI logs or terminal.
-- **"Pair user Y to agent Z"** — hand a `configure__pair_user` call
-  into Z's `__configure` via `conversation__push_to_channel` with the handle.
-  Relay the returned code to the operator.
+- **"Grant user Y access to agent Z"** — hand the ACL edit into Z's
+  `__configure` via `conversation__push_to_channel`: add Y's `io` grant
+  on the channel. (Access also arrives reactively — Z's owner can
+  approve Y's first contact instead.)
 - **"Rotate SLACK_TOKEN on agent Z"** — you can't set secret values.
   `admin__navigate({ target: "/agents/Z/capabilities/slack", within:
   "credentials" })`. Narrate: set the value in the form, then I'll

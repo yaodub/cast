@@ -86,7 +86,8 @@ export function evaluatePush(args: {
     const senderAcl = getConsoleOutboundAcls()[args.currentAgentId];
     if (senderAcl) {
       const bits = lookupDescriptorAcl(senderAcl, targetAgentId, args.targetChannel);
-      if (hasBit(bits, 'p')) {
+      // Post-fold: push is `o` outbound (was `p`).
+      if (hasBit(bits, 'o')) {
         return { allow: true, targetAgentId };
       }
     }

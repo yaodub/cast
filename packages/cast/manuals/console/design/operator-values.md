@@ -132,8 +132,8 @@ your value stands as the contract.
 Two roles meet on this surface — the **author** (writes the blueprint,
 owns the locked spine) and the **operator** (supplies install values in
 Configure, overrides where unlocked). A third never appears here: the
-**runtime user**, who shows up only at runtime through pairing and is
-unknowable at design or config time. No field configures them and no
+**runtime user**, who shows up only at runtime, through their own first
+contact, and is unknowable at design or config time. No field configures them and no
 value names them — a recipient address or user list written into a
 blueprint is the *agent-with-no-users* mistake
 (`/ref/manuals/console/design/anti-patterns.md`).

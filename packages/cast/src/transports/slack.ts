@@ -352,7 +352,7 @@ class SlackTransport implements Transport {
     // middleware-args type for `args.ack()` and `args.client.*`; payload
     // fields go through Zod projection so we don't depend on the deep
     // union shape Bolt declares for `BlockAction`.
-    const handleAction = (decision: 'approved' | 'rejected') =>
+    const handleAction = (decision: 'approved' | 'rejected', tier: 'once' | 'always') =>
       async (args: SlackActionMiddlewareArgs<BlockAction> & AllMiddlewareArgs): Promise<void> => {
         await args.ack();
 
@@ -374,9 +374,9 @@ class SlackTransport implements Transport {
         // Slack team IDs already start with "T" and user IDs with "U" — don't double-prefix.
         const sender = `slack:${teamId}:${userId}`;
 
-        this.ctx.ingestApprovalResponse(sender, agentAddress, { id: approvalId, decision });
+        this.ctx.ingestApprovalResponse(sender, agentAddress, { id: approvalId, decision, tier });
 
-        const label = decision === 'approved' ? '✅ Approved' : '❌ Rejected';
+        const label = `${decision === 'approved' ? '✅ Approved' : '❌ Rejected'}${tier === 'always' ? ' (always)' : ''}`;
         const channelId = body.data.channel?.id;
         const messageTs = body.data.message?.ts;
         if (channelId && messageTs) {
@@ -391,8 +391,10 @@ class SlackTransport implements Transport {
         }
       };
 
-    app.action('cast_approve', handleAction('approved'));
-    app.action('cast_reject', handleAction('rejected'));
+    app.action('cast_approve', handleAction('approved', 'once'));
+    app.action('cast_approve_always', handleAction('approved', 'always'));
+    app.action('cast_reject', handleAction('rejected', 'once'));
+    app.action('cast_reject_always', handleAction('rejected', 'always'));
   }
 
   /** Lazily fetch and cache a Slack user's display name. Falls back to userId on failure. */
@@ -571,6 +573,7 @@ class SlackTransport implements Transport {
 
     if (pkt.type === 'approval_request') {
       const headline = `*Approval needed*\n${pkt.summary}${pkt.details ? `\n${pkt.details}` : ''}`;
+      const val = `${ctx.agentAddress}:${pkt.approvalId}`;
       await entry.client.chat.postMessage({
         channel: channelId,
         text: `Approval needed: ${pkt.summary}`, // notification fallback
@@ -578,21 +581,19 @@ class SlackTransport implements Transport {
           { type: 'section', text: { type: 'mrkdwn', text: headline } },
           {
             type: 'actions',
-            elements: [
-              {
-                type: 'button',
-                action_id: 'cast_approve',
-                text: { type: 'plain_text', text: '✅ Approve' },
-                value: `${ctx.agentAddress}:${pkt.approvalId}`,
-              },
-              {
-                type: 'button',
-                action_id: 'cast_reject',
-                style: 'danger',
-                text: { type: 'plain_text', text: '❌ Reject' },
-                value: `${ctx.agentAddress}:${pkt.approvalId}`,
-              },
-            ],
+            // Owner-directed (tiered) approvals get the four-option once/always path;
+            // participant tool-call approvals stay two-option.
+            elements: pkt.tiered
+              ? [
+                  { type: 'button', action_id: 'cast_approve', text: { type: 'plain_text', text: '✅ Approve' }, value: val },
+                  { type: 'button', action_id: 'cast_approve_always', text: { type: 'plain_text', text: '✅ Always' }, value: val },
+                  { type: 'button', action_id: 'cast_reject', style: 'danger', text: { type: 'plain_text', text: '❌ Reject' }, value: val },
+                  { type: 'button', action_id: 'cast_reject_always', style: 'danger', text: { type: 'plain_text', text: '🚫 Always' }, value: val },
+                ]
+              : [
+                  { type: 'button', action_id: 'cast_approve', text: { type: 'plain_text', text: '✅ Approve' }, value: val },
+                  { type: 'button', action_id: 'cast_reject', style: 'danger', text: { type: 'plain_text', text: '❌ Reject' }, value: val },
+                ],
           },
         ],
       });

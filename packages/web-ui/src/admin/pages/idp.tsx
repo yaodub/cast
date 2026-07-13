@@ -10,7 +10,7 @@ export const pageManual: PageManualEntry = {
   purpose: 'Identities (read-only) — directory of who the Cast server has seen, split into two subtabs: registered agents and known users. No writes happen here.',
   sections: [
     { anchor: 'agents', purpose: 'Registered agents — name + pubkey fingerprint + first registration date. One row per agent that has ever connected to this server.', actions: [] },
-    { anchor: 'users',  purpose: 'Known users — identity ID, declared name, list of handles (tg:..., email:..., etc.), and creation date. A user appears once they complete pairing on any agent.', actions: [] },
+    { anchor: 'users',  purpose: 'Known users — identity ID, declared name, list of handles (tg:..., email:..., etc.), and creation date. A user appears the first time they reach any agent.', actions: [] },
   ],
 };
 
@@ -31,7 +31,7 @@ export function IdpPage() {
         </span>
         <div>
           <h1 class="text-lg font-semibold text-white">Identities</h1>
-          <p class="text-sm text-gray-500 mt-0.5">Server identity, registered agents, paired users</p>
+          <p class="text-sm text-gray-500 mt-0.5">Server identity, registered agents, known users</p>
         </div>
       </div>
 

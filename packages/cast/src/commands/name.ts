@@ -7,7 +7,7 @@ export function createNameCommand(idp: IdentityProvider): SystemCommandDef {
     description: '/name [name] — show or set your display name',
     handler: (ctx, args) => {
       if (!ctx.identity) {
-        return { text: 'You need to pair first.' };
+        return { text: 'No identity is linked to this handle yet.' };
       }
 
       const name = args.trim();

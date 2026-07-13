@@ -124,26 +124,56 @@ export const AgentBusPayloadSchema = z.discriminatedUnion('type', [
     originParticipant: z.string(),
     originQualifier: z.string().optional(),
   }),
+  /**
+   * Non-terminal sibling of `rejection`, for a q/r request held pending an
+   * owner's acl-edge approval. Same routing shape as `rejection`, but the
+   * receiver-side handler must NOT transition the sender's `outbound_requests`
+   * row — it stays `open` so the eventual `<cast:answer>` (which returns on the
+   * same `requestId` rail once the owner grants) still has a live row to land
+   * on. Routing pending over the terminal rejection rail was the q/a-answer-
+   * orphaned bug. Framework-minted only (single producer:
+   * `pendingHeldInboundRequest`); the `reason` is a fixed framework template,
+   * never peer-LLM text.
+   */
   z.object({
-    type: z.literal('pairing'),
-    code: z.string(),
-    /** Source wire of the pairing message — what the code binds to. See `ingested.sourceHandle`. */
-    sourceHandle: z.string().optional(),
-  }),
-  z.object({
-    type: z.literal('pairing_request'),
-    /** Source wire requesting a code. See `ingested.sourceHandle`. */
-    sourceHandle: z.string().optional(),
+    type: z.literal('pending'),
+    requestId: z.string(),
+    reason: z.string(),
+    originChannel: z.string(),
+    originParticipant: z.string(),
+    originQualifier: z.string().optional(),
   }),
   z.object({
     type: z.literal('approval_response'),
     id: z.string(),
     decision: z.enum(['approved', 'rejected']),
     reason: z.string().optional(),
+    tier: z.enum(['once', 'always']).optional(),
+  }),
+  /**
+   * Owner-claim redemption. A `/claim <code>` message, intercepted
+   * at the gateway before agent resolution and routed here as a control packet
+   * so the bearer code never reaches the runner/LLM. The bus handler terminates
+   * it host-side (validate against the owner_claims store, write acl.json),
+   * never spawning the runner — same shape as `approval_response`.
+   */
+  z.object({
+    type: z.literal('owner-claim'),
+    /** The redemption code the claimer sent. The bearer secret. */
+    code: z.string(),
+    /** The channel the claim arrived on — pinned as the owner's
+     *  `approval_channel` on success so owner-directed approvals route back to
+     *  this conversation. */
+    channel: z.string().optional(),
   }),
 ]);
 
 export type AgentBusPayload = z.infer<typeof AgentBusPayloadSchema>;
+
+/** Per-channel outbound reach-state from the caller toward a sibling:
+ *  `granted` (the caller already holds q/r), `askable` (no grant, no
+ *  tombstone — reaching out raises an owner approval), `rejected` (tombstoned). */
+export type PeerReach = 'granted' | 'askable' | 'rejected';
 
 export interface SiblingAgentInfo {
   /** Canonical bus address: `a:<guid>@<issuer>`. Stable across alias rename. */
@@ -151,6 +181,9 @@ export interface SiblingAgentInfo {
   /** Human-facing alias (manifest.name). */
   alias: string;
   description?: string;
-  /** Channels reachable from the caller's ACL perspective (`q` bit = queryable). Empty if no grant. */
-  channels: { name: string; bits: string; sharded?: boolean }[];
+  /** The sibling's channels, each tagged by the caller's reach-state. Includes
+   *  askable channels (no grant yet) so the agent can discover where it could
+   *  request reach, not only where it already has it. `bits` is the caller's
+   *  granted bits (empty for askable/rejected). */
+  channels: { name: string; bits: string; sharded?: boolean; reach: PeerReach }[];
 }

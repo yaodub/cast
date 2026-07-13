@@ -77,29 +77,14 @@ export function BuildBlueprints() {
 `}</Code>
       </FileSpec>
 
-      <FileSpec name="peers.md" meta="markdown · peer aliases + channel + mechanism">
-        <p style={proseP}>
-          Declaration of intent: which peer agents this agent expects to consult, by
-          alias, on which channels, for what purpose. Free-form markdown; conventionally
-          one section per peer with bullet attributes. Wrapped in{' '}
-          <code>&lt;agent-peers&gt;</code>.
-        </p>
-        <Code lang="markdown" noHead>{`## research-agent
-
-Holds the shared research notebook and reference corpus.
-
-- target_agent: \`research-agent\`
-- channel: \`lookup\`
-- mechanism: \`<cast:query target="research-agent" channel="lookup">…</cast:query>\`
-- use for: looking up cited sources, checking definitions, finding prior work
-`}</Code>
-        <Callout kind="tip">
-          <code>peers.md</code> names peers by <strong>alias</strong>, not by canonical
-          key. Aliases are role-named slots the install resolves at lookup time. The
-          actual ACL bits that authorize the edge live in <code>config/acl.json</code>{' '}
-          (per install), not here. Only list peers the agent actually queries.
-        </Callout>
-      </FileSpec>
+      <p style={proseP}>
+        Peer reach is not authored in the blueprint. Which sibling agents this one may
+        reach is a per-install decision that lives in <code>config/acl.json</code>, and the
+        agent learns its granted peers from an <code>&lt;agent-peers&gt;</code> block the
+        server computes from that ACL. To find peers it could request access to, the agent
+        calls <code>agent__list_peers</code> at runtime. See{' '}
+        <DocsLink href="/docs/build/multi-agent">Multi-agent composition</DocsLink>.
+      </p>
 
       <H2>Channels — the dynamic surface</H2>
       <p style={proseP}>

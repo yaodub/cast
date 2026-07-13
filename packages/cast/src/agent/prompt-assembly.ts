@@ -10,7 +10,8 @@
  *   [3] Profile skills          — behavioral guidance from profile (e.g. standard)
  *   [4] prompt.md               — core persona and behavior (blueprint/identity/)
  *   [5] whoami.md               — structured identity facts (blueprint/identity/)
- *   [6] peers.md                — peer relationships (blueprint/identity/)
+ *   [6] granted peer reach      — first-degree reach computed from the ACL
+ *                                 (self-knowledge); replaces static peers.md
  *   [7] skills.md               — behavioral guidance (blueprint/identity/)
  *   [7.5] channel-contract     — ACL-derived wire contract for this addressee,
  *                                 emitted only when non-default (no `o` bit, or
@@ -21,7 +22,7 @@
  */
 import { extractIdentity, isParticipantAddress } from '../auth/address.js';
 import type { ChannelContract } from '../auth/channel-contract.js';
-import { renderContractForPrompt } from '../auth/channel-contract.js';
+import { deriveChannelContract, renderContractForPeerListing, renderContractForPrompt } from '../auth/channel-contract.js';
 import { agentPath } from '../config.js';
 import { readText } from '../lib/config-reader.js';
 import type { AgentChannel } from '../conversations/types.js';
@@ -70,6 +71,18 @@ export interface PromptAssemblyOpts {
    *  message in `agent/agent-spawn-hooks.ts` — both renderings live in
    *  `auth/channel-contract.ts`. */
   channelContract?: ChannelContract;
+  /** The agent's GRANTED first-degree peer reach (self-knowledge),
+   *  computed by the caller from `listSiblingAgents` filtered to granted channels.
+   *  Rendered as Layer 6, replacing the static `peers.md` — so the agent knows
+   *  where it can already reach without an `agent__list_peers` call. Askable peers
+   *  stay in the tool (granted-only here). `bits` is the granted bits per channel;
+   *  push (`p`) is deliberately not surfaced (enforcement-only). */
+  grantedPeers?: {
+    alias: string;
+    canonical: string;
+    description?: string;
+    channels: { name: string; bits: string; sharded?: boolean }[];
+  }[];
 }
 
 // ---------------------------------------------------------------------------
@@ -110,10 +123,13 @@ export function assembleSystemPrompt(opts: PromptAssemblyOpts): string {
     layers.push(wrapTag('agent-identity', whoami));
   }
 
-  // Layer 6: blueprint/identity/peers.md
-  const peers = readAgentFile(opts.agentFolder, 'blueprint', 'identity', 'peers.md');
-  if (peers) {
-    layers.push(wrapTag('agent-peers', peers));
+  // Layer 6: granted peer reach (self-knowledge). Computed from the
+  // ACL, replacing the static peers.md — the agent sees where it can already reach
+  // without a tool call. Askable peers stay in `agent__list_peers` (granted-only
+  // here); push reach is not surfaced (enforcement-only, 2B.6 decision 3).
+  const peerBlock = renderGrantedPeers(opts.grantedPeers);
+  if (peerBlock) {
+    layers.push(wrapTag('agent-peers', peerBlock));
   }
 
   // Layer 7: blueprint/identity/skills.md
@@ -149,6 +165,36 @@ export function assembleSystemPrompt(opts: PromptAssemblyOpts): string {
   layers.push(buildConversationContext(opts));
 
   return layers.join('\n\n');
+}
+
+/**
+ * Render the agent's granted first-degree reach (Layer 6). Reuses the
+ * same `renderContractForPeerListing` the `agent__list_peers` tool uses, so the
+ * prompt block and the tool speak one vocabulary. A channel whose granted bits
+ * project to no send/receive capability (e.g. a bare push `p`-edge, which
+ * `deriveChannelContract` ignores by design) renders nothing. Returns null when the
+ * agent has no granted reach — the layer is then skipped entirely.
+ */
+function renderGrantedPeers(peers: PromptAssemblyOpts['grantedPeers']): string | null {
+  if (!peers || peers.length === 0) return null;
+  const renderName = (ch: { name: string; sharded?: boolean }) => (ch.sharded ? `${ch.name}~*` : ch.name);
+  const lines: string[] = [
+    'Peer agents you can already reach (first-degree, from your ACL). Use `agent__list_peers` to discover others you could request access to.',
+  ];
+  let any = false;
+  for (const p of peers) {
+    const header = p.description ? `- ${p.alias} (${p.canonical}): ${p.description}` : `- ${p.alias} (${p.canonical})`;
+    const peerLines: string[] = [];
+    for (const ch of p.channels) {
+      const caps = renderContractForPeerListing(deriveChannelContract(ch.bits));
+      if (caps.length === 0) continue;
+      peerLines.push(`  on ${renderName(ch)}: ${caps.join('; ')}`);
+    }
+    if (peerLines.length === 0) continue;
+    any = true;
+    lines.push(header, ...peerLines);
+  }
+  return any ? lines.join('\n') : null;
 }
 
 // ---------------------------------------------------------------------------

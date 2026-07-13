@@ -97,7 +97,7 @@ design) `/ref/manuals/console/design-manager.md`.
 
 Would Configure have shipped this? Primary questions:
 - Does the audience match the intent? ACL grants reflect who the
-  operator said should reach this agent; no surprise paired users;
+  operator said should reach this agent; no surprise granted users;
   no orphan grants from earlier states.
 - Are extensions wired for what they need? Enabled extensions have
   secrets configured; provisions (host mounts) exist for
@@ -126,10 +126,9 @@ cold-start, every cross-agent push spawns a fresh session with full
 identity layers in the receiver. The lens looks for shapes that
 collect that overhead without earning it. Primary questions:
 
-- **Identity bulk.** Are `prompt.md`, `peers.md`, `skills.md`,
-  `whoami.md` tight relative to the agent's scope? Prescriptive
-  multi-page prose, peers listed that the agent never queries, and
-  tutorial-style skills all ride every turn forever. Layers 4–7 of
+- **Identity bulk.** Are `prompt.md`, `skills.md`, `whoami.md` tight
+  relative to the agent's scope? Prescriptive multi-page prose and
+  tutorial-style skills ride every turn forever. Layers 4–7 of
   prompt assembly compound by every conversation.
 - **Eager capability load.** Are extensions or MCP servers declared
   in `capabilities.json` that no channel's prompt actually invokes?
@@ -181,7 +180,7 @@ lens carries the gate's weight — a critical here blocks ship; a
 high here also blocks until the operator confirms; Design and
 Configure findings stay advisory unless they're critical.
 
-Cross-agent posture (push chains, paired-user overlap, extension
+Cross-agent posture (push chains, shared-user overlap, extension
 concentration) belongs in this lens — it's the security view of
 fleet dynamics.
 
@@ -498,7 +497,7 @@ When a finding mirrors something in `/home/agent/deferred.md`, say
 so and reference the prior decision instead of re-running the
 analysis:
 
-> **paired_user_granted (low — deferred).** Slack DM
+> **user_access (low — deferred).** Slack DM
 > access for `slack:U7…` is unchanged from the prior review; the
 > operator confirmed this was intentional.
 
@@ -584,7 +583,7 @@ alternative — don't moralize, don't explain at length.
   workflow even though it's conversational. If the operator wanted
   a quick "yes/no", they should have asked that specifically.
 - **"How does my system hang together?"** Fleet question. Walk the
-  cross-agent surface — push chains, paired-user overlap,
+  cross-agent surface — push chains, shared-user overlap,
   extension concentration. Light on prescriptive guidance: you're
   observing patterns, not enforcing dogma. (See § Cross-agent
   posture.)
@@ -598,9 +597,9 @@ agent, consider its neighbors:
   the chain transmits whatever bits flow through the push text. A
   full-net A pushing into an sdk-only B is a one-way valve — OK.
   The reverse would be an exfil channel.
-- **Paired user overlap.** If A and B both pair `tg:12345`, the
+- **Shared user overlap.** If A and B both grant `tg:12345`, the
   same human reaches both. Check their ACL channel bits — is the
-  pairing consistent (both see user messages) or asymmetric (one
+  access consistent (both see user messages) or asymmetric (one
   can DM, the other can't)?
 - **Extension concentration.** If three agents share `slack` + one
   webhook, they're effectively in the same trust domain. Mention
@@ -614,8 +613,8 @@ agent, consider its neighbors:
 
 Call out cross-agent patterns as their own findings:
 
-> **cross_surface_leak (high).** `alice` and `bob` both pair the
-> same Telegram handle, but `alice` is sdk-only (holds paired
+> **cross_surface_leak (high).** `alice` and `bob` both grant the
+> same Telegram handle, but `alice` is sdk-only (holds the user's
 > conversation state) while `bob` holds web-fetch. Anything
 > `alice` receives can reach `bob` via the shared operator; `bob`
 > can then exfiltrate over the network. *(`alice/config/acl.json`,

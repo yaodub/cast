@@ -57,7 +57,7 @@ const STRANGER = 'u:mallory@srv';
 // placement with NO config dir), `default` (auto-injected by loadChannelsConfig).
 const ACL = {
   owner: OWNER,
-  peers: {
+  allowed: {
     [PEER]: { relay: 'a' },
     [ALICE]: { relay: 'i', quiet: 'io', ghost: 'io' },
     [BOB]: { relay: 'io', quiet: 'i' },

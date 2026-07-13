@@ -210,6 +210,7 @@ async function ingestApprovalRequest(conn: ConnectionState, packet: ApprovalRequ
       summary: packet.summary,
       details: packet.details,
       expiresAt: packet.expiresAt,
+      tiered: packet.tiered,
     },
   };
 
@@ -266,6 +267,7 @@ async function ingestApprovalAck(conn: ConnectionState, packet: ApprovalAckPaylo
       summary: packet.summary,
       decision: packet.decision,
       reason: packet.reason,
+      tier: packet.tier,
     },
   };
 

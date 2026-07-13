@@ -702,7 +702,7 @@ export function ThumbPeersSvg() {
 
       {/* declared row */}
       <text x={LEFT_X} y={declaredY} dy="0.35em" fill="currentColor" font-size={12} fill-opacity={0.65}>
-        declared:
+        reach:
       </text>
       <text x={RIGHT_X} y={declaredY} dy="0.35em" fill="currentColor" font-size={12} fill-opacity={0.95}>
         writer ↔ researcher
@@ -1298,7 +1298,7 @@ function PeerRosterCard({ owner, entries }: { owner: string; entries: RosterEntr
             opacity: 0.55,
           }}
         >
-          (no peers declared)
+          (no peers reachable yet)
         </div>
       ) : (
         entries.map((e, i) => (
@@ -1333,7 +1333,7 @@ function PeerRosterCard({ owner, entries }: { owner: string; entries: RosterEntr
 }
 
 // ---------------------------------------------------------------------------
-// Exchange shapes — three traffic cards showing q/a, r/a, p/h as they
+// Exchange shapes — three traffic cards showing q/a, r/a, push as they
 // would appear in a log of the system in motion.
 // ---------------------------------------------------------------------------
 
@@ -1494,7 +1494,7 @@ function ExchangeShapesFigure({
 function PeerRosterFigure({
   caption,
   rosters,
-  arrowLabel = 'operator declares',
+  arrowLabel = 'owner approves',
 }: {
   caption?: string;
   rosters: { owner: string; entries: RosterEntry[] }[];
@@ -1584,9 +1584,9 @@ export const hiwPillars: HIWPillar[] = [
   {
     slug: 'peers',
     pillar: 'Agents talking to agents',
-    claim: 'Inter-agent traffic through a declared org chart',
+    claim: 'Agents discover each other; every edge is approved',
     blurb: [
-      "Agents talk to each other through declared edges, not a free-for-all message bus. Each edge is per-channel and directional. The sender's config records what it's allowed to send, the receiver's records what it's allowed to accept. If either side is missing, the edge silently closes. The cook-agent can ask the calendar what's on tonight, but it has no path to the journal.",
+      "Agents can discover each other, but reaching is gated. An edge is per-channel and directional, and it becomes real only when the receiver's owner approves it. The sender needs reach, the receiver needs to accept. Until both are there, nothing crosses. The cook-agent can ask the calendar what's on tonight, but it has no path to the journal.",
     ],
     thumb: 'peers',
   },
@@ -1603,7 +1603,7 @@ export const hiwDeep: Record<string, HIWDeep> = {
           <>
             <Code lang="bash">{`agents/my-agent/
 ├── blueprint/        # who the agent is — instructions, skills, channels
-├── config/           # how it runs — model, keys, integrations, who's paired in
+├── config/           # how it runs — model, keys, integrations, who's allowed in
 ├── memory/           # what it has learned, kept across conversations
 ├── home/             # the agent's working scratch
 ├── sessions/         # per-conversation transcripts (server-managed)
@@ -1628,7 +1628,7 @@ export const hiwDeep: Record<string, HIWDeep> = {
           <>
             <p style={proseP}>
               The <strong>blueprint</strong> is the agent's identity: its instructions,
-              skills, channels, peer edges, props. This is what a developer composes. It
+              skills, channels, props. This is what a developer composes. It
               holds no secrets, no personal data, no memory. You can hand it to a friend
               and they can run their own copy with their own settings.
             </p>
@@ -1643,7 +1643,7 @@ export const hiwDeep: Record<string, HIWDeep> = {
 ├── prompt.md         # who am I, what do I do
 ├── channels.txt      # cli, web, email, telegram, …
 ├── skills/           # tools I can call
-├── manifest.json     # ACL, peer edges, channel routing
+├── manifest.json     # ACL, channel routing
 └── service/          # optional code that runs alongside`}</Code>
           </>
         ),
@@ -1655,7 +1655,7 @@ export const hiwDeep: Record<string, HIWDeep> = {
             <p style={proseP}>
               The <strong>configuration</strong> is everything an operator decides about
               deploying the blueprint: which model, which API keys, which transport tokens,
-              which hosts the network allowlist permits, which humans are paired in as
+              which hosts the network allowlist permits, which humans are allowed in as
               admins.
             </p>
             <p style={proseP}>
@@ -1832,13 +1832,13 @@ export const hiwDeep: Record<string, HIWDeep> = {
             </p>
             <p style={proseP}>
               When a message arrives, the identity provider resolves who the sender is. A
-              stranger gets a fresh identity but no permissions. The agent will see the
-              message but treat them as a stranger. To turn a stranger into someone the
-              agent can talk to, you <strong>pair</strong> them: the operator grants
-              durable trust to that identity, and from then on the agent recognizes them.
+              stranger gets a fresh identity but no permissions, and their first message is
+              held. To let them in, you approve that held message from the dashboard, once
+              or for good. An allow-always grant is durable, and from then on the agent
+              recognizes them.
             </p>
             <p style={proseP}>
-              Pairing is the gate at the front door. Without it, no inbound message earns
+              That approval is the gate at the front door. Without it, no inbound message earns
               the agent's real attention. With it, a specific person, at a specific
               transport, can carry on a real conversation, and their messages accrue into
               the agent's memory addressed to them.
@@ -1934,7 +1934,7 @@ export const hiwDeep: Record<string, HIWDeep> = {
             <ul style={proseUl}>
               <li>
                 <strong>Access.</strong> Who is allowed to address the channel. The
-                operator grants per-peer permissions: paired users get conversational
+                operator grants per-peer permissions: granted users get conversational
                 read/write, peer agents get query-only doors, some channels stay
                 internal, so only schedule fires and the like reach them.
               </li>
@@ -2019,7 +2019,7 @@ export const hiwDeep: Record<string, HIWDeep> = {
             </p>
             <ul style={proseUl}>
               <li>
-                <strong>A conversation room.</strong> Paired-user access + full
+                <strong>A conversation room.</strong> Granted-user access + full
                 capabilities + persistent working memory + conversational instructions.
                 The default shape, and the agent picks up where you left off.
               </li>
@@ -2073,7 +2073,7 @@ export const hiwDeep: Record<string, HIWDeep> = {
 
   peers: {
     title: 'Agents talking to agents',
-    lede: 'Agents in Cast can talk to each other, along lines the operator drew.',
+    lede: 'Agents in Cast can find each other and talk, along edges their owners approved.',
     sections: [
       {
         h2: 'Why agents talk to each other',
@@ -2099,11 +2099,11 @@ export const hiwDeep: Record<string, HIWDeep> = {
         ),
       },
       {
-        h2: 'Every connection is deliberate',
+        h2: 'Discovery is not access',
         body: (
           <>
             <PeerRosterFigure
-              caption="fig. 1: the reviewer's roster, before and after the operator declares edges"
+              caption="fig. 1: the reviewer's roster, before and after access is granted"
               rosters={[
                 { owner: 'reviewer', entries: [] },
                 {
@@ -2117,26 +2117,25 @@ export const hiwDeep: Record<string, HIWDeep> = {
               ]}
             />
             <p style={proseP}>
-              There is no general medium through which agents find each other.
-              No directory to browse, no broadcast bus, no shared address space
-              an agent can probe. Two agents on the same machine are two
-              strangers, sealed off from each other, until a connection is
-              declared between them.
+              Agents can find each other. Each one can list the peers around it
+              and see which it could reach. But discovery is not access. Seeing
+              that another agent exists, and being able to talk to it, are two
+              different things, and the second one is gated.
             </p>
             <p style={proseP}>
-              A connection is a line on an org chart, a directed edge from
-              one agent to another, made real by a declaration on both ends.
-              Both halves have to be there. Without either, the line doesn't
-              exist and nothing crosses. Cast doesn't infer connections from
-              proximity, naming, or intent. The chart is exactly what the
-              operator drew.
+              An edge becomes real when the owner on the receiving side approves
+              it. The sender's reach and the receiver's acceptance both have to
+              be there. Until they are, nothing crosses. An agent can request a
+              new edge at runtime, but the request waits for a yes. Cast never
+              infers a connection from proximity, naming, or intent. Every edge
+              that exists, someone approved.
             </p>
             <p style={proseP}>
-              Lines are drawn at <strong>channels</strong>, the same channels
-              a person would reach the agent on. A connection isn't blanket
-              trust. It's permission for one kind of exchange on one labeled
-              surface. And every message that crosses carries the sender's
-              identity, so the receiver always knows who's on the other end.
+              Edges sit at <strong>channels</strong>, the same channels a person
+              would reach the agent on. An edge isn't blanket trust. It's
+              permission for one kind of exchange on one labeled surface. And
+              every message that crosses carries the sender's identity, so the
+              receiver always knows who's on the other end.
             </p>
           </>
         ),
@@ -2238,12 +2237,12 @@ export const hiwDeep: Record<string, HIWDeep> = {
         body: (
           <>
             <p style={proseP}>
-              What you end up with is an org chart you wrote, agents that
-              talk where the chart says they talk, and nowhere else. No agent
-              surprises another by reaching out at runtime. No agent receives
-              a message from a peer it doesn't know about. The fleet behaves
-              the way it does because the connections are sitting in plain
-              text, in front of you, and there are no others.
+              What you end up with is a map of approved edges, in plain text,
+              in front of you. An agent can ask to reach another at runtime, but
+              nothing connects until the owner says yes, and every edge that
+              exists is one you can see. No hidden connection, no traffic you
+              never approved. The fleet is legible because its edges are written
+              down, and there are no others.
             </p>
           </>
         ),

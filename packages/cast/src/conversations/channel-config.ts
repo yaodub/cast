@@ -73,6 +73,8 @@ function loadSingleChannel(channelDir: string, name: string, agentFolder: string
       use_sharding: parsed.use_sharding,
       disabled_tools: parsed.disabled_tools,
       show_co_participants: parsed.show_co_participants,
+      sealed: parsed.sealed,
+      description: parsed.description,
       bootstrap,
       cleanup,
     };

@@ -34,7 +34,7 @@ export function ConceptsMultiUser() {
       <H2>Each person has their own cell</H2>
       <p style={proseP}>
         Each person can have multiple private conversations with an agent, one per channel
-        they're paired into. You can visualize this as a grid: for the same agent, one row per
+        they have access to. You can visualize this as a grid: for the same agent, one row per
         person and one
         column per channel, or <code>[agent, person, channel]</code>. Each cell can hold a
         conversation.
@@ -140,7 +140,7 @@ export function ConceptsMultiUser() {
       <H3>To another channel</H3>
       <p style={proseP}>
         The agent can also send a message into the user's conversation on a different channel.
-        In order for this to succeed, the user must be paired into the target channel.
+        In order for this to succeed, the user must have access to the target channel.
       </p>
 
       <ConversationGridFigure
@@ -158,7 +158,7 @@ export function ConceptsMultiUser() {
       <H3>To another person on another channel</H3>
       <p style={proseP}>
         These moves combine. The agent can reach another person on another channel, provided
-        both user and recipient are paired into the target channel.
+        both user and recipient have access to the target channel.
       </p>
 
       <ConversationGridFigure
@@ -251,13 +251,13 @@ export function ConceptsMultiUser() {
       />
 
       <p style={proseP}>
-        A handoff only lands if the person is paired into the target cell.
+        A handoff only lands if the person has access to the target channel.
       </p>
 
       <H2>What to read next</H2>
       <ul style={proseUl}>
         <li>
-          <DocsLink href="/docs/use/pairing">Pairing</DocsLink>: how a new person joins.
+          <DocsLink href="/docs/use/access">Access</DocsLink>: how a new person gets in.
         </li>
         <li>
           <DocsLink href="/docs/concepts/channels">Channels</DocsLink>: what shapes the

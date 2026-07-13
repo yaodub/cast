@@ -98,5 +98,5 @@ operator), by design. Each tool re-enabled is an explicit
 exception you have to argue for.
 
 **Composes.** Single-shot channel, `disabled_tools`, ACL `q`/`a`
-bits, `<cast:query>` / `<cast:answer>`, `peers.md` declaration on
-caller side.
+grants, `<cast:query>` / `<cast:answer>`, and the caller's granted
+reach to the specialist.

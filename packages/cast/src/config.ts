@@ -20,6 +20,12 @@ import { writeAtomic, conversationKeyToPath } from './lib/utils.js';
 
 export const SCHEDULER_POLL_INTERVAL = 60000;
 
+// Host MCP server → container SSE keepalive cadence. A periodic ping keeps the
+// bind-mounted socket connection warm so the container runtime's socket-forwarding
+// layer doesn't silently idle-drop it. Under the ~60s window such layers tend to
+// use; see lib/mcp-keepalive.ts.
+export const MCP_KEEPALIVE_INTERVAL_MS = 30_000;
+
 // sdk-only egress pin refresh: re-resolve each agent's allowlist on this cadence
 // and reconcile the container's CAST_EGRESS chain + /etc/hosts pins (see
 // egress-controller.ts). Fixed interval; a no-op when resolution is unchanged.
@@ -234,6 +240,15 @@ export const PUSH_ROW_TTL_MS = 5 * 60 * 1000;
 /** Sweep cadence for `outbound_pushes` TTL purge. Loose — once per minute is fine. */
 export const PUSH_ROW_SWEEP_MS = 60 * 1000;
 
+/**
+ * Lifetime of a minted owner-claim code. Time-scopes the bearer
+ * code so a leaked or forgotten one stops being redeemable — the anti-spam
+ * guarantee, paired with one-active-per-agent + single-use in the store. One
+ * hour is generous for an operator to hand the code to the intended human owner
+ * out-of-band and have them redeem it via `/claim`.
+ */
+export const OWNER_CLAIM_TTL_MS = 60 * 60 * 1000;
+
 /** Resolve a path under an agent's directory tree. */
 export function agentPath(agentFolder: string, ...segments: string[]): string {
   return path.join(AGENTS_DIR, agentFolder, ...segments);
@@ -254,10 +269,13 @@ export function castSocketPath(agentFolder: string): string {
   return path.join(mcpDir(agentFolder), 'cast.sock');
 }
 
-/** Per-conversation cast MCP socket path. */
-export function sessionCastSocketPath(agentFolder: string, conversationKey: string): string {
+/** Per-conversation cast MCP socket path. The `nonce` makes each spawn's socket
+ *  file unique, so a superseded runner's teardown can only unlink its own socket
+ *  — never the live replacement runner's, when two runners for one
+ *  conversationKey briefly overlap during a respawn. */
+export function sessionCastSocketPath(agentFolder: string, conversationKey: string, nonce: string): string {
   const hash = createHash('sha256').update(conversationKey).digest('hex').slice(0, 12);
-  return path.join(agentPath(agentFolder, 'mcp', 'socket'), `${hash}.sock`);
+  return path.join(agentPath(agentFolder, 'mcp', 'socket'), `${hash}-${nonce}.sock`);
 }
 
 /** List immediate subdirectory names under a given directory. */

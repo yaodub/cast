@@ -24,7 +24,7 @@ export const docsSections: DocSection[] = [
     items: [
       { url: '/docs/use/server-dashboard', label: 'Server dashboard' },
       { url: '/docs/use/first-agent', label: 'Your first agent' },
-      { url: '/docs/use/pairing', label: 'Pairing' },
+      { url: '/docs/use/access', label: 'Access' },
       { url: '/docs/use/migrating', label: 'Migrating from other platforms' },
     ],
   },

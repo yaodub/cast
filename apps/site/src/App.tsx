@@ -11,7 +11,7 @@ import { Quickstart } from './routes/docs/Quickstart';
 import { Updating } from './routes/docs/Updating';
 import { UseServerDashboard } from './routes/docs/use/ServerDashboard';
 import { UseFirstAgent } from './routes/docs/use/FirstAgent';
-import { UsePairing } from './routes/docs/use/Pairing';
+import { UseAccess } from './routes/docs/use/Access';
 import { UseMigrating } from './routes/docs/use/Migrating';
 import { ConceptsConversations } from './routes/docs/concepts/Conversations';
 import { ConceptsChannels } from './routes/docs/concepts/Channels';
@@ -89,7 +89,7 @@ export function App() {
 
         <Route path="/docs/use/server-dashboard" component={UseServerDashboard} />
         <Route path="/docs/use/first-agent" component={UseFirstAgent} />
-        <Route path="/docs/use/pairing" component={UsePairing} />
+        <Route path="/docs/use/access" component={UseAccess} />
         <Route path="/docs/use/migrating" component={UseMigrating} />
 
         <Route path="/docs/concepts/conversations" component={ConceptsConversations} />

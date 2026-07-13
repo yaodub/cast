@@ -24,6 +24,14 @@ export const ChannelJsonSchema = z.object({
   use_sharding: z.boolean().default(false),
   disabled_tools: z.array(z.string()).default([]),
   show_co_participants: z.boolean().default(true),
+  /** Egress seal. When true the conversation cannot reach outside its cell —
+   *  no cross-conversation push, no cross-agent query, no discovery. DORMANT in Phase 0:
+   *  declarable here (so `.strict()` accepts it) but not yet consulted by any egress gate
+   *  (Phase 1 wires it). Default false. */
+  sealed: z.boolean().default(false),
+  /** Human/LLM-facing channel purpose for the discovery directory ("ask here for X").
+   *  Optional; surfaced by discovery in Phase 4. */
+  description: z.string().optional(),
 }).strict();
 
 export type ChannelJsonConfig = z.infer<typeof ChannelJsonSchema>;
@@ -38,6 +46,7 @@ export const DEFAULT_CHANNEL_JSON: ChannelJsonConfig = {
   use_sharding: false,
   disabled_tools: [],
   show_co_participants: true,
+  sealed: false,
 };
 
 /** Runtime channel type — includes resolved bootstrap/cleanup content from .md files. */
@@ -69,6 +78,11 @@ export interface AgentChannel {
    *  only an explicit false disables. Visibility control, not conversation isolation:
    *  conversations are always keyed per participant regardless. */
   show_co_participants?: boolean;
+  /** Egress seal — dormant until Phase 1 wires the egress gates. Optional like
+   *  show_co_participants so hand-built console channel literals need not set it; absence = false. */
+  sealed?: boolean;
+  /** Channel purpose for the discovery directory — surfaced in Phase 4. */
+  description?: string;
   /** Conversation idle timeout in ms. Resets on each user message. null = single-shot. */
   idle_timeout: number | null;
 }
@@ -86,6 +100,7 @@ export const DEFAULT_CHANNEL: AgentChannel = {
   use_sharding: false,
   disabled_tools: [],
   show_co_participants: true,
+  sealed: false,
 };
 
 export const DEFAULT_CHANNEL_NAME = 'default';

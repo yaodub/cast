@@ -75,7 +75,6 @@ blueprint/
     prompt.md             — system prompt
     whoami.md             — agent self-description (first-person)
     skills.md             — skill list (optional)
-    peers.md              — known sibling agents (optional)
     onboarding.md         — first-run introduction (optional)
     tools/                — supplementary files the agent can Read at runtime
   channels/
@@ -182,7 +181,7 @@ watcher. Only reach for tools when editing the items below.
 
 | Change | Action |
 |---|---|
-| `prompt.md`, `skills.md`, `whoami.md`, `peers.md` | Call `agent__expire_conversations` to refresh active sessions. |
+| `prompt.md`, `skills.md`, `whoami.md` | Call `agent__expire_conversations` to refresh active sessions. |
 | `blueprint/channels/*/channel.json`, `bootstrap.md`, `cleanup.md` | `agent__expire_conversations`. |
 | `blueprint/props/capabilities.json` (tool set changes) | `agent__expire_conversations`. |
 | `blueprint/props/schedule.txt` | None — auto hot-reload. |
@@ -234,9 +233,11 @@ surface the gap.
 it terse. Skills show up in the agent's system prompt; every line costs
 tokens.
 
-**peers.md.** Known sibling agents on the same Cast server. The agent can
-`conversation__push_to_channel` to a peer named here if the peer's ACL grants
-access.
+**Peer reach.** This agent's reach to sibling agents is the ACL grant Configure
+writes, discovered at runtime: its granted reach is computed into the prompt, and
+`agent__list_peers` shows which siblings it can reach or could request reach to.
+To compose a cross-agent edge — channels, shape, reachability posture — see
+`/ref/manuals/console/design/multi-agent-composition.md`.
 
 ## Notes directory — `.design/`
 
@@ -455,10 +456,10 @@ read only when the trigger condition applies:
 - `/ref/manuals/console/design/multi-agent-composition.md` — **this
   agent peers with another agent** (your brief mentions an upstream or
   downstream peer, or you were spawned as part of a multi-agent create
-  batch). Covers channel-name alignment, the three edge shapes
-  (q/a, r/a, p/h) as composition choices, and the handoff to
-  Configure for the ACL grants. **You do not author ACL JSON
-  yourself** — that's `cross-agent-acl.md`, Configure's manual.
+  batch). Covers advertising the interface, the three edge shapes
+  (q/a, r/a, push) as composition choices, the reachability posture,
+  and the handoff to Configure for the ACL grants. **You do not author
+  ACL JSON yourself** — that's `cross-agent-acl.md`, Configure's manual.
 - `/ref/manuals/console/design/operator-values.md` — **you need a
   value only the operator can supply** (email address, recipient list,
   domain) and are tempted to placeholder it in the prompt, OR **you're

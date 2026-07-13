@@ -42,7 +42,7 @@ import type { LogHostEventFn } from '../server/host-activity-log.js';
 import type { Host } from '../types.js';
 import { errorMessage } from '../lib/utils.js';
 
-import { buildVolumeMounts, type VolumeMount } from './container-mounts.js';
+import { buildVolumeMounts, withMcpSocketMount, type VolumeMount } from './container-mounts.js';
 import { SDK_ENV_FLAGS } from './sdk-surface.js';
 
 // SIDE EFFECT: Module-level auth state, set once at startup via setAuth().
@@ -86,6 +86,10 @@ const OUTPUT_END_MARKER = '---CAST_OUTPUT_END---';
 interface ContainerInput extends SchemaContainerInput {
   /** MCP TCP port mappings (name→port) for Docker-on-macOS TCP transport. */
   mcpPorts?: Record<string, number>;
+  /** Host path of this spawn's per-conversation MCP socket (nonce'd, socket mode
+   *  only). Mounted into the container at the fixed `/mcp/cast.sock`. Absent when
+   *  no MCP socket applies (TCP mode, or no console/mcpDeps wired). */
+  mcpSocketPath?: string;
   /** Override the default mount table. Used by console sessions. */
   overrideMounts?: VolumeMount[];
   /** Override container CWD. Used by console sessions. */
@@ -415,7 +419,12 @@ export async function runContainerAgent(
   for (const [name, res] of Object.entries(resolved.resources)) {
     if (res.path) mountResources[name] = { path: res.path, access: res.access };
   }
-  const mounts = input.overrideMounts ?? buildVolumeMounts(agent, input.conversationKey, mountResources);
+  // Per-conversation MCP socket → fixed `/mcp/cast.sock`, appended here at the
+  // spawn chokepoint from this spawn's nonce'd host path (see withMcpSocketMount).
+  const mounts = withMcpSocketMount(
+    input.overrideMounts ?? buildVolumeMounts(agent, input.conversationKey, mountResources),
+    input.mcpSocketPath,
+  );
   // Folder is deliberately not in the container name. Apple Container's
   // per-container UDS path `/run/container/<name>/sockets/<uuid>.sock` is
   // bounded by sockaddr_un.sun_path (104 bytes), and embedding folder caused

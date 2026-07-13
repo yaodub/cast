@@ -151,6 +151,7 @@ export const ApprovalRequestPayload = z.object({
   summary: z.string(),
   details: z.string().optional(),
   expiresAt: z.string().optional(),
+  tiered: z.boolean().optional(),
 });
 
 export const ApprovalAckPayload = z.object({
@@ -166,6 +167,7 @@ export const ApprovalAckPayload = z.object({
   decision: z.enum(['approved', 'rejected', 'expired']),
   summary: z.string(),
   reason: z.string().optional(),
+  tier: z.enum(['once', 'always']).optional(),
 });
 
 export const ServerMessage = z.discriminatedUnion('type', [

@@ -49,22 +49,22 @@ type ManagerReceiverGrantMap = Record<string, Record<string, Record<string, stri
 // ---------------------------------------------------------------------------
 
 export const STRICT_OUTBOUND_ACLS: OutboundAclMap = {
-  // `p` = push (bus-level conversation__push_to_channel); `q` = query
-  // (`<cast:query>` tag → synchronous request/response round-trip via gateway
-  // request packets). SM is deliberately absent — read-only auditor, no
-  // outbound query or push.
-  'console:design-manager': { peers: { 'a:*': { '__design': 'pq' } } },
-  'console:config-manager': { peers: { 'a:*': { '__configure': 'pq' } } },
+  // `o` = outbound conversation, the push verb post-fold (bus-level
+  // conversation__push_to_channel); `q` = query (`<cast:query>` tag →
+  // synchronous request/response round-trip via gateway request packets). SM is
+  // deliberately absent — read-only auditor, no outbound query or push.
+  'console:design-manager': { peers: { 'a:*': { '__design': 'oq' } } },
+  'console:config-manager': { peers: { 'a:*': { '__configure': 'oq' } } },
 };
 
 export const STRICT_INFRA_GRANTS: InfraGrantMap = {
-  // `h` is the receiver-side push verb — "host the incoming push;
-  // start/continue a conversation with the sender's named user." `a` is the
-  // receiver-side answer verb — per-agent's Design/Configure accepts inbound
-  // `<cast:query>` requests from the manager console and emits
-  // `<cast:answer>` back. Pairs with `q` on the sender-side grant above.
-  'console:design-manager': { '__design': 'ha' },
-  'console:config-manager': { '__configure': 'ha' },
+  // `i` is the receiver-side conversation verb — a pushed-in turn is an `i`-bit
+  // delivery (post-fold: hosting the handed-over user is just inbound
+  // conversation). `a` is the receiver-side answer verb — per-agent's
+  // Design/Configure accepts inbound `<cast:query>` requests from the manager
+  // console and emits `<cast:answer>` back. Pairs with `q` on the sender grant.
+  'console:design-manager': { '__design': 'ia' },
+  'console:config-manager': { '__configure': 'ia' },
 };
 
 export const STRICT_MANAGER_RECEIVER_GRANTS: ManagerReceiverGrantMap = {
@@ -80,28 +80,28 @@ export const NORMAL_OUTBOUND_ACLS: OutboundAclMap = {
   'console:design-manager': {
     peers: {
       // DM gains push+query on `__configure` in addition to `__design`.
-      'a:*': { '__design': 'pq', '__configure': 'pq' },
+      'a:*': { '__design': 'oq', '__configure': 'oq' },
       // DM → CM cross-manager push (CM's `default` channel).
-      'console:config-manager': { 'default': 'pq' },
+      'console:config-manager': { 'default': 'oq' },
     },
   },
   // CM unchanged — CM never gains reach in either mode. The exfil-carrier
   // direction (CM → __design, CM → DM) stays closed even in normal mode.
-  'console:config-manager': { peers: { 'a:*': { '__configure': 'pq' } } },
+  'console:config-manager': { peers: { 'a:*': { '__configure': 'oq' } } },
 };
 
 export const NORMAL_INFRA_GRANTS: InfraGrantMap = {
   // DM gains receive-on-`__configure` so the receiver-side gate passes when
-  // DM pushes into an agent's `__configure`. Pairs with the outbound `pq`
+  // DM pushes into an agent's `__configure`. Pairs with the outbound `oq`
   // above on the same channel.
-  'console:design-manager': { '__design': 'ha', '__configure': 'ha' },
-  'console:config-manager': { '__configure': 'ha' },
+  'console:design-manager': { '__design': 'ia', '__configure': 'ia' },
+  'console:config-manager': { '__configure': 'ia' },
 };
 
 export const NORMAL_MANAGER_RECEIVER_GRANTS: ManagerReceiverGrantMap = {
   // CM accepts inbound push from DM on its `default` channel.
   '.config-manager': {
-    'console:design-manager': { 'default': 'h' },
+    'console:design-manager': { 'default': 'i' },
   },
 };
 
@@ -134,11 +134,11 @@ export function getManagerReceiverGrants(): ManagerReceiverGrantMap {
  * short-circuit in `checkAcl` (the disjoint-union invariant).
  *
  * NOT used for receiver-side verb selection. Verb is intent-driven via
- * `pickVerb`/`gateInbound` in `acl.ts` — `push` requires `h`,
- * `conversation` requires `i`, regardless of where the message lands.
- * If you find yourself reaching for `SYSTEM_OWNED_CHANNELS.has(channel)`
- * to decide which bit to check, you're regressing the p/h pairing
- * cleanup; use `gateInbound(bits, op)` instead.
+ * `pickVerb`/`gateInbound` in `acl.ts` — both push and conversation require
+ * `i` (post-fold: push is gated as a message), a request requires `a`,
+ * regardless of where the message lands. If you find yourself reaching for
+ * `SYSTEM_OWNED_CHANNELS.has(channel)` to decide which bit to check, you're
+ * regressing the verb-selection cleanup; use `gateInbound(bits, op)` instead.
  */
 export const SYSTEM_OWNED_CHANNELS: ReadonlySet<string> = new Set(['__design', '__configure']);
 

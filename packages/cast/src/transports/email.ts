@@ -380,11 +380,12 @@ class EmailConnection {
         const isApprove = /^approve/i.test(replyBody);
         const isReject = /^reject/i.test(replyBody);
         if (isApprove || isReject) {
-          const reason = replyBody.replace(/^(approve|reject)\s*/i, '').trim() || undefined;
+          const tier = /^(approve|reject)\s+always\b/i.test(replyBody) ? 'always' as const : 'once' as const;
+          const reason = replyBody.replace(/^(approve|reject)(\s+always)?\s*/i, '').trim() || undefined;
           this.ctx.ingestApprovalResponse(
             approvalThread.participant,
             approvalThread.agent_address,
-            { id: approvalThread.approval_id, decision: isApprove ? 'approved' : 'rejected', reason },
+            { id: approvalThread.approval_id, decision: isApprove ? 'approved' : 'rejected', reason, tier },
           );
           this.db.prepare('DELETE FROM approval_threads WHERE message_id = ?').run(parsed.inReplyTo);
           return;
@@ -490,7 +491,9 @@ class EmailConnection {
       pkt.summary,
       ...(pkt.details ? ['', pkt.details] : []),
       '',
-      'Reply "approve" or "reject" (optionally followed by a reason).',
+      pkt.tiered
+        ? 'Reply "approve", "approve always", "reject", or "reject always" (optionally followed by a reason).'
+        : 'Reply "approve" or "reject" (optionally followed by a reason).',
     ].join('\n');
 
     try {

@@ -60,7 +60,7 @@ DM proposes; per-agent Design authors. That split makes your output a
 per-channel spec. The same discipline, different joints:
 
 - **Cross-agent edges.** Who pushes / queries / answers whom, on
-  which channel, in which shape (`q/a`, `r/a`, `p/h`), on which
+  which channel, in which shape (`q/a`, `r/a`, push), on which
   trigger, **at what reply cadence** (single-shot for per-call
   isolation; modest persistent for active back-and-forth — guides
   the `idle_timeout` per-agent Design picks). The receiving channel
@@ -237,7 +237,7 @@ Design to apply it inside each agent you spawn.
 - **No PII in this context.** You're on the full-net surface, so the
   constraint isn't "no network" — it's "nothing exfiltratable in
   context." Never receive, request, or relay secrets, tokens,
-  paired-user identity data, or per-user message content; that's
+  user identity data, or per-user message content; that's
   All-Agents Configure's sdk-only surface (kernel invariant: operator
   PII enters only through Configure — `overview.md` § Invariants).
   Package installation for per-agent Design still happens in that
@@ -252,7 +252,7 @@ Design to apply it inside each agent you spawn.
   and push to All-Agents Configure asking CM to collect the
   binding from the operator.** CM takes the path; you stay on
   shape. Same pattern for any value that belongs sdk-only
-  (paired-user IDs, extension secrets, OAuth tokens).
+  (user IDs, extension secrets, OAuth tokens).
 - **No posture audits.** Audit asks ("security review", "anything wrong
   with my agents", the finalize gate on `draft → ready`) belong to
   All-Agents Review (still addressed internally as `security-manager`) — even
@@ -400,7 +400,7 @@ trigger condition applies:
   about to dispatch multi-agent briefs with peer wiring or shared
   resource mounts.** Channel names *and* mount slot names must be
   pinned in the brief, not left to per-agent Design to invent
-  independently. Names the three edge shapes (q/a, r/a, p/h) as
+  independently. Names the three edge shapes (q/a, r/a, push) as
   composition choices. ACL bit authorship is not in your lane —
   Configure writes the JSON pair.
 - `/ref/manuals/console/design/economics.md` and

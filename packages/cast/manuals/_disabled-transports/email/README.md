@@ -9,7 +9,7 @@
 -->
 
 ---
-description: Inbound IMAP / outbound SMTP for two-way email with paired users.
+description: Inbound IMAP / outbound SMTP for two-way email with granted users.
 ---
 
 # email transport
@@ -20,7 +20,7 @@ generic hosting).
 
 ## What it routes
 
-Email between the agent's paired mailbox and remote correspondents.
+Email between the agent's mailbox and remote correspondents.
 Remote handles take the form `email:<rfc822>` (percent-encoded at the
 address layer, e.g. `email:user%40example.com`).
 
@@ -48,9 +48,9 @@ array of `EmailRoute` objects:
 Each route maps one mailbox to one agent. Multiple routes can serve
 multiple agents from the same Cast server.
 
-## Pairing flow
+## Onboarding flow
 
-Operator-initiated:
+Operator sets up the transport:
 
 1. Operator provisions the mailbox at the email provider.
 2. Operator adds the route to `routes.json` via per-agent Configure
@@ -59,7 +59,9 @@ Operator-initiated:
 
 Remote senders are externally addressable: the agent receives mail
 from anyone the `whitelist` allows (or anyone, if no whitelist is
-set).
+set). A sender's identity is created on first contact; the first
+ungranted message is held while the agent's owner approves access
+in-band (allow-once, or allow-always to persist the grant).
 
 ## Security
 

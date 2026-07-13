@@ -1,7 +1,7 @@
 /**
  * Channel contract — operational projection of ACL bits.
  *
- * ACL bits (`ioaqrph`, see `acl.ts`) are the primitive. Several layers want to
+ * ACL bits (`ioaqr`, see `acl.ts`) are the primitive. Several layers want to
  * tell the agent *what those bits mean for what it may emit and how it may be
  * addressed*: the system prompt assembler, the outbound-bounce site, the
  * `agent__list_peers` tool. Without a shared interpretation, each site would
@@ -43,17 +43,14 @@ export interface ChannelContract {
     readonly query: boolean;
     /** `<cast:request>` envelopes — fire-and-forget (`r` bit). */
     readonly request: boolean;
-    /** Push initiation (`p` bit). */
-    readonly push: boolean;
   };
   readonly receive: {
-    /** Inbound free-form conversation messages (`i` bit). */
+    /** Inbound free-form conversation messages (`i` bit). Also the push-host
+     *  capability: a pushed-in turn is an `i`-bit delivery (post-fold). */
     readonly freeText: boolean;
     /** Inbound `<cast:query>` or `<cast:request>`; agent answers with
      *  `<cast:answer>` for query, no envelope reply for request (`a` bit). */
     readonly structuredInbound: boolean;
-    /** Accept incoming pushes (`h` bit). */
-    readonly push: boolean;
   };
 }
 
@@ -65,12 +62,10 @@ export function deriveChannelContract(bits: string): ChannelContract {
       freeText: hasBit(bits, 'o'),
       query: hasBit(bits, 'q'),
       request: hasBit(bits, 'r'),
-      push: hasBit(bits, 'p'),
     },
     receive: {
       freeText: hasBit(bits, 'i'),
       structuredInbound: hasBit(bits, 'a'),
-      push: hasBit(bits, 'h'),
     },
   };
 }
@@ -100,7 +95,7 @@ export function renderContractForPrompt(c: ChannelContract): string | null {
   // Pathological: no outbound rights and no inbound structured handling
   // either. Nothing useful to teach — prompt-layer can't fix a fully
   // locked-down channel. Caller may want to surface this differently.
-  if (!send.freeText && !hasStructured && !send.push) return null;
+  if (!send.freeText && !hasStructured) return null;
 
   const lines: string[] = [];
 
@@ -198,9 +193,7 @@ export function renderContractForPeerListing(c: ChannelContract): string[] {
   if (c.send.query) lines.push('you can query');
   if (c.send.request) lines.push('you can fire fire-and-forget requests');
   if (c.send.freeText) lines.push('you can message');
-  if (c.send.push) lines.push('you can push');
   if (c.receive.structuredInbound) lines.push('they can query you');
   if (c.receive.freeText) lines.push('they can message you');
-  if (c.receive.push) lines.push('they can push to you');
   return lines;
 }

@@ -58,7 +58,7 @@ import type { Subscription } from './subscription-registry';
 // when the browser fully reloads against a fresh bundle.
 // ---------------------------------------------------------------------------
 
-const WORKER_VERSION = 'v0.2.0';
+const WORKER_VERSION = 'v0.3.0';
 
 // Wire chat WS handling: any newly-created ConnectionState gets its transport here.
 installChatLifecycle();
@@ -228,7 +228,7 @@ async function dispatchAction(action: Action): Promise<unknown> {
       return sendMessage(action.identity, action.agent, action.channel, action.text, action.clientMsgId, action.attachments);
 
     case 'respond-to-approval':
-      respondToApproval(action.identity, action.agent, action.approvalId, action.decision);
+      respondToApproval(action.identity, action.agent, action.approvalId, action.decision, action.tier);
       return undefined;
 
     case 'explain-approval':

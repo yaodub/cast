@@ -59,7 +59,7 @@ When it's up, your browser opens to the dashboard at `http://localhost:5051/admi
 
 ## First run
 
-The server starts empty. With no agents yet, the dashboard docks Design and asks what you want to build. Describe it in plain English, like "an agent that reads my morning email and flags what's worth a reply," and Design scaffolds it for you, as files (the same files you'd edit from Claude Code). Configure wires in your model and secrets, you flip it live, then you pair in the people you trust, and each of them gets their own private conversation with the same agent, over Slack, Telegram, or the web.
+The server starts empty. With no agents yet, the dashboard docks Design and asks what you want to build. Describe it in plain English, like "an agent that reads my morning email and flags what's worth a reply," and Design scaffolds it for you, as files (the same files you'd edit from Claude Code). Configure wires in your model and secrets, you flip it live, then you let in the people you trust (their first message waits for your approval), and each of them gets their own private conversation with the same agent, over Slack, Telegram, or the web.
 
 ## What's in here
 

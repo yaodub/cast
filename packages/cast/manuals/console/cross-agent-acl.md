@@ -29,17 +29,33 @@ another. (See `primitives.md` § Co-participant visibility.)
 (DM) do not author ACL grants. They name the shape and channel in
 their handoff to Configure; Configure writes the JSON.
 
+## Grants are acquired two ways
+
+A grant lands in `acl.json` either because you hand-author it here, or
+because the **reactive approval** path wrote it. When an edge has no
+grant and no reject tombstone, the first message on it is *held* and
+the agent asks its owner to decide; an allow-always answer writes the
+grant back into `acl.json` exactly as if you had authored it. So a wire
+you do not pre-author is not blocked — it surfaces as an approval the
+owner answers the first time traffic flows. While that approval is
+outstanding, the reaching agent is not left guessing: it is told its
+request is pending — parked awaiting the owner, not refused — so it
+waits rather than retrying. Hand-authoring is for wires the operator
+wants live without that first prompt.
+
+You author the same JSON either way. The rest of this manual is the
+shape of that JSON.
+
 ## Bit glossary
 
 | Bit | Direction (this agent's view) | Meaning |
 |---|---|---|
 | `q` | outbound | Query: I ask, the reply enters my next-turn context |
 | `r` | outbound | Request: I ask, my gate drops the reply before it enters context |
-| `p` | outbound | Push: I hand my originating user over to another agent |
+| `p` | outbound | Push containment: I may route my current user into a peer **agent's** conversation. Keyed on the peer agent. Reactive-managed — usually written by the owner-approval path, not hand-authored. |
 | `a` | inbound | Answer: I receive `q` or `r` queries and emit `<cast:answer>`, and the peer becomes a member of the channel (a co-participant). |
-| `h` | inbound | Host: I accept `p` pushes (host the handed-over user) |
-| `i` | inbound | User → me. Set by the pairing flow; hand-touched only to consolidate with an `h` handoff grant (§ The p/h merge gotcha). |
-| `o` | outbound | Me → user. Set by the pairing flow, never hand-written. |
+| `i` | inbound | User → me (conversation messages, and channel membership). A pushed-in user lands here too — the access half of an inbound push. |
+| `o` | outbound | Me → user (conversation messages). |
 
 Bits are *this agent's* view. They never match across the two ends
 of an edge: each side records ITS bit, not the peer's.
@@ -62,14 +78,16 @@ channel gets a denial that reveals nothing about that channel's
 population or existence. `show_co_participants: false` hides a room's
 members from member-tier callers, queried from any room. Discovery
 reads the same grants as the push gate, so what a cell can list is
-exactly what it can reach.
+exactly what it can reach. `agent__list_peers` additionally shows
+sibling agents tagged `granted` / `askable` / `rejected`, so an agent
+can see where it could *request* reach, not only where it already has it.
 
-**Who the peer key is.** For `q`/`r`/`a` the peer key is the **other
-agent** (its alias or canonical address). For `p`/`h` it is the
-**originating user** (`u:<id>`), not the peer agent. A person handoff
-is authorized by that user's own grants, and the two agents are pure
-conduits that hold no bits for it. The p/h row below and the worked
-example make this concrete.
+**Who the peer key is.** Every bit keys on the **other agent** (its
+alias or canonical address) — `q`/`r`/`a` for query and answer, `p`
+for push-containment. The one exception is the access half of a push:
+the receiver's grant for the carried user keys on that **user**
+(`u:<id>`), because what it authorizes is the user's own conversation
+on the receiver. See § Push for the two-sided shape.
 
 ## The directional rule
 
@@ -78,28 +96,28 @@ agent's `acl.json`**:
 
 |  | Sender's `acl.json` | Receiver's `acl.json` |
 |---|---|---|
-| **q/a** query | `peers.<receiver>.<channel> = "q"` | `peers.<sender>.<channel> = "a"` |
-| **r/a** request | `peers.<receiver>.<channel> = "r"` | `peers.<sender>.<channel> = "a"` |
-| **p/h** push | `peers.<u:user>.<channel> = "p"` | `peers.<u:user>.<channel> = "h"` |
+| **q/a** query | `allowed.<receiver>.<channel> = "q"` | `allowed.<sender>.<channel> = "a"` |
+| **r/a** request | `allowed.<receiver>.<channel> = "r"` | `allowed.<sender>.<channel> = "a"` |
+| **push** (two-sided) | `allowed.<receiver>.<channel> = "p"` | `allowed.<u:user>.<channel> = "io"` |
 
 The framework gates both sides. Missing either entry blocks the edge
 silently: no error, just delivery failure.
 
-**q/r/a key on the peer agent; p/h key on the originating user.** A
-push is a person handoff, so both halves are written on that user's
-`u:<id>` key, not on the other agent, and the sending agent holds
-nothing for the handoff. The receiver also requires the user to be a
-member of the channel (the `i` bit, set by pairing) before it will
-host them, so in practice the receiver entry consolidates to `"ih"`.
-See § The p/h merge gotcha.
+**Push is two-sided, on two different keys.** The sender's `p` keys on
+the **receiver agent** (containment — "I may route a user into that
+agent"). The receiver's `io` keys on the **carried user** (access —
+"this user may converse here"), and that user must be a concrete member
+of the channel. The two halves are decided by two owners — the sender's
+owner approves the `p`, the receiver's owner approves the user's `io` —
+and either can be pre-authored here. See § Push.
 
 ## JSON structure
 
-`config/acl.json::peers` is a nested map: peer-identifier → channel
-→ bits.
+`config/acl.json::allowed` is a nested map: peer-identifier → channel
+→ bits. (`rejected` has the same shape and holds reject tombstones.)
 
 ```json
-"peers": {
+"allowed": {
   "<peer-identifier>": {
     "<channel-name>": "<bits>"
   }
@@ -112,10 +130,10 @@ See § The p/h merge gotcha.
 |---|---|---|
 | Alias (preferred for agents) | `field-agent` | Other agent. Matches the peer's `manifest.name`. Resolved at lookup time, survives key rotation. |
 | Canonical agent address | `a:<guid>@<issuer>` | Other agent, exact-match. Both parts required — `@<issuer>` is not optional. |
-| Canonical user address | `u:<guid>@<issuer>` | Human peer. Usually written by the pairing flow into `state/paired-users.json`. Hand-authored here only to confer `p` or `h` for a cross-agent handoff (see § The p/h merge gotcha). |
+| Canonical user address | `u:<guid>@<issuer>` | Human peer. The user's conversation grant (`io`), and the access half of an inbound push. |
 | Any-agent glob | `a:*` | Bulk grant covering every agent identity. Falls in if no exact match. |
 
-`u:*` is rejected at schema parse — users must pair explicitly.
+`u:*` is rejected at schema parse — a user grant names a specific user.
 
 A bare type-prefix without `@<issuer>` (e.g. just `a:<guid>`) is
 neither an alias nor a canonical address. It silently fails to
@@ -127,9 +145,11 @@ authorize the same channel — the one on the receiver.
 
 **Bits (value)** — this agent's permissions toward that peer on
 that channel. See the glossary above. Each side records ITS bit.
+The six bits are `i o a q r p`; an agent peer key may carry only
+`q/r/a/p` (the conversational `i`/`o` are for user and console keys).
 
 The agent's own identifier does not appear as a peer. Owner access
-short-circuits to full bits before the peers map is consulted.
+short-circuits to full bits before the `allowed` map is consulted.
 
 **The `owner` field widens writes only.** It defaults to
 `"operator"`, an inert label that matches no identity. Setting it to
@@ -138,7 +158,9 @@ the agent's conversations — but reads stay member-scoped: enumeration
 (`agent__list_channels`, `agent__list_participants`) and
 cross-participant summaries are reserved for the agent itself and the
 operator surfaces. A configured owner who should also *see* a room's
-members must be placed there like anyone else.
+members must be placed there like anyone else. The `owner` is also who
+the agent's reactive approvals route to; `approval_channel` pins which
+conversation they land in.
 
 ## Worked examples
 
@@ -148,7 +170,7 @@ members must be placed there like anyone else.
 // reviewer/config/acl.json
 {
   "owner": "operator",
-  "peers": {
+  "allowed": {
     "field-agent": { "review": "q" }
   }
 }
@@ -156,7 +178,7 @@ members must be placed there like anyone else.
 // field-agent/config/acl.json
 {
   "owner": "operator",
-  "peers": {
+  "allowed": {
     "reviewer": { "review": "a" }
   }
 }
@@ -172,7 +194,7 @@ next-turn context.
 // dispatcher/config/acl.json
 {
   "owner": "operator",
-  "peers": {
+  "allowed": {
     "worker": { "dispatch": "r" }
   }
 }
@@ -180,7 +202,7 @@ next-turn context.
 // worker/config/acl.json
 {
   "owner": "operator",
-  "peers": {
+  "allowed": {
     "dispatcher": { "dispatch": "a" }
   }
 }
@@ -200,61 +222,47 @@ Live ACL wins: granting the sender `q` later (in addition to or
 instead of `r`) restores reply delivery on the next round-trip
 without restart.
 
-### p/h — handing user `alice` from `triage` to `billing` on `support`
+### Push — handing user `alice` from `triage` to `billing` on `support`
 
-Both halves key on the **user** being handed over (`u:alice@idp`),
-not on the peer agent. The agents hold no bits for the handoff.
+A push hands the sender's current user to the receiver agent. The
+receiver opens or resumes a conversation with that user; the sender
+drops out of the loop. Two halves, on two different keys:
 
 ```json
-// triage (source)/config/acl.json — alice may be pushed out on `support`
+// triage (sender)/config/acl.json — triage may route a user into billing's `support`
 {
   "owner": "operator",
-  "peers": {
-    "u:alice@idp": { "support": "p" }
+  "allowed": {
+    "billing": { "support": "p" }
   }
 }
 
-// billing (receiver)/config/acl.json — alice may be hosted via push,
-// consolidated with the `i` her pairing already wrote (see the merge
-// gotcha below for why the `i` must be re-stated here).
+// billing (receiver)/config/acl.json — alice may converse on billing's `support`
 {
   "owner": "operator",
-  "peers": {
-    "u:alice@idp": { "support": "ih" }
+  "allowed": {
+    "u:alice@idp": { "support": "io" }
   }
 }
 ```
 
-A `p/h` push hands the originating user from sender to receiver. The
-receiver opens or resumes a conversation with that user; the sender
-drops out of the loop. `p` and `h` are **operator-conferred user
-grants in `acl.json`, never granted by pairing** (pairing only ever
-writes `i`/`o`). The user must also have paired with the receiver, so
-she already holds `i` on `support` there. The receiver gates on both:
-`h` (you authorized this user for cross-agent hosting) and `i` (she is
-a member of the channel). When you author a p/h pair, name the pairing
-step in your handoff summary so it doesn't get skipped.
+- **Containment** is the sender's `p`, keyed on the **receiver agent**
+  (`billing`) — "triage may route users into billing on `support`".
+- **Access** is the carried user's `io`, keyed on the **user**
+  (`u:alice@idp`) on the receiver — "alice may converse on `support`",
+  which also makes her a member of the channel.
+
+Both halves are reactive by default: the first time triage pushes,
+triage's owner is asked to authorize the `p` edge to billing; when the
+push lands, billing's owner is asked to authorize alice's `io`. When
+both agents share an owner, the access half is auto-approved (one
+owner, one decision). Pre-author either half here to skip its first
+prompt. `p` is reactive-managed — prefer letting the owner approval
+write it, and hand-author it only for a known, standing wire.
 
 Push without an originating user (e.g. from a scheduler-spawned
 conversation with no human participant) is dropped. For file-handoff
-pipelines with no user, see Design's mount-based wiring instead of
-p/h.
-
-### The p/h merge gotcha
-
-`config/acl.json` peers override `state/paired-users.json` **per
-identity key**, not per channel: the merge is
-`{ ...pairedUsers, ...configPeers }`, so a `u:<id>` entry in
-`acl.json` replaces that user's *entire* paired entry. Pairing writes
-the user's `i` into `paired-users.json`; conferring `h` in `acl.json`
-on the same user therefore wipes the paired `i` unless you re-state it.
-
-So a receiver entry of `{ "support": "h" }` alone silently strips the
-user's membership and the handoff is denied at the `i` gate. Conferring
-`h` means consolidating both bits into one entry, `{ "support": "ih" }`,
-either by writing the full `"ih"` in `acl.json` or by extending the
-user's `paired-users.json` entry in place. This is the one case where
-you touch a user's `i` by hand. Otherwise pairing is its sole writer.
+pipelines with no user, see Design's mount-based wiring instead.
 
 ## Common mistakes
 
@@ -265,6 +273,9 @@ you touch a user's `i` by hand. Otherwise pairing is its sole writer.
   direction inverted.
 - **`a` on a sender** — wrong. `a` is receiver-only. Same check:
   who asks, who answers?
+- **Push keyed the same on both sides** — wrong. The sender's `p`
+  keys on the receiver **agent**; the receiver's `io` keys on the
+  **user**. They are different keys, not a mirror pair.
 - **One side only** — silent failure. The framework gates BOTH sides;
   missing either entry blocks delivery with no error. Always write
   both halves.
@@ -273,13 +284,13 @@ you touch a user's `i` by hand. Otherwise pairing is its sole writer.
   The bus falls back to `default` (logged as warning); the sender's
   expected handler never fires. Verify the channel exists on the
   receiver before granting.
-- **`p/h` for agent-to-agent task dispatch** — wrong shape. `p`
-  pushes the *originating user* of the sender's conversation, not
-  a task; `h` hosts that user, not a task result. Without a user
+- **Push for agent-to-agent task dispatch** — wrong shape. A push
+  routes the *originating user* of the sender's conversation, not a
+  task; the receiver hosts that user, not a task result. Without a user
   to hand over (scheduler-spawned conversation, pure agent-to-agent
   work) the bus has nothing to attribute and the push is dropped.
   For task dispatch use `q/a` (sender uses the reply) or `r/a`
-  (sender drops the reply). See `multi-agent-composition.md` § p/h.
+  (sender drops the reply). See `multi-agent-composition.md` § Push.
 
 ## Verify after write
 
@@ -320,7 +331,7 @@ part of the bit-grant key.
 
 ```json
 // Grant covers all shards of the `review` channel:
-"peers": { "reviewer": { "review": "a" } }
+"allowed": { "reviewer": { "review": "a" } }
 // Callers can then address `review~daily`, `review~urgent`, etc.
 ```
 
@@ -329,15 +340,11 @@ The sharding decision itself is Design's — see
 
 ## Where Configure does NOT write
 
-- **User grants (`i`/`o`)** — written by the pairing flow into
-  `state/paired-users.json` when a user redeems a pairing code. Do
-  not hand-write `i`/`o` into `acl.json` from a Configure surface. The
-  single exception is consolidating an existing `i` alongside an `h`
-  you are conferring for a cross-agent handoff (§ The p/h merge
-  gotcha); even then the `i` is one the user already earned by pairing,
-  not a new grant you are inventing.
 - **The agent's own peer entry** — the agent's own identifier never
   appears as a peer of itself.
-- **Cross-agent blueprint files** — `peers.md`, `channel.json`, the
-  channel handler prompt. Those are blueprint, not config — Design's
-  lane.
+- **Reject tombstones, casually** — a `rejected` entry is a hard deny
+  the reactive gate stops re-asking on. Write one to permanently shut
+  an edge, not as a substitute for simply leaving a grant absent (an
+  absent grant is still askable).
+- **Cross-agent blueprint files** — `channel.json`, the channel handler
+  prompt. Those are blueprint, not config — Design's lane.

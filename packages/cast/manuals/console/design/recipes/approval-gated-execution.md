@@ -60,7 +60,8 @@ and what closes each:
 1. **Participant message** — ACL `i`: operator only. Structural.
 2. **Peer query/request** — needs `a` on this channel: granted to
    nobody. Structural.
-3. **Cross-agent push** — needs `h` here: absent. Structural.
+3. **Cross-agent push** — needs the pushed user's `io` here: granted
+   to nobody. Structural.
 4. **Intra-agent self-push** (`conversation__push_to_channel`, same
    participant, different channel) — the agent holds owner bits on
    its own channels, so ACL does not stop this; the tool's absence

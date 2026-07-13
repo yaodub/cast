@@ -109,15 +109,15 @@ pm2 startup            # generate the boot script (run the line it prints)`}</Co
       <H2>Reach your agents from anywhere</H2>
       <p style={proseP}>
         To reach an agent while you're away, talk to it through a chat transport. Wire an
-        agent up to Telegram or Slack and it answers from your phone or a web client — the
-        same way anyone you've paired reaches it.
+        agent up to Telegram or Slack and it answers from your phone or a web client, the
+        same way anyone you've let in reaches it.
       </p>
       <p style={proseP}>
         The transport connects out to the messaging service on Cast's behalf, so the
         agent is reachable from anywhere while the server stays bound to localhost. Pick
         one in <DocsLink href="/docs/transports">Transports</DocsLink>, then{' '}
-        <DocsLink href="/docs/use/pairing">pair</DocsLink> yourself on it with the same{' '}
-        <code>/pair</code> flow you'd use for anyone else.
+        <DocsLink href="/docs/use/access">let yourself in</DocsLink> on it, the same way
+        anyone else gets in.
       </p>
 
       <H2>What to read next</H2>
@@ -127,7 +127,7 @@ pm2 startup            # generate the boot script (run the line it prints)`}</Co
           agents answer on: Telegram, Slack, and the local web client.
         </li>
         <li>
-          <DocsLink href="/docs/use/pairing">Pairing</DocsLink> — granting yourself and
+          <DocsLink href="/docs/use/access">Access</DocsLink> — granting yourself and
           others access on each transport.
         </li>
         <li>

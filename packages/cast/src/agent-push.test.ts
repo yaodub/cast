@@ -59,6 +59,9 @@ import { registerPushToChannelTool } from './agent/mcp-server.js';
 import type { LocalPushActor } from './agent/push-actor.js';
 import type { McpServerDeps } from './agent/mcp-server.js';
 import type { RouteResult } from './types.js';
+import type { ApprovalHandler } from './agent/approval-handler.js';
+import { agentPath } from './config.js';
+import { grantUserPush, tombstoneUserPush } from './auth/user-push-store.js';
 
 // Real-fs watcher so `checkAcl` can read mocked acl.json from disk (other
 // tests in this repo follow the same pattern).
@@ -94,7 +97,7 @@ interface Harness {
   cleanup: () => void;
 }
 
-function buildHarness(): Harness {
+function buildHarness(approvals?: ApprovalHandler): Harness {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-push-test-'));
   const agentDb = new AgentDb(path.join(tmpDir, 'agent.db'));
   const bus = new Bus();
@@ -118,7 +121,10 @@ function buildHarness(): Harness {
       }
       return { ok: true as const, result: null };
     },
-    getApprovals: () => { throw new Error('approvals not wired in test'); },
+    getApprovals: () => {
+      if (approvals) return approvals;
+      throw new Error('approvals not wired in test');
+    },
     listSiblingAgents: undefined,
     requestConversationEnd: () => ({ accepted: false, cooldownSeconds: 0 }),
     getFileWatchService: () => { throw new Error('file-watch not wired in test'); },
@@ -290,6 +296,177 @@ describe('gateInbound — per-agent-console (skipped)', () => {
       arguments: { channel: '__configure', text: 'task' },
     });
     expect(r.isError).toBeFalsy();
+    expect(harness.routeCalls).toHaveLength(1);
+  });
+});
+
+// ----------------------------------------------------------------------------
+// Cross-agent push containment — the reactive `p`-edge. The user-agent
+// cross-agent gate keys containment on the SENDER's `p` toward the TARGET AGENT
+// (replacing the old carried-user `o` check). Three-state: granted → push;
+// askable → hold + owner approval; rejected → deny. Reads acl.json off disk via
+// the real-fs mock watcher, same as the q/r path.
+// ----------------------------------------------------------------------------
+
+const ACL_PATH = agentPath(AGENT_FOLDER, 'config', 'acl.json');
+function writeAcl(content: object): void {
+  fs.mkdirSync(path.dirname(ACL_PATH), { recursive: true });
+  fs.writeFileSync(ACL_PATH, JSON.stringify(content));
+}
+
+describe('cross-agent push containment — p-edge', () => {
+  afterEach(() => fs.rmSync(ACL_PATH, { force: true }));
+
+  it('granted: a `p` grant on the target agent lets the push through', async () => {
+    harness.agentDb.upsertParticipant(USER_PARTICIPANT);
+    writeAcl({ owner: 'operator', allowed: { [OTHER_AGENT_ID]: { 'side-channel': 'p' } } });
+    const client = await clientFor(userAgentActor('default'), harness);
+    const r = await client.callTool({
+      name: 'conversation__push_to_channel',
+      arguments: { channel: 'side-channel', text: 'hi', target_agent: 'other' },
+    });
+    expect(r.isError).toBeFalsy();
+    expect(resultText(r)).toMatch(/Queued for delivery/i);
+  });
+
+  it('rejected: no acl.json denies with no reach hint (push is enforcement-only)', async () => {
+    harness.agentDb.upsertParticipant(USER_PARTICIPANT);
+    // No acl.json on disk → aclVerdict('p') resolves to 'rejected' (hard deny).
+    const client = await clientFor(userAgentActor('default'), harness);
+    const r = await client.callTool({
+      name: 'conversation__push_to_channel',
+      arguments: { channel: 'side-channel', text: 'hi', target_agent: 'other' },
+    });
+    expect(r.isError).toBe(true);
+    expect(resultText(r)).toMatch(/Not authorized to route users into/i);
+  });
+
+  it('rejected: a `p` tombstone on the target denies', async () => {
+    harness.agentDb.upsertParticipant(USER_PARTICIPANT);
+    writeAcl({ owner: 'operator', allowed: {}, rejected: { [OTHER_AGENT_ID]: { 'side-channel': 'p' } } });
+    const client = await clientFor(userAgentActor('default'), harness);
+    const r = await client.callTool({
+      name: 'conversation__push_to_channel',
+      arguments: { channel: 'side-channel', text: 'hi', target_agent: 'other' },
+    });
+    expect(r.isError).toBe(true);
+    expect(resultText(r)).toMatch(/Not authorized to route users into/i);
+  });
+
+  it('askable: no grant raises an owner-directed `p` acl-edge approval and holds the push', async () => {
+    const createRequestCalls: Array<Record<string, unknown>> = [];
+    const mockApprovals = {
+      pendingAclEdge: () => null,
+      createRequest: (data: Record<string, unknown>) => { createRequestCalls.push(data); return 'appr-1'; },
+    } as unknown as ApprovalHandler;
+    const h = buildHarness(mockApprovals);
+    h.agentDb.upsertParticipant(USER_PARTICIPANT);
+    // acl.json present but no `p` grant + no tombstone → 'askable'.
+    writeAcl({ owner: 'operator', allowed: {} });
+    const client = await clientFor(userAgentActor('default'), h);
+    const r = await client.callTool({
+      name: 'conversation__push_to_channel',
+      arguments: { channel: 'side-channel', text: 'held please', target_agent: 'other' },
+    });
+    // Held is informational, not an error — the push goes through on owner grant.
+    expect(r.isError).toBeFalsy();
+    expect(resultText(r)).toMatch(/Push held \(ref/i);
+    expect(createRequestCalls).toHaveLength(1);
+    const req = createRequestCalls[0]!;
+    expect(req.type).toBe('acl-edge');
+    expect(req.approver).toBe('owner');
+    expect(req.participant).toBe(OTHER_AGENT_ID);
+    const payload = JSON.parse(req.payload as string) as { bit: string; held: Record<string, unknown> };
+    expect(payload.bit).toBe('p');
+    expect(payload.held).toMatchObject({ target: OTHER_AGENT_ID, channel: 'side-channel', text: 'held please' });
+    h.cleanup();
+  });
+});
+
+// ----------------------------------------------------------------------------
+// User↔user push consent — the reactive per-edge store. A non-member
+// USER pusher reaching a member USER pushee on a channel requests the pushee's
+// in-band consent. granted (a prior allow-always) → deliver; askable → raise a
+// pushee-directed `user-push` approval (1-day TTL); rejected (tombstone) → deny.
+// Co-members still push freely (no consent gate added to the existing allow path).
+// Drives `dispatchLocalPush` directly via `deliverToChannel`.
+// ----------------------------------------------------------------------------
+
+const USER_PUSH_PATH = agentPath(AGENT_FOLDER, 'config', 'user-push.json');
+const PUSHER = 'u:alice@idp';
+const PUSHEE = 'u:bob@idp';
+const ROOM = 'room';
+
+describe('user↔user push consent — per-edge store', () => {
+  afterEach(() => {
+    fs.rmSync(ACL_PATH, { force: true });
+    fs.rmSync(USER_PUSH_PATH, { force: true });
+  });
+
+  // pushee is a concrete member of ROOM; pusher is absent from the ACL (non-member).
+  const memberPusheeAcl = () => writeAcl({ owner: 'operator', allowed: { [PUSHEE]: { [ROOM]: 'io' } } });
+  const push = (h: ReturnType<typeof buildHarness>) =>
+    h.deps.deliverToChannel!(userAgentActor(ROOM), ROOM, 'ping bob', PUSHEE, ROOM, PUSHER, undefined, undefined);
+
+  it('askable: a non-member pusher raises a pushee-directed `user-push` approval (1-day TTL), push held', async () => {
+    memberPusheeAcl();
+    const createReqCalls: Array<Record<string, unknown>> = [];
+    const mockApprovals = {
+      pendingUserPush: () => null,
+      createRequest: (data: Record<string, unknown>) => { createReqCalls.push(data); return 'up-1'; },
+    } as unknown as ApprovalHandler;
+    const h = buildHarness(mockApprovals);
+    const r = await push(h);
+    expect(r.ok).toBe(false);
+    expect('held' in r && r.held).toBe(true);
+    expect(h.routeCalls).toHaveLength(0); // held, not delivered
+    expect(createReqCalls).toHaveLength(1);
+    const req = createReqCalls[0]!;
+    expect(req.type).toBe('user-push');
+    expect(req.approver).toBe('participant');
+    expect(req.controller).toBe(PUSHEE); // the PUSHEE decides, in-band
+    expect(req.participant).toBe(PUSHER);
+    expect(req.expiresIn).toBe(86400); // 1-day TTL
+    const payload = JSON.parse(req.payload as string) as { channel: string; pusher: string; pushee: string };
+    expect(payload).toMatchObject({ channel: ROOM, pusher: PUSHER, pushee: PUSHEE });
+    h.cleanup();
+  });
+
+  it('granted: a prior allow-always edge lets the push through (no new approval)', async () => {
+    memberPusheeAcl();
+    grantUserPush(AGENT_FOLDER, ROOM, PUSHER, PUSHEE);
+    const r = await push(harness); // default harness: getApprovals throws if touched
+    expect(r.ok).toBe(true);
+    expect(harness.routeCalls).toHaveLength(1); // delivered
+  });
+
+  it('rejected: a tombstoned edge hard-denies, never re-asks', async () => {
+    memberPusheeAcl();
+    tombstoneUserPush(AGENT_FOLDER, ROOM, PUSHER, PUSHEE);
+    const r = await push(harness);
+    expect(r.ok).toBe(false);
+    expect(harness.routeCalls).toHaveLength(0);
+  });
+
+  it('non-candidate: a non-member pushee is not askable — no conversation to push into', async () => {
+    writeAcl({ owner: 'operator', allowed: {} }); // pushee is NOT a member
+    const createReqCalls: Array<Record<string, unknown>> = [];
+    const mockApprovals = {
+      pendingUserPush: () => null,
+      createRequest: (data: Record<string, unknown>) => { createReqCalls.push(data); return 'up-x'; },
+    } as unknown as ApprovalHandler;
+    const h = buildHarness(mockApprovals);
+    const r = await push(h);
+    expect(r.ok).toBe(false);
+    expect(createReqCalls).toHaveLength(0); // structural deny, pushee consent cannot override
+    h.cleanup();
+  });
+
+  it('regression: co-members still push freely — no consent gate on the existing allow path', async () => {
+    writeAcl({ owner: 'operator', allowed: { [PUSHER]: { [ROOM]: 'io' }, [PUSHEE]: { [ROOM]: 'io' } } });
+    harness.agentDb.upsertParticipant(PUSHEE); // the normal path checks participantExists
+    const r = await push(harness); // default harness: no approval expected, getApprovals untouched
+    expect(r.ok).toBe(true);
     expect(harness.routeCalls).toHaveLength(1);
   });
 });

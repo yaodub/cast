@@ -67,6 +67,10 @@ export interface ToolDefinition {
   approval?: {
     /** Whether approval is currently required (resolved from extension config at activation time). */
     enabled: boolean;
+    /** Who decides this approval: 'participant' (the conversing party, default) or
+     *  'owner' (the agent's owner — owner-approves; routes to the owner and gets the
+     *  tiered four-option once/always path). */
+    approver?: 'participant' | 'owner';
     /** Seconds until the approval request expires. Default: 3600 (1 hour). */
     expiry?: number;
     /** Generate the user-facing approval preview. Required — raw args are not acceptable UX. */

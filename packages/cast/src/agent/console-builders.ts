@@ -9,7 +9,6 @@ import fs from 'fs';
 import { AgentManifestSchema, type AgentConfig } from '@getcast/agent-schema/v1';
 
 import { AclSchema } from '../auth/acl.js';
-import { generatePairingCode } from '../auth/pairing.js';
 import { agentPath, resolveCapabilities } from '../config.js';
 import { isConsoleChannel, loadAdminManual, type ConsoleName } from '../console/index.js';
 import { readManifestRaw, writeManifestRaw } from '../console/shared/lifecycle.js';
@@ -40,9 +39,6 @@ export interface ConsoleBuilderDeps {
   agentScope: string;
   mcpDeps?: McpServerDeps;
   getTimezone: () => string;
-  /** Revoke a paired user. Closure over AgentManager.unpair, the sole
-   *  writer of state/paired-users.json. */
-  unpair: (identityId: string) => { ok: boolean; error?: string };
 }
 
 /** Agent-scope consoles see a "Recent activity" block in the snapshot.
@@ -183,8 +179,6 @@ export function buildConsoleMcpDeps(
       };
     },
     getAgentDb: () => deps.agentDb,
-    pairUser: (handle: string) => generatePairingCode(deps.folder, handle),
-    revokeUser: (identityId: string) => deps.unpair(identityId),
     listExtensionSecrets: () => listExtensionSecrets(deps.folder),
     emitUiDirective: (from, to, channel, directive) => {
       // Fire-and-forget: transports without SSE render a text fallback via

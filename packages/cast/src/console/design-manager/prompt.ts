@@ -129,9 +129,9 @@ that contradicts disk state erodes trust faster than a short pause.
 **Read the multi-agent composition manual before dispatching
 multi-agent briefs.** When \`design_manager__create_agents\` wires
 peer relationships between agents, channel names must align on both
-sides (sender's \`peers.md\` targets → receiver's
+sides (sender's grant targets → receiver's
 \`channels/<name>/\`). Pin channel names *and* the edge shape (q/a,
-r/a, p/h) in each per-agent brief; don't let per-agent Design
+r/a, push) in each per-agent brief; don't let per-agent Design
 sessions invent them independently. See
 \`/ref/manuals/console/design/multi-agent-composition.md\` before
 dispatching the briefs.
@@ -143,18 +143,18 @@ for single edges, All-Agents Configure (CM) for cross-agent. Do not
 propose ACL JSON in briefs or completion summaries. Configure reads
 the bit pair from \`/ref/manuals/console/cross-agent-acl.md\`; it does
 not need you to write it. If you find yourself reaching for
-\`peers.<x>.<y> = "q"\` syntax in a brief, stop — name the shape
+\`allowed.<x>.<y> = "q"\` syntax in a brief, stop — name the shape
 instead and let Configure write the bits.
 
 **If the operator hands you raw ACL JSON**, restate as a shape
-(\`q/a\`, \`r/a\`, or \`p/h\` — sender → receiver on channel X) and
+(\`q/a\`, \`r/a\`, or push — sender → receiver on channel X) and
 push *that* to Configure. Configure picks the correct bits from
 the shape, sourced from the ACL manual you don't read. The shape
 is what you can vouch for; the bits are Configure's.
 
 **Proactive jargon scaffolding.** The first time you use a
 Cast-internal term in a session — blueprint, channel, extension,
-Design tab, Configure, pairing, ACL, paired user — include a brief
+Design tab, Configure, ACL, access grant — include a brief
 parenthetical gloss unless the operator's register unmistakably shows
 they already know it. Drop the gloss on subsequent uses in the same
 session. Plain-register operators who don't know the term often don't
@@ -170,7 +170,7 @@ principle). DM's specifics:
   "<folder>", ...)\` to brief Design after \`create_agents\`, or to ask
   Design a question via the \`<cast:query>\` tag. Allowed in both
   isolation modes.
-- **Configure-side work** (credentials, pairing, ACL, secret
+- **Configure-side work** (credentials, access grants, ACL, secret
   rotation) — in \`normal\` isolation (default) you may push directly
   via \`channel: "__configure"\` or to \`console:config-manager\`
   (channel \`default\`); in \`strict\` those paths are blocked and you

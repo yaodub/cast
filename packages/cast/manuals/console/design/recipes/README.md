@@ -78,9 +78,9 @@ pattern (the *Browse by pattern* axis).
   continuity and substrate that materialize at runtime, plus the
   janitor that closes the loop.
 - [Front desk that routes users](front-desk-handoff.md) — the
-  `p`/`h` handoff worked end-to-end: routing judgment at a public
+  push handoff worked end-to-end: routing judgment at a public
   desk, users handed to the specialists who own their threads,
-  pairing prerequisite named.
+  the access each handoff needs named.
 - [Untrusted-content airlock](untrusted-content-airlock.md) — the
   `r`/`a` edge worked end-to-end: hostile content parsed in a cage
   that can only write files, re-entering through an RO mount onto a
@@ -154,12 +154,12 @@ every recipe and aren't columned.)
 | [Connecting multiple users](connecting-multiple-users.md) | persistent | — | — | ✓ participant | ○ | — | ○ | ✓ | — |
 | [Opt-in notification](opt-in-notification.md) | both | — | — | ✓ participant | ✓ | — | ✓ | ✓ | ○ |
 | [Per-entity workroom](per-entity-workroom.md) | persistent, sharded | ○ q/a | ✓ | ✓ composite | — | — | ✓ janitor | ○ substrate | — |
-| [Front desk](front-desk-handoff.md) | persistent | ✓ p/h (○ q/a) | — | ✓ cross-agent | — | — | — | ✓ | — |
+| [Front desk](front-desk-handoff.md) | persistent | ✓ push (○ q/a) | — | ✓ cross-agent | — | — | — | ✓ | — |
 | [Untrusted-content airlock](untrusted-content-airlock.md) | single-shot | ✓ r/a | — | ✓ intra | ✓ | ✓ | ○ | — | ○ |
 | [Two-speed agent](two-speed-agent.md) | both | — | — | ✓ intra | ✓ | — | ✓ | — | ✓ |
 | [Approval-gated execution](approval-gated-execution.md) | persistent | — | — | ✓ subtracted | — | — | ✓ nudge | — | — |
 
-The edge column's `q/a` / `r/a` / `p/h` shapes are
+The edge column's `q/a` / `r/a` / push shapes are
 `../multi-agent-composition.md`'s vocabulary;
 [zone-safety](../zone-safety.md) composes rows of this table rather
 than appearing in it.

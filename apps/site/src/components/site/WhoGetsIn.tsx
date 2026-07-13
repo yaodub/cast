@@ -188,7 +188,7 @@ function MachineCard() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 10, color: 'var(--accent)' }}>
         <Lock s={14} />
         <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg-muted)' }}>
-          paired in only · you hold the codes
+          only who you approve · you hold the door
         </span>
       </div>
     </div>
@@ -229,26 +229,47 @@ function Gate() {
           fontFamily: 'JetBrains Mono, monospace',
         }}
       >
-        pairing
+        approval
       </span>
     </div>
   );
 }
 
-interface PairMsg {
-  from: 'them' | 'agent';
+interface ChatMsg {
+  from: 'them' | 'agent' | 'system';
   text: string;
-  mono?: boolean;
 }
 
-const PAIR_SCRIPT: PairMsg[] = [
-  { from: 'them', text: '/pair', mono: true },
-  { from: 'agent', text: "New here. I've flagged you for my operator. Ask them for your code." },
-  { from: 'them', text: '/pair 482917', mono: true },
-  { from: 'agent', text: 'Paired. Welcome, Sam.' },
+const ACCESS_SCRIPT: ChatMsg[] = [
+  { from: 'them', text: 'Hi! Riley said I could message you about the Friday run.' },
+  { from: 'system', text: 'held · waiting on the owner' },
+  { from: 'system', text: 'owner approved · allowed always' },
+  { from: 'agent', text: "You're in, Sam. What's up?" },
 ];
 
-function PairBubble({ m }: { m: PairMsg }) {
+function ChatBubble({ m }: { m: ChatMsg }) {
+  if (m.from === 'system') {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', margin: '2px 0' }}>
+        <span
+          style={{
+            fontSize: 11,
+            fontWeight: 700,
+            letterSpacing: '0.04em',
+            textTransform: 'uppercase',
+            color: 'var(--accent)',
+            background: 'rgba(255,255,255,0.7)',
+            border: '1px solid var(--accent)',
+            borderRadius: 999,
+            padding: '3px 11px',
+            fontFamily: 'JetBrains Mono, monospace',
+          }}
+        >
+          {m.text}
+        </span>
+      </div>
+    );
+  }
   const out = m.from === 'them';
   return (
     <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
@@ -260,10 +281,8 @@ function PairBubble({ m }: { m: PairMsg }) {
           color: '#1f2937',
           padding: '8px 12px',
           borderRadius: '12px 12px 12px 4px',
-          fontSize: m.mono ? 13 : 13.5,
+          fontSize: 13.5,
           lineHeight: 1.5,
-          fontFamily: m.mono ? 'JetBrains Mono, monospace' : 'inherit',
-          fontWeight: m.mono ? 600 : 400,
         }}
       >
         {m.text}
@@ -272,7 +291,7 @@ function PairBubble({ m }: { m: PairMsg }) {
   );
 }
 
-function PairingChat() {
+function ApprovalChat() {
   return (
     <div
       style={{
@@ -325,8 +344,8 @@ function PairingChat() {
           background: '#E8F1F8',
         }}
       >
-        {PAIR_SCRIPT.map((m, i) => (
-          <PairBubble key={i} m={m} />
+        {ACCESS_SCRIPT.map((m, i) => (
+          <ChatBubble key={i} m={m} />
         ))}
       </div>
     </div>
@@ -346,7 +365,7 @@ export function WhoGetsIn() {
           </h2>
           <p style={{ fontSize: 16, lineHeight: 1.7, color: 'var(--fg-muted)', margin: 0 }}>
             Your agent shows up where you already are: a Telegram chat, a Slack DM, or Cast's own
-            web chat. It runs contained on your machine, and only the people you pair in get
+            web chat. It runs contained on your machine, and only the people you approve get
             through.
           </p>
         </div>
@@ -384,10 +403,10 @@ export function WhoGetsIn() {
             fontWeight: 600,
           }}
         >
-          Pairing is the lock. A short handshake on every transport.
+          Approval is the lock. A new person's first message waits until you say yes.
         </p>
         <div style={{ display: 'flex', justifyContent: 'center' }}>
-          <PairingChat />
+          <ApprovalChat />
         </div>
         <p
           style={{
@@ -400,12 +419,12 @@ export function WhoGetsIn() {
             fontStyle: 'italic',
           }}
         >
-          A stranger without a code never gets in.
+          A stranger you never approve never gets in.
         </p>
 
         <div style={{ marginTop: 44, textAlign: 'center' }}>
-          <a href="/docs/use/pairing" style={{ fontSize: 15, fontWeight: 600, color: 'var(--accent)' }}>
-            How pairing works →
+          <a href="/docs/use/access" style={{ fontSize: 15, fontWeight: 600, color: 'var(--accent)' }}>
+            How access works →
           </a>
         </div>
       </div>

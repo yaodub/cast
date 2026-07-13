@@ -51,7 +51,7 @@ third agent watching the feed is one watch registration, no
 producer change. The feed is an audit trail by construction.
 
 For the live-coordination case in the multi-user-same-agent
-setting (paired participants editing shared state), pair this
+setting (multiple participants editing shared state), pair this
 recipe with the *Live coordination across participant sessions*
 variant of [Connecting two or more users](connecting-multiple-users.md)
 — that variant adds the feed-vs-push posture distinction and

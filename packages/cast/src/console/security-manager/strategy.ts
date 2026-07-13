@@ -5,7 +5,7 @@
  *
  *   - Channel `default` (not `__security-manager`) because SM is a standalone
  *     svc entity with no user traffic. Console-prefix rules don't apply.
- *   - `sdk-only` network: SM sees PII (blueprint prose, config ACL, pairing)
+ *   - `sdk-only` network: SM sees PII (blueprint prose, config ACL, access grants)
  *     and must not have an exfil path.
  *   - Audit surface is the mount tree (blueprint + config cross-agent RO);
  *     stock `Read`, `Glob`, and `Grep` do the work. Shared tools (including

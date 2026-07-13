@@ -19,7 +19,7 @@ exposes:
   **It cannot POST, PUT, or call APIs with custom headers.** It reads
   pages; it doesn't push.
 - **`email`** — IMAP in, SMTP out. Two-way: the agent receives email
-  addressed to its paired user and can send email in reply. Good for
+  addressed to a user it serves and can send email in reply. Good for
   notifications and human-in-the-loop approvals.
 - **Built-in `WebSearch`** — query the web, get result snippets. Not a
   page fetcher; pair with `web-fetch` when you need full content.

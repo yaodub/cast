@@ -15,7 +15,7 @@ export function UseFirstAgent() {
         { label: 'Tell Design what you want' },
         { label: 'Let Configure wire it up' },
         { label: 'Promote it through Review' },
-        { label: 'Open the web chat and pair' },
+        { label: 'Open the web chat and let yourself in' },
         { label: 'Talk to it' },
         { label: 'What to learn next' },
       ]}
@@ -45,7 +45,7 @@ export function UseFirstAgent() {
         scaffold one — you describe what you want to <ConsoleChip kind="design" />, and it
         creates the agent for you. <ConsoleChip kind="configure" /> wires it to your install,{' '}
         <ConsoleChip kind="review" /> promotes it from draft to live, and then you switch to
-        web and pair so you can chat with it.
+        web and let yourself in so you can chat with it.
       </p>
 
       <H2>Open the dashboard</H2>
@@ -89,7 +89,7 @@ export function UseFirstAgent() {
       <p style={proseP}>
         Design can also create more than one agent in the same brief. If you describe a
         team — "an inbox triager and a daily planner that work together" — it'll scaffold
-        both and wire them to talk to each other. For more on that, see{' '}
+        both and set them up to talk to each other. For more on that, see{' '}
         <DocsLink href="/docs/build/multi-agent">Multi-agent composition</DocsLink>.
       </p>
 
@@ -144,28 +144,27 @@ export function UseFirstAgent() {
         recorded in the audit log.
       </p>
 
-      <H2>Open the web chat and pair</H2>
+      <H2>Open the web chat and let yourself in</H2>
       <p style={proseP}>
         Now you need to talk to it. The dashboard is the build surface; for actual
         conversation, every agent has its own web chat URL on the same Cast server. Click
         the agent in the sidebar — its overview page lists the web chat link.
       </p>
       <p style={proseP}>
-        Open that link in a new tab. The first time, you need to pair:
+        Open that link in a new tab. The first time, you let yourself in:
       </p>
       <ol style={{ ...proseP, paddingLeft: 22, listStyle: 'decimal' }}>
-        <li>In the web chat, send <code>/pair</code>.</li>
+        <li>Send any message in the web chat. Your first message is held, not delivered to the agent yet.</li>
         <li>
-          A pairing code is generated, visible in the dashboard's pairing panel for this
-          agent.
+          Switch to the dashboard. The held message is waiting on the agent's row.
         </li>
-        <li>Copy the code, switch back to web, paste it in.</li>
-        <li>Paired.</li>
+        <li>Allow it. Choose allow-always, since it's you.</li>
+        <li>You're in. The held message replays and the agent answers.</li>
       </ol>
       <Callout kind="tip">
-        Same flow when you pair someone else later on Telegram or Email — they send{' '}
-        <code>/pair</code>, you share the code with them out-of-band. See{' '}
-        <DocsLink href="/docs/use/pairing">Pairing</DocsLink> for the full reference.
+        Same flow when someone else messages the agent later on Telegram or Slack. Their
+        first message is held, and you allow or deny it from the dashboard. See{' '}
+        <DocsLink href="/docs/use/access">Access</DocsLink> for the full reference.
       </Callout>
 
       <H2>Talk to it</H2>
@@ -181,10 +180,10 @@ export function UseFirstAgent() {
       <H2>What to learn next</H2>
       <ul style={proseUl}>
         <li>
-          <DocsLink href="/docs/use/pairing">Pairing</DocsLink> — give other people access on
-          web, Telegram, or Slack (the three transports bundled at launch). Same{' '}
-          <code>/pair</code> flow on each; ask <ConsoleChip kind="configure" /> to wire up
-          whichever you want.
+          <DocsLink href="/docs/use/access">Access</DocsLink> — give other people access on
+          web, Telegram, or Slack (the three transports bundled at launch). Their first
+          message is held until you approve it. Ask <ConsoleChip kind="configure" /> to set
+          up whichever transports you want.
         </li>
         <li>
           <DocsLink href="/docs/build/blueprints">Authoring blueprints</DocsLink> — go

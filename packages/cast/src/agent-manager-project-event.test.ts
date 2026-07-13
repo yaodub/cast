@@ -165,19 +165,19 @@ function approvalStaleEvt(): Evt {
 
 describe('Bus.projectEventForIdentity — ACL gate (both branches)', () => {
   it('allows delivery when peer has the i bit on the event channel', () => {
-    mockAclFile({ peers: { [PEER_ALICE]: { default: 'io' } } });
+    mockAclFile({ allowed: { [PEER_ALICE]: { default: 'io' } } });
     const decision = busWithAgent().projectEventForIdentity(typingEvt(), PEER_ALICE);
     expect(decision).toEqual({ alias: AGENT_ALIAS, channel: 'default' });
   });
 
-  it('rejects delivery when peer lacks the i bit (has only h)', () => {
-    mockAclFile({ peers: { [PEER_BOB]: { default: 'h' } } });
+  it('rejects delivery when peer lacks the i bit (has only a)', () => {
+    mockAclFile({ allowed: { [PEER_BOB]: { default: 'a' } } });
     const decision = busWithAgent().projectEventForIdentity(typingEvt(), PEER_BOB);
     expect(decision).toBeNull();
   });
 
   it('rejects delivery when the peer is not in the ACL at all', () => {
-    mockAclFile({ peers: { [PEER_ALICE]: { default: 'io' } } });
+    mockAclFile({ allowed: { [PEER_ALICE]: { default: 'io' } } });
     const decision = busWithAgent().projectEventForIdentity(typingEvt(), PEER_BOB);
     expect(decision).toBeNull();
   });
@@ -189,7 +189,7 @@ describe('Bus.projectEventForIdentity — ACL gate (both branches)', () => {
   });
 
   it('honors wildcard channel grants (peers."*")', () => {
-    mockAclFile({ peers: { [PEER_ALICE]: { '*': 'io' } } });
+    mockAclFile({ allowed: { [PEER_ALICE]: { '*': 'io' } } });
     const decision = busWithAgent().projectEventForIdentity(typingEvt('archive'), PEER_ALICE);
     expect(decision).toEqual({ alias: AGENT_ALIAS, channel: 'archive' });
   });
@@ -201,7 +201,7 @@ describe('Bus.projectEventForIdentity — ACL gate (both branches)', () => {
 
 describe('Bus.projectEventForIdentity — channel-specific ACL', () => {
   it('allows on the granted channel, rejects on a different channel (both branches)', () => {
-    mockAclFile({ peers: { [PEER_ALICE]: { default: 'io', archive: '' } } });
+    mockAclFile({ allowed: { [PEER_ALICE]: { default: 'io', archive: '' } } });
     const bus = busWithAgent();
     const allow = bus.projectEventForIdentity(typingEvt('default'), PEER_ALICE);
     const reject = bus.projectEventForIdentity(typingEvt('archive'), PEER_ALICE);
@@ -212,7 +212,7 @@ describe('Bus.projectEventForIdentity — channel-specific ACL', () => {
   it('honors system-owned channels — non-admin peers always denied on __design even with peers."*"', () => {
     // System-owned channels short-circuit the peers table; the only way to
     // hold `i` on them is via CONSOLE_INFRA_GRANTS (admin/local identities).
-    mockAclFile({ peers: { [PEER_ALICE]: { '*': 'ioaqrph' } } });
+    mockAclFile({ allowed: { [PEER_ALICE]: { '*': 'ioaqr' } } });
     const decision = busWithAgent().projectEventForIdentity(typingEvt('__design'), PEER_ALICE);
     expect(decision).toBeNull();
   });
@@ -231,7 +231,7 @@ describe('Bus.projectEventForIdentity — channel-specific ACL', () => {
 
 describe('Bus.projectEventForIdentity — sender filtering (bus-level)', () => {
   it('drops events from unknown bus entities (no metadata)', () => {
-    mockAclFile({ peers: { [PEER_ALICE]: { default: 'io' } } });
+    mockAclFile({ allowed: { [PEER_ALICE]: { default: 'io' } } });
     const bus = busWithAgent();
     const evt: Evt = { type: 'typing', from: 'agent:ghost', to: 'web', data: { channel: 'default' } };
     const decision = bus.projectEventForIdentity(evt, PEER_ALICE);
@@ -245,7 +245,7 @@ describe('Bus.projectEventForIdentity — sender filtering (bus-level)', () => {
       type: 'service',
       folderPath: 'svc',
     });
-    mockAclFile({ peers: { [PEER_ALICE]: { default: 'io' } } }, 'svc');
+    mockAclFile({ allowed: { [PEER_ALICE]: { default: 'io' } } }, 'svc');
     const evt: Evt = { type: 'typing', from: 'service:bgtask', to: 'web', data: { channel: 'default' } };
     const decision = bus.projectEventForIdentity(evt, PEER_ALICE);
     expect(decision).toBeNull();
@@ -260,7 +260,7 @@ describe('Bus.projectEventForIdentity — sender filtering (bus-level)', () => {
       type: 'agent',
       folderPath: AGENT_FOLDER,
     });
-    mockAclFile({ peers: { [PEER_ALICE]: { default: 'io' } } });
+    mockAclFile({ allowed: { [PEER_ALICE]: { default: 'io' } } });
     const decision = bus.projectEventForIdentity(typingEvt(), PEER_ALICE);
     expect(decision).toBeNull();
   });
@@ -272,7 +272,7 @@ describe('Bus.projectEventForIdentity — sender filtering (bus-level)', () => {
 
 describe('Bus.projectEventForIdentity — every Evt variant', () => {
   it('routes typing, typing_stopped, lifecycle, ui_directive, message_received on their own channel', () => {
-    mockAclFile({ peers: { [PEER_ALICE]: { default: 'io', archive: 'io' } } });
+    mockAclFile({ allowed: { [PEER_ALICE]: { default: 'io', archive: 'io' } } });
     const bus = busWithAgent();
 
     expect(bus.projectEventForIdentity(typingEvt('default'), PEER_ALICE)).toEqual({
@@ -293,13 +293,13 @@ describe('Bus.projectEventForIdentity — every Evt variant', () => {
   });
 
   it('treats approval_stale as channel=default (the approval flow is default-channel-only)', () => {
-    mockAclFile({ peers: { [PEER_ALICE]: { default: 'io' } } });
+    mockAclFile({ allowed: { [PEER_ALICE]: { default: 'io' } } });
     const decision = busWithAgent().projectEventForIdentity(approvalStaleEvt(), PEER_ALICE);
     expect(decision).toEqual({ alias: AGENT_ALIAS, channel: 'default' });
   });
 
   it('approval_stale is denied when peer has no default-channel access', () => {
-    mockAclFile({ peers: { [PEER_ALICE]: { archive: 'io' } } });
+    mockAclFile({ allowed: { [PEER_ALICE]: { archive: 'io' } } });
     const decision = busWithAgent().projectEventForIdentity(approvalStaleEvt(), PEER_ALICE);
     expect(decision).toBeNull();
   });

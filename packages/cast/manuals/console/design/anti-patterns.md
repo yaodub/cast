@@ -13,16 +13,16 @@ checklist. Develop the feel; spot the smell earlier next time.
 
 ### Heavy identity
 
-`prompt.md` three pages long, prescribing every edge case;
-`peers.md` listing twelve peers the agent queries two of; `skills.md`
-written as tutorial prose.
+`prompt.md` three pages long, prescribing every edge case; `skills.md`
+written as tutorial prose; `whoami.md` padded with facts that belong
+in `/memory/`.
 
 Layers 4–7 ride every conversation. Three pages of prescription
 pays three pages per fire, forever.
 
 **Reach for:** scaffolding, not definition (`what-is-an-agent.md`).
-Voice + principle in `prompt.md`. Bullets in `skills.md`. `peers.md`
-only for peers actually queried.
+Voice + principle in `prompt.md`. Bullets in `skills.md`. Keep each
+layer to what earns its place on every turn.
 
 ### Eager bootstrap
 
@@ -218,9 +218,10 @@ It collapses three roles usually distinct — author, operator, runtime
 user — and works only while they're the same person. The agent can't be
 handed to anyone else; it has confused its author with its audience.
 
-**Reach for:** the recipient is acquired at runtime (pairing, the message
-the agent is answering, or `agent__list_participants`) or set by the
-operator in Configure — never authored. A scheduled fire reaches a person
+**Reach for:** the recipient is acquired at runtime (the message the
+agent is answering, or discovery via `agent__list_participants` /
+`agent__list_peers`) or set by the operator in Configure — never
+authored. A scheduled fire reaches a person
 by crossing into their cell — `conversation__push_to_participant`, or a
 participant-bound `task__schedule` — or by a transport: a runtime move, not
 a baked value. `what-is-an-agent.md`; `primitives.md` § The verb layer. The

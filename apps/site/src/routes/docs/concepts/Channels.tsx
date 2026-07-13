@@ -58,8 +58,8 @@ If a question comes up you're unsure about, message me and wait for
 my reply before answering.`}</Code>
 
       <Callout kind="jargon">
-        The friend gains access in <code>config/acl.json</code>. Without that grant, the
-        channel exists but they can't reach it.
+        The friend gets access once you approve them, recorded in <code>config/acl.json</code>.
+        Without that grant, the channel exists but they can't reach it.
       </Callout>
 
       <Callout kind="security">

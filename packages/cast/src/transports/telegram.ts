@@ -121,13 +121,11 @@ class TelegramTransport implements Transport {
 
     // Build Telegram bot command menu from system commands.
     // Telegram only allows [a-z0-9_] in command names, so convert hyphens.
-    // /pair is gateway-handled (not in dispatcher) — include it explicitly.
     this.botCommands = [
       ...ctx.listSystemCommands().map((cmd) => ({
         command: cmd.command.slice(1).replace(/-/g, '_'),
         description: cmd.description.replace(/^\/\S+\s+—\s*/, ''),
       })),
-      { command: 'pair', description: 'Pair with an agent using a code' },
     ];
 
     for (const { token, address, channel, streaming } of bindings) {
@@ -180,16 +178,17 @@ class TelegramTransport implements Transport {
     // Approval callback buttons (Approve / Reject)
     entry.bot.on('callback_query:data', async (ctx) => {
       const data = ctx.callbackQuery.data;
-      const match = data.match(/^(apv|rej):(.+):(\w+)$/);
+      const match = data.match(/^(apva|apv|reja|rej):(.+):(\w+)$/);
       if (!match) return;
 
       const [, action, agentAddress, approvalId] = match;
-      const decision = action === 'apv' ? 'approved' as const : 'rejected' as const;
+      const decision = action!.startsWith('apv') ? 'approved' as const : 'rejected' as const;
+      const tier = action!.endsWith('a') ? 'always' as const : 'once' as const;
       const sender = `tg:${ctx.callbackQuery.from.id}`;
 
-      this.ctx.ingestApprovalResponse(sender, agentAddress!, { id: approvalId!, decision });
+      this.ctx.ingestApprovalResponse(sender, agentAddress!, { id: approvalId!, decision, tier });
 
-      const label = decision === 'approved' ? '✅ Approved' : '❌ Rejected';
+      const label = `${decision === 'approved' ? '✅ Approved' : '❌ Rejected'}${tier === 'always' ? ' (always)' : ''}`;
       try {
         await ctx.editMessageText(`${label} (${approvalId})`);
       } catch { /* message may be too old to edit */ }
@@ -228,12 +227,12 @@ class TelegramTransport implements Transport {
       //   /whoami@BotName → /whoami  (Telegram appends @bot in menus)
       text = text.replace(/^\/([a-z0-9_]+)(@\w+)?/, (_m, cmd: string) => '/' + cmd.replace(/_/g, '-'));
 
-      // Map /start → /pair. Telegram auto-sends /start as the first message
-      // when a user opens the bot, and t.me/<bot>?start=<payload> deep links
-      // arrive as "/start <payload>". Routing it to /pair makes first contact
-      // begin pairing, and a deep-link payload rides through as the pairing
-      // code (so a /pair-code link redeems in one tap). /pair is gateway-handled.
-      text = text.replace(/^\/start\b/, '/pair');
+      // /start is Telegram's auto-sent first message when a user opens the bot
+      // (and t.me/<bot>?start=<payload> deep links arrive as "/start <payload>").
+      // Pairing is gone — first contact is just a normal message the agent's
+      // owner approves. Strip the command so any deep-link payload becomes the
+      // first message; a bare /start becomes an empty first-contact ping.
+      text = text.replace(/^\/start\b\s*/, '');
 
       // Reply/forward framing. Prepended AFTER the ^-anchored command rewrites
       // above so they still match the typed text; skipped entirely when the
@@ -402,9 +401,18 @@ class TelegramTransport implements Transport {
 
     if (pkt.type === 'approval_request') {
       const text = `❓ *Approval needed*\n${pkt.summary}${pkt.details ? '\n' + pkt.details : ''}`;
-      const keyboard = new InlineKeyboard()
-        .text('✅ Approve', `apv:${ctx.agentAddress}:${pkt.approvalId}`)
-        .text('❌ Reject', `rej:${ctx.agentAddress}:${pkt.approvalId}`);
+      // Owner-directed (tiered) approvals get the four-option once/always path;
+      // participant tool-call approvals stay two-option.
+      const keyboard = pkt.tiered
+        ? new InlineKeyboard()
+            .text('✅ Approve', `apv:${ctx.agentAddress}:${pkt.approvalId}`)
+            .text('✅ Always', `apva:${ctx.agentAddress}:${pkt.approvalId}`)
+            .row()
+            .text('❌ Reject', `rej:${ctx.agentAddress}:${pkt.approvalId}`)
+            .text('🚫 Always', `reja:${ctx.agentAddress}:${pkt.approvalId}`)
+        : new InlineKeyboard()
+            .text('✅ Approve', `apv:${ctx.agentAddress}:${pkt.approvalId}`)
+            .text('❌ Reject', `rej:${ctx.agentAddress}:${pkt.approvalId}`);
       await bot.api.sendMessage(chatId, text, { reply_markup: keyboard });
       return;
     }

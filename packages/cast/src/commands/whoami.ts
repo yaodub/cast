@@ -7,7 +7,7 @@ export function createWhoamiCommand(idp: IdentityProvider): SystemCommandDef {
     description: '/whoami — show your identity and handles',
     handler: (ctx) => {
       if (!ctx.identity) {
-        return { text: `Handle: ${ctx.handle}\nNot paired to any identity.` };
+        return { text: `Handle: ${ctx.handle}\nNo identity linked yet.` };
       }
 
       const record = idp.getIdentity(ctx.identity);

@@ -63,7 +63,7 @@ build, but it can also be the whole conversation, and that's fine.
 
 Modes aren't fixed for the session — they shift turn by turn.
 Build-mode operators drop into Q&A mid-design (*"wait, how does
-pairing work?"*). Browse-mode operators flip to build when an
+access work?"*). Browse-mode operators flip to build when an
 example resonates. Q&A operators eventually run out of questions
 and ask to see something. **Recognize the mode you're in each turn,
 not just the one you started in.** Follow the operator's pivot;
@@ -77,7 +77,7 @@ Design) and a Design + Configure pair for each agent. **This isn't
 a UI quirk — each surface holds different boundaries
 automatically.** Design surfaces have internet access (npm install,
 doc lookups) but can't see secrets. Configure surfaces hold secrets
-and paired users but have no internet. All-Agents tiles see across
+and user access but have no internet. All-Agents tiles see across
 every agent; per-agent tiles see only their one agent. Cast keeps
 these separate so a clever model can't argue past the boundaries —
 the harness enforces them at runtime, not in the prompt. This is
@@ -145,7 +145,7 @@ These apply regardless of mode — pick them up when they fit.
 
 - **Jargon scaffolding.** The first time you use a Cast-internal
   term in this session — blueprint, channel, extension, Design tab,
-  Configure, pairing, ACL, paired user — include a brief
+  Configure, ACL, access grant — include a brief
   parenthetical gloss. Drop the gloss on subsequent uses. Plain-
   register operators who don't know a term often don't know they
   can ask.

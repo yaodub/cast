@@ -147,7 +147,7 @@ export function ApiTools() {
           { value: 'Push failed: REASON', when: 'sync validation fails' },
           { value: '<cast:rejection request="ID">REASON</cast:rejection>', when: 'delivery rejected asynchronously; arrives on a later turn' },
         ]}
-        notes="Cross-agent pushes hand the originating user to a peer agent and land only if that peer has granted the user a host-push grant. Passing your own alias is equivalent to omitting."
+        notes="Cross-agent pushes hand the originating user to a peer agent and land only if the receiving peer has granted that user access. Passing your own alias is equivalent to omitting."
       />
 
       <ToolDoc
@@ -163,7 +163,7 @@ export function ApiTools() {
           { value: 'Push failed: REASON', when: 'sync validation fails' },
           { value: '<cast:rejection request="ID">REASON</cast:rejection>', when: 'delivery rejected asynchronously' },
         ]}
-        notes="Intra-agent only, no target_agent option. The target must be a user who has paired into the target channel, and the channel must let co-participants reach each other."
+        notes="Intra-agent only, no target_agent option. The target must be a user who has access to the target channel, and the channel must let co-participants reach each other."
       />
 
       <H2>Peer dialogue</H2>
@@ -184,6 +184,7 @@ export function ApiTools() {
         ]}
         returns={[
           { value: '<cast:answer request="ID">BODY</cast:answer>', when: 'peer replies; arrives as inbound stimulus on a later turn' },
+          { value: '<cast:pending request="ID">REASON</cast:pending>', when: "peer's owner has not granted the reach yet; the query is parked, answer or rejection follows" },
           { value: '<cast:rejection request="ID">REASON</cast:rejection>', when: 'delivery fails (peer offline, ACL denied)' },
         ]}
         notes="Gated by the peer's q ACL bit toward this agent."

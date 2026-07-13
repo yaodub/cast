@@ -30,7 +30,7 @@ with no users; this recipe is its positive shape.
    exists.
 3. **Capture the opt-in at runtime.** When someone accepts, the agent
    records the subscription keyed by the participant it acquires from the
-   live conversation (or `agent__list_participants`, or pairing). The
+   live conversation (or `agent__list_participants`, or discovery). The
    subscriber list is runtime substrate — `/memory/subscribers/...`, or
    the watch registration itself — never a value in the blueprint. What
    each subscriber wants notified about lives there too.

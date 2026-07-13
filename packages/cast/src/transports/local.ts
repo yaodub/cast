@@ -88,9 +88,9 @@ export function createLocalTransport(deps: LocalTransportDeps): { transport: Loc
       const participant = resolved ? resolved.id : handle;
       return deps.gateway.getHistory(agentAddress, participant, { limit: opts?.limit });
     },
-    onApprovalResponse: (agentAddress, handle, id, decision, reason) => {
+    onApprovalResponse: (agentAddress, handle, id, decision, reason, tier) => {
       const participant = `cli:${handle}`;
-      deps.gateway.ingestApprovalResponse(participant, agentAddress, { id, decision, reason });
+      deps.gateway.ingestApprovalResponse(participant, agentAddress, { id, decision, reason, tier });
     },
   });
 

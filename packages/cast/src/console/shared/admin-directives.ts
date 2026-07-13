@@ -37,7 +37,7 @@ export function registerAdminNavigateTool(
     'Move the operator\'s attention to an admin-UI surface. The admin-page index in your system prompt is the catalogue of valid `target` values. `reason` narrates WHY. `operator_takeaways` (required when the destination is a different console than this one) is the departure map — what\'s decided, what\'s pending, which surfaces hold what. Not a mutation; no changelog entry.',
     {
       target: z.string().min(1).describe('Logical destination key from the admin-page index in your prompt. May be a page key (e.g. "/agents/foo/access", "/routes") or a server-scope console (e.g. "config-manager", "design-manager", "security-manager"). The admin UI decides how to render — route push, drawer-tab switch, etc.'),
-      within: z.string().optional().describe('Optional sub-location within the target (e.g. a section anchor like "pairing-codes"). Must match an entry listed for the target in the admin-page index.'),
+      within: z.string().optional().describe('Optional sub-location within the target (e.g. a section anchor like "users"). Must match an entry listed for the target in the admin-page index.'),
       reason: z.string().min(1).describe('One short sentence on why you\'re sending the operator here. Rendered verbatim for transports without a browser.'),
       operator_takeaways: z
         .string()

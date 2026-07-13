@@ -1,6 +1,6 @@
 {
   "name": "cast",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Framework for building Claude-powered agents that run as isolated container processes.",
   "license": "MIT",

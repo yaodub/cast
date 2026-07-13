@@ -328,7 +328,11 @@ export async function register(name: string): Promise<void> {
 // Approval handlers + misc dispatchers
 // ---------------------------------------------------------------------------
 
-export function respondToApproval(approvalId: string, decision: 'approved' | 'rejected'): void {
+export function respondToApproval(
+  approvalId: string,
+  decision: 'approved' | 'rejected',
+  tier: 'once' | 'always' = 'once',
+): void {
   if (!activeIdentity) return;
   const agent = activeAgent.value;
   if (!agent) return;
@@ -338,6 +342,7 @@ export function respondToApproval(approvalId: string, decision: 'approved' | 're
     agent,
     approvalId,
     decision,
+    tier,
   });
 }
 

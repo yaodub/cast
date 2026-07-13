@@ -239,8 +239,8 @@ function FigRA() {
   );
 }
 
-// ===== p/h =====
-function FigPH() {
+// ===== push =====
+function FigPush() {
   const wireMid = (A_X + BOX_W + B_X) / 2;
   const wireStart = A_X + BOX_W + 4;
   const wireEnd = B_X - 4;
@@ -249,7 +249,7 @@ function FigPH() {
   const userBX = B_X + BOX_W / 2;
 
   return (
-    <FigureFrame caption="fig. p/h — the user is handed from one agent to the other">
+    <FigureFrame caption="fig. push — the user is handed from one agent to the other">
       <Topology height={140}>
         <AgentBox x={A_X} label={['customer', 'service']} bg={A_BG} />
         <AgentBox x={B_X} label="billing" bg={B_BG} />
@@ -332,8 +332,8 @@ export function BuildMultiAgent() {
       <p style={proseP}>
         An agent reaches another agent in one of three relationships, distinguished by{' '}
         <em>what's traveling</em> and <em>what the sender does with the answer</em>.
-        The shape names — <code>q/a</code>, <code>r/a</code>, <code>p/h</code> — are
-        the ACL bits operators grant; the experience on either side is what picks
+        The shape names (<code>q/a</code>, <code>r/a</code>, <code>push</code>) name the
+        grants that authorize each edge. The experience on either side is what picks
         between them.
       </p>
 
@@ -368,13 +368,14 @@ export function BuildMultiAgent() {
         out. The user keeps talking; they're just talking to a different agent now.
       </p>
 
-      <FigPH />
+      <FigPush />
 
       <Callout kind="security">
-        The hand-over rides on the user's grants, not the agents'. The user needs a push
-        grant on the source, plus host-push and membership on the receiver. The operator
-        confers those. Pairing alone gives membership, not the push bits. The agents are
-        pure conduits, and without the user's grants the push drops.
+        A hand-over has two halves, approved by two owners. The sending agent needs a push
+        grant toward the receiver, the sending owner's call. The handed-over user needs
+        access on the receiver, which that owner approves the same held-then-approve way as
+        any first contact. When both agents share an owner, the access half is already
+        settled. The agents are pure conduits, and without both halves the push drops.
       </Callout>
 
       <H2>ACL is configuration, not design</H2>
@@ -386,14 +387,15 @@ export function BuildMultiAgent() {
         outside the blueprint and is the operator's job.
       </p>
       <p style={proseP}>
-        A cross-agent edge needs an ACL bit on <em>both</em> sides — the sender's
+        A cross-agent edge needs a grant on <em>both</em> sides: the sender's
         outbound grant (<code>q</code>, <code>r</code>, or <code>p</code>) and the
-        receiver's inbound grant (<code>a</code> or <code>h</code>). Missing either
-        silently blocks the edge. When you ship a blueprint with a cross-agent edge,
-        document the ACL pair the operator needs to configure —{' '}
-        <em>"reviewer → field-agent on <code>default</code> as q/a; sender grants{' '}
-        <code>q</code>, receiver grants <code>a</code>"</em> — so the install can be
-        completed correctly.
+        receiver's inbound grant (<code>a</code> for a query or request, or the
+        handed-over user's access for a push). Without both, nothing crosses. An agent
+        can also discover a peer and request the edge, which the receiving owner approves
+        reactively. When you ship a blueprint with a cross-agent edge, document the pair
+        the operator needs (for example, <em>"reviewer → field-agent on{' '}
+        <code>default</code> as q/a; sender grants <code>q</code>, receiver grants{' '}
+        <code>a</code>"</em>) so the install can be completed correctly.
       </p>
 
       <H2>What to read next</H2>
@@ -408,9 +410,9 @@ export function BuildMultiAgent() {
           anatomy in full.
         </li>
         <li>
-          <DocsLink href="/docs/use/pairing">Pairing</DocsLink> — the user side of
-          access. Hand-over (<code>p/h</code>) in particular requires the originating
-          user to be paired with the receiver.
+          <DocsLink href="/docs/use/access">Access</DocsLink> — the user side of
+          access. A hand-over in particular requires the handed-over user to be
+          approved on the receiver.
         </li>
       </ul>
     </DocsLayout>

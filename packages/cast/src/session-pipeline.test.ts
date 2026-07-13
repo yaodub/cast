@@ -341,7 +341,7 @@ function makeHost(folder: string, name?: string): Host {
 // Test ACL: owner is the operator tier (CLI users), paired test users for delegation targets
 const TEST_ACL = JSON.stringify({
   owner: 'operator',
-  peers: {
+  allowed: {
     'u:tg-target@test': { '*': 'io' },
     'u:tg-12345@test': { '*': 'io' },
     'u:tg-same-user@test': { '*': 'io' },
@@ -1044,7 +1044,7 @@ describe('Delegation Routing', () => {
     tgSameUserId = localIdp.register('tg:same-user', 'Same User').id;
     const delegationAcl = JSON.stringify({
       owner: 'operator',
-      peers: {
+      allowed: {
         [tgTargetId]: { '*': 'io' },
         [tg12345Id]: { '*': 'io' },
         [tgSameUserId]: { '*': 'io' },

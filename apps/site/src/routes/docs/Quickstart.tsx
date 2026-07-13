@@ -109,7 +109,7 @@ pnpm start`}</Code>
                   up channels and props, registers it on the server. From there{' '}
                   <ConsoleChip kind="configure" /> wires it to your install (model,
                   secrets, transports), <ConsoleChip kind="review" /> promotes it from
-                  draft to live, and you open its web chat URL to pair and talk. Full
+                  draft to live, and you open its web chat URL, let yourself in, and talk. Full
                   walkthrough: <DocsLink href="/docs/use/first-agent">Your first agent</DocsLink>.
                 </p>
               </>

@@ -4,7 +4,7 @@ import fs from 'fs';
 import { z } from 'zod';
 import { AgentManifestSchema, isCompatible } from '@getcast/agent-schema/v1';
 
-import { getPeerChannels } from './auth/acl.js';
+import { aclVerdict, canEmit, getPeerChannels } from './auth/acl.js';
 import { loadChannelsConfig } from './conversations/channel-config.js';
 import { AgentManager } from './agent/agent-manager.js';
 import { slotPool } from './lib/gates.js';
@@ -270,6 +270,8 @@ function registerAgent(
     bus,
     mcpDeps,
     identityProvider: idp,
+    logHostEvent: (level, component, eventName, message, opts) =>
+      hostActivityLog?.logEvent(level, component, eventName, message, opts),
     agentId: effectiveId,
     watcher: fileWatcher,
     listSiblingAgents: () => {
@@ -278,30 +280,52 @@ function registerAgent(
         .listEntities({ type: 'agent' })
         .filter((a) => a.id !== effectiveId)
         .map((a) => {
-          const channels = getPeerChannels(bus, folder, a.id) ?? [];
+          const granted = getPeerChannels(bus, folder, a.id) ?? [];
+          const grantedBits = new Map(granted.map((c) => [c.name, c.bits]));
           const peerFolder = bus.getMetadata(a.id)?.folderPath;
           const peerChannelConfig = peerFolder ? loadChannelsConfig(peerFolder) : undefined;
           // ACL channel-namespace duality: in a peer entry, outbound bits
-          // (`q`/`r`) name the PEER's channels while inbound bits (`i`/`a`/`h`)
+          // (`q`/`r`) name the PEER's channels while inbound bits (`i`/`a`)
           // name MY channels — so the sharded affordance must be resolved
           // against the config that owns the row's namespace. A mixed-bits row
           // is ambiguous (one name, two namespaces); skip the flag rather than
-          // guess.
+          // guess. (The former inbound `h` folded into `i`.)
           const shardedFor = (ch: { name: string; bits: string }): boolean => {
             const outbound = [...ch.bits].some((b) => 'qr'.includes(b));
-            const inbound = [...ch.bits].some((b) => 'iah'.includes(b));
+            const inbound = [...ch.bits].some((b) => 'ia'.includes(b));
             if (outbound === inbound) return false;
             const config = outbound ? peerChannelConfig : myChannelConfig;
             return config?.[ch.name]?.use_sharding === true;
           };
+          // Phase 4 discovery: surface the peer's channels tagged by reach-state,
+          // not only the ones already granted — so the agent can discover where it
+          // could *request* reach (askable), not just where it has it. Channel set =
+          // the peer's user-facing channels (its config) ∪ any channel the caller
+          // already holds a grant on, with `default` as the floor.
+          const peerNames = peerChannelConfig
+            ? Object.keys(peerChannelConfig).filter((n) => !n.startsWith('__'))
+            : [];
+          const names = [...new Set([
+            ...grantedBits.keys(),
+            ...(peerNames.length > 0 ? peerNames : ['default']),
+          ])].filter((n) => n !== '*');
+          const channels = names.map((name) => {
+            const bits = grantedBits.get(name) ?? '';
+            // Reach for the discovery-relevant outbound verb (query ⊇ request).
+            // Granted if the caller already holds q/r; else the three-state verdict
+            // (askable = no grant, no tombstone; rejected = tombstoned).
+            const reach = canEmit(bits, 'query') || canEmit(bits, 'request')
+              ? ('granted' as const)
+              : aclVerdict(bus, folder, a.id, name, 'q') === 'rejected'
+                ? ('rejected' as const)
+                : ('askable' as const);
+            return { name, bits, reach, ...(shardedFor({ name, bits }) ? { sharded: true } : {}) };
+          });
           return {
             canonical: a.id,
             alias: a.label,
             description: a.description,
-            channels: channels.map((ch) => ({
-              ...ch,
-              ...(shardedFor(ch) ? { sharded: true } : {}),
-            })),
+            channels,
           };
         });
     },

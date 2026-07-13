@@ -157,7 +157,7 @@ export function UseMigrating() {
           </tr>
           <tr>
             <td style={proseTd}>Multi-user surface</td>
-            <td style={proseTd}>Per-participant conversations via pairing; channel ACL</td>
+            <td style={proseTd}>Per-participant conversations via access grants; channel ACL</td>
           </tr>
           <tr>
             <td style={proseTd}>Model-provider plugin</td>
@@ -262,11 +262,11 @@ export function UseMigrating() {
       <p style={proseP}>
         For a homegrown Claude Agent SDK project, the lift is mostly wrapping
         your loop in Cast's container model and inheriting the surfaces a
-        bare SDK doesn't have opinions about — memory layout, pairing,
+        bare SDK doesn't have opinions about — memory layout, access,
         scheduling, channels, ACL. Two paths: drop your loop into the agent's
         container as a custom runner (preserves your code), or restructure
         into Cast's blueprint shape and let the standard runner take over
-        (inherits pairing, identity, and ACL for free). The standard runner
+        (inherits access, identity, and ACL for free). The standard runner
         is the cleaner long-term move.
       </p>
 

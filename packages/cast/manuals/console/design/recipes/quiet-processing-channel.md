@@ -111,7 +111,7 @@ synchronous machine-to-machine response — `<cast:query>` /
 - *Cross-agent processing.* A dedicated processing agent that
   handles events for several consumer agents — used when the
   producer holds sensitive access the consumer agents shouldn't.
-  Becomes a peer in `peers.md`; events route via `<cast:query>` /
+  Becomes a granted peer; events route via `<cast:query>` /
   `<cast:answer>` or `push_to_channel` cross-agent. Composes with
   [Specialist behind a query-only door](specialist-behind-query.md).
 - *Input from a feed watch.* When the events come from a feed
