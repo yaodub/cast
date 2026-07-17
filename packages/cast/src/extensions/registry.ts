@@ -210,10 +210,6 @@ function activateSingleExtension(
   fs.mkdirSync(privateDir, { recursive: true });
   fs.mkdirSync(sharedDir, { recursive: true });
 
-  if (!extChannel) {
-    logger.info({ agentFolder, extension: extName }, 'Extension has no channel configured — subscription features unavailable');
-  }
-
   try {
     const instance: ExtensionInstance = def.create({
       agentFolder,
@@ -221,7 +217,6 @@ function activateSingleExtension(
       secrets: secretsResult.data,
       privateDir,
       sharedDir,
-      hasChannel: !!extChannel,
       deliver: makeDeliver?.(extName, extChannel) ?? (() => Promise.resolve({ ok: true, result: null })),
       log: logger.child({ extension: extName }),
     });

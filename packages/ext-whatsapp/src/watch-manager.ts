@@ -13,7 +13,7 @@ import { z } from 'zod';
 import type { WAMessage } from '@whiskeysockets/baileys';
 
 import type { ExtensionContext, Logger, ToolCallContext, ToolResult } from '@getcast/extension-schema';
-import { textResult } from '@getcast/extension-schema';
+import { ownsBinding, textResult } from '@getcast/extension-schema';
 
 import type { WhatsAppConfig } from './schemas.js';
 import type { WhatsAppStore } from './store.js';
@@ -29,7 +29,15 @@ const WatchSchema = z.object({
   contactId: z.number().int(),
   chatName: z.string(),
   instructions: z.string(),
+  /** Reply binding, participant half: the identity of the cell that created the
+   *  watch. Host-stamped at watch time (`ToolCallContext.participant`). */
   target: z.string(),
+  /** Reply binding, channel half: the channel of the cell that created the
+   *  watch. Host-stamped (`ToolCallContext.channel`). Absent on legacy entries —
+   *  those fall back to the extension's baked channel. */
+  originChannel: z.string().optional(),
+  /** Provenance: who created this watch. Audit only, never routing. */
+  createdBy: z.string().optional(),
   createdAt: z.string(),
 });
 type Watch = z.infer<typeof WatchSchema>;
@@ -38,19 +46,33 @@ type Watch = z.infer<typeof WatchSchema>;
 // WatchManager
 // ---------------------------------------------------------------------------
 
+/** The store surface this manager consumes — narrowed so tests can supply a
+ *  structural fake without casting. `resolver` is narrowed one level deeper
+ *  for the same reason (only `getContact` is consumed). */
+export type WatchStore = Pick<
+  WhatsAppStore,
+  'onNewMessages' | 'resolveQueryToContactId' | 'resolveQueryMatches'
+  | 'getAliasesForContact' | 'getContactIdForJid'
+> & {
+  resolver: Pick<WhatsAppStore['resolver'], 'getContact'>;
+};
+
+/** The connection surface handleWatch consumes. */
+type PairedProbe = Pick<ConnectionManager, 'isPaired'>;
+
 export class WatchManager {
   private watches = new Map<string, Watch>();
   private readonly watchesPath: string;
   private deliver: ExtensionContext['deliver'];
   private log: Logger;
-  private store: WhatsAppStore;
+  private store: WatchStore;
   private config: WhatsAppConfig;
 
   constructor(opts: {
     privateDir: string;
     deliver: ExtensionContext['deliver'];
     log: Logger;
-    store: WhatsAppStore;
+    store: WatchStore;
     config: WhatsAppConfig;
   }) {
     this.watchesPath = path.join(opts.privateDir, 'watches.json');
@@ -84,7 +106,7 @@ export class WatchManager {
   handleWatch(
     args: Record<string, unknown>,
     call: ToolCallContext,
-    connection: ConnectionManager,
+    connection: PairedProbe,
   ): ToolResult {
     if (!connection.isPaired()) return textResult('WhatsApp not paired.', true);
 
@@ -112,34 +134,59 @@ export class WatchManager {
     const contact = this.store.resolver.getContact(contactId);
     const chatName = contact?.display_name ?? `contact-${contactId}`;
     const id = customId ?? `watch_${crypto.randomBytes(4).toString('hex')}`;
+
+    // Explicit-id overwrite is ownership-gated: an id created by another cell
+    // is taken, not overwritable. (No handle-leak concern here — watches share
+    // the store's single message feed, there is nothing per-watch to stop.)
+    const existing = this.watches.get(id);
+    if (existing && !this.ownsWatch(existing, call)) {
+      return textResult(`Watch id "${id}" is already in use.`, true);
+    }
+
     const watch: Watch = {
       id,
       contactId,
       chatName,
       instructions,
+      // Reply binding = the calling cell, both halves host-stamped. The fire
+      // returns to the conversation that created the watch (intent-cell return).
       target: call.participant,
+      originChannel: call.channel,
+      createdBy: call.participant,
       createdAt: new Date().toISOString(),
     };
 
     this.watches.set(id, watch);
     this.persistWatches();
 
-    return textResult(`Watch "${id}" created for ${chatName}. New messages will be forwarded with your instructions.`);
+    return textResult(`Watch "${id}" ${existing ? 'updated' : 'created'} for ${chatName}. New messages will be delivered to this conversation with your instructions.`);
   }
 
-  handleUnwatch(args: Record<string, unknown>): ToolResult {
+  /** Ownership of a watch's reply binding — see `ownsBinding`. */
+  private ownsWatch(watch: Watch, call: ToolCallContext): boolean {
+    return ownsBinding(watch.target, call);
+  }
+
+  handleUnwatch(args: Record<string, unknown>, call: ToolCallContext): ToolResult {
     const id = String(args.id ?? '');
-    if (!this.watches.has(id)) return textResult(`Watch "${id}" not found.`, true);
+    const watch = this.watches.get(id);
+    // Same message for missing and not-owned: existence of other cells'
+    // watches is not an oracle.
+    if (!watch || !this.ownsWatch(watch, call)) {
+      return textResult(`Watch "${id}" not found.`, true);
+    }
     this.watches.delete(id);
     this.persistWatches();
     return textResult(`Watch "${id}" removed.`);
   }
 
-  handleListWatches(): ToolResult {
-    if (this.watches.size === 0) return textResult('No active watches.');
-    const lines = [...this.watches.values()].map(w =>
-      `ID: ${w.id}\n  Chat: ${w.chatName}\n  Instructions: ${w.instructions}\n  Created: ${w.createdAt}`,
-    );
+  handleListWatches(call: ToolCallContext): ToolResult {
+    const visible = [...this.watches.values()].filter(w => this.ownsWatch(w, call));
+    if (visible.length === 0) return textResult('No active watches for this conversation.');
+    const lines = visible.map(w => {
+      const landing = w.originChannel ? `${w.target} on "${w.originChannel}"` : w.target;
+      return `ID: ${w.id}\n  Chat: ${w.chatName}\n  Delivers to: ${landing}\n  Instructions: ${w.instructions}\n  Created: ${w.createdAt}`;
+    });
     return textResult(lines.join('\n\n'));
   }
 
@@ -175,7 +222,16 @@ export class WatchManager {
         `Watch instructions: ${watch.instructions}`,
       ].join('\n');
 
-      this.deliver(text, { replyTo: watch.target }).catch(err => {
+      // Intent-cell return: replyTo + originChannel are the stored host-stamped
+      // binding, echoed verbatim. Legacy entries without originChannel fall
+      // back to the extension's configured channel.
+      if (!watch.originChannel) {
+        this.log.info(
+          { watchId: watch.id },
+          'Legacy watch (no originChannel) — delivering on the configured default channel; re-create it to bind to a conversation',
+        );
+      }
+      this.deliver(text, { replyTo: watch.target, channel: watch.originChannel }).catch(err => {
         this.log.warn({ watchId: watch.id, err }, 'Watch delivery failed');
       });
     }

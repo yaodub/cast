@@ -1155,7 +1155,7 @@ export function registerTools(server: McpServer, ctx: McpAgentContext, deps: Mcp
             if (decision === 'block') return textResult(`Tool call blocked: ${tool.name}`, true);
 
             if (decision === 'skip') {
-              const callCtx = { ...resolveStagingContext(ctx), participant: ctx.participant ?? undefined };
+              const callCtx = { ...resolveStagingContext(ctx), participant: ctx.participant ?? undefined, channel: ctx.channelName ?? undefined };
               return ext.handle(tool.name, typedArgs, callCtx);
             }
 
@@ -1197,7 +1197,7 @@ export function registerTools(server: McpServer, ctx: McpAgentContext, deps: Mcp
           tool.description,
           tool.schema,
           async (args) => {
-            const callCtx = { ...resolveStagingContext(ctx), participant: ctx.participant ?? undefined };
+            const callCtx = { ...resolveStagingContext(ctx), participant: ctx.participant ?? undefined, channel: ctx.channelName ?? undefined };
             return ext.handle(tool.name, args as Record<string, unknown>, callCtx);
           },
         );

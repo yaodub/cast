@@ -41,7 +41,13 @@ WhatsApp delivers history only once, at initial device pairing (typically ~3 mon
 
 ### Watches
 
-When a processing channel is configured, `whatsapp__watch` monitors a chat for new messages in real-time. Messages are forwarded to the processing channel with the specified instructions. Watches are always real-time (no cron schedules). Watches persist across restarts.
+`whatsapp__watch` monitors a chat for new messages in real-time. **New messages return to the conversation that created the watch** — the watch call's cell (participant + channel) is host-stamped into the watch as its reply binding, and every fire lands back in that conversation as a notification turn carrying the watch's `instructions`. Watches are always real-time (no cron schedules). Watches persist across restarts.
+
+Write `instructions` standalone — they run without the creating conversation's history (the conversation may have expired by fire time). For conditional watches ("only tell me if…"), front-load silent evaluation: instruct the agent to output only `<cast:internal>` with its reasoning when a message turns out irrelevant. The internal text is the audit record for chosen silence.
+
+`whatsapp__list_watches` and `whatsapp__unwatch` are scoped to the calling conversation's own watches. Operator surfaces (`cli:`/`admin:`) see and can remove all.
+
+**Approval semantics:** watch creation is approval-gated per `read_mode`; deliveries from an installed watch do not re-prompt (install-time approval covers the stream). A `read: 'deny'` override or `read_mode: 'disabled'` still blocks delivery.
 
 ## CONFIG
 
@@ -62,7 +68,9 @@ No credentials. Authentication uses the WhatsApp Web linked-device pairing flow,
 
 ## CHANNEL
 
-**Receives:** Formatted new message notifications with watch instructions. Format:
+Watch fires land in the conversation that created the watch; no dedicated channel is required, and the watch tools are always available when the extension is enabled. A configured channel (`"channel": …` in `capabilities.json`) remains the delivery fallback for legacy watches whose binding predates the channel half, and an optional home for blueprint-owned watches by convention.
+
+**Delivered message format** — wrapped in `<cast:watch>` (framework provenance; logs under sender `system` in `message_log`):
 
 ```
 New WhatsApp messages in "Family Group":
@@ -73,9 +81,7 @@ New WhatsApp messages in "Family Group":
 Watch instructions: Notify me when they discuss the reunion
 ```
 
-**Channel prompt should instruct the agent to:** Process the messages according to the watch instructions. Respond to the user if action is needed. Use WhatsApp tools for follow-up (e.g., reading more context, replying).
-
-**Without a channel:** Watch tools (`whatsapp__watch`, `whatsapp__unwatch`, `whatsapp__list_watches`) are hidden. All on-demand tools (chats, messages, send, download) work normally.
+**Fire turns run quiet:** a watch fire is machine stimulus — the host suppresses previews, typing indicators, and intermediate ("show steps") deliveries for the turn. Only the agent's final reply reaches the watcher, through their own channel grant as usual.
 
 ## STORAGE
 
@@ -83,7 +89,9 @@ Watch instructions: Notify me when they discuss the reunion
 |------|--------|-----------|
 | `ext/whatsapp/auth/` | Baileys multi-file auth state | Private runtime. Created on first pairing. Survives restarts. Deleted on logout. |
 | `ext/whatsapp/messages.db` | SQLite (WAL mode) | Private runtime. Created on first connection. Contains chats, contacts, and messages. Persists across restarts. |
-| `ext/whatsapp/watches.json` | JSON array of watch entries | Private runtime. Created on first watch. Updated on watch/unwatch. |
+| `ext/whatsapp/watches.json` | JSON array of watch entries (chat, instructions, reply binding `target` + `originChannel`) | Private runtime. Created on first watch. Updated on watch/unwatch. |
+
+**Migrating pre-0.3.1 watches:** entries created before 0.3.1 have no `originChannel`; they keep firing on the extension's configured channel (never dropped). To move one to intent-cell delivery, re-create it from the conversation that should receive it (same explicit `id` replaces it in place). Compound-form `target` values (`u:…/tg:…`) from 0.2 must be bare identities — see the 0.2→0.3 migration README.
 
 Media message references are kept in-memory only (LRU cache, up to 500 entries) for `whatsapp__download`. If the extension restarts, media references are lost — the agent can still see media placeholders in message text but cannot download until the media message arrives again via a live event.
 

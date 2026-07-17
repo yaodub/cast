@@ -47,7 +47,6 @@ export class WhatsAppExtension implements ExtensionInstance {
   readonly name = 'whatsapp';
   private config: WhatsAppConfig;
   private log: Logger;
-  private hasChannel: boolean;
 
   private store: WhatsAppStore;
   private connection: ConnectionManager;
@@ -56,7 +55,6 @@ export class WhatsAppExtension implements ExtensionInstance {
   constructor(ctx: ExtensionContext<WhatsAppConfig, WhatsAppSecrets>) {
     this.config = ctx.config;
     this.log = ctx.log ?? noopLogger;
-    this.hasChannel = ctx.hasChannel;
 
     this.store = new WhatsAppStore({
       dbPath: path.join(ctx.privateDir, 'messages.db'),
@@ -179,39 +177,37 @@ export class WhatsAppExtension implements ExtensionInstance {
       },
     ];
 
-    if (this.hasChannel) {
-      tools.push(
-        {
-          name: 'whatsapp__watch',
-          description: 'Watch a WhatsApp chat for new messages. Messages are forwarded to your processing channel with instructions. Real-time only.',
-          schema: {
-            chat: z.string().describe('Chat name, phone number, or JID'),
-            instructions: z.string().describe('Instructions for processing incoming messages'),
-            id: z.string().optional().describe('Custom watch ID (auto-generated if omitted)'),
-          },
-          approval: readApproval ? {
-            enabled: true,
-            preview: (args) => ({
-              summary: `Watch ${this.describeChat(args.chat as string)}`,
-              details: typeof args.instructions === 'string' ? `Instructions: ${args.instructions}` : undefined,
-            }),
-            filter: readFilter,
-          } : undefined,
+    tools.push(
+      {
+        name: 'whatsapp__watch',
+        description: 'Watch a WhatsApp chat for new messages. New messages return to this conversation with the `instructions` you pass (write them standalone — they run without this conversation\'s history). Real-time only.',
+        schema: {
+          chat: z.string().describe('Chat name, phone number, or JID'),
+          instructions: z.string().describe('Instructions for processing incoming messages'),
+          id: z.string().optional().describe('Custom watch ID (auto-generated if omitted)'),
         },
-        {
-          name: 'whatsapp__unwatch',
-          description: 'Remove a WhatsApp watch.',
-          schema: {
-            id: z.string().describe('Watch ID to remove'),
-          },
+        approval: readApproval ? {
+          enabled: true,
+          preview: (args) => ({
+            summary: `Watch ${this.describeChat(args.chat as string)}`,
+            details: typeof args.instructions === 'string' ? `Instructions: ${args.instructions}` : undefined,
+          }),
+          filter: readFilter,
+        } : undefined,
+      },
+      {
+        name: 'whatsapp__unwatch',
+        description: 'Remove a WhatsApp watch created by this conversation.',
+        schema: {
+          id: z.string().describe('Watch ID to remove'),
         },
-        {
-          name: 'whatsapp__list_watches',
-          description: 'List all active WhatsApp watches.',
-          schema: {},
-        },
-      );
-    }
+      },
+      {
+        name: 'whatsapp__list_watches',
+        description: 'List this conversation\'s active WhatsApp watches.',
+        schema: {},
+      },
+    );
 
     return tools;
   }
@@ -323,15 +319,12 @@ export class WhatsAppExtension implements ExtensionInstance {
       '- To send media, first write the file to `/staging/out/`, then pass the filename.',
     );
 
-    if (this.hasChannel) {
-      lines.push(
-        '', '**Watches:** Use `whatsapp__watch` to monitor a chat. Messages are forwarded to your processing channel.',
-        '- Watches are always real-time. When new messages arrive, they are delivered immediately.',
-        '- Use `whatsapp__list_watches` to see active watches and `whatsapp__unwatch` to remove them.',
-      );
-    } else {
-      lines.push('', '**Watches are not available** — no processing channel is configured.');
-    }
+    lines.push(
+      '', '**Watches:** Use `whatsapp__watch` to monitor a chat. New messages return to the conversation that created the watch, carrying its `instructions`.',
+      '- Watches are always real-time. When new messages arrive, they are delivered immediately.',
+      '- Write watch `instructions` standalone — they run without the creating conversation\'s history. For "only tell me if…" watches, front-load silent evaluation: if a message turns out irrelevant, output only `<cast:internal>` with your reasoning.',
+      '- Use `whatsapp__list_watches` to see this conversation\'s watches and `whatsapp__unwatch` to remove them.',
+    );
 
     return lines.join('\n');
   }
@@ -351,8 +344,8 @@ export class WhatsAppExtension implements ExtensionInstance {
       case 'whatsapp__download': return this.handleDownload(args, call);
       case 'whatsapp__send': return this.handleSend(args, call);
       case 'whatsapp__watch': return this.watchManager.handleWatch(args, call, this.connection);
-      case 'whatsapp__unwatch': return this.watchManager.handleUnwatch(args);
-      case 'whatsapp__list_watches': return this.watchManager.handleListWatches();
+      case 'whatsapp__unwatch': return this.watchManager.handleUnwatch(args, call);
+      case 'whatsapp__list_watches': return this.watchManager.handleListWatches(call);
       default: return textResult(`Unknown tool: ${toolName}`, true);
     }
   }

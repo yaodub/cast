@@ -606,10 +606,21 @@ export class AgentManager implements BusHandler {
             { context: { ext: extName, channel } },
           );
         }
+        // Landing channel: the stored binding's channel (stamped from the cell
+        // that subscribed — intent-cell return) wins over the extension's
+        // configured default. Legacy bindings without a channel keep the old
+        // baked-channel behavior; a fire is never dropped for lack of one.
+        //
+        // kind 'watch': an extension fire is machine stimulus (a delayed
+        // search). This wraps the body in <cast:watch>
+        // (provenance the prompt can recognize), logs it under sender
+        // 'system' instead of masquerading as the participant's own words,
+        // and suppresses previews/typing/intermediates for the turn — the
+        // seal still delivers through the normal gates.
         return this.route(this.agentId, `ext:${extName}`, sanitized, {
-          channel,
+          channel: opts?.channel ?? channel,
           targetParticipant: opts?.replyTo ?? this.agentId,
-        });
+        }, undefined, undefined, undefined, 'watch');
       },
     );
 

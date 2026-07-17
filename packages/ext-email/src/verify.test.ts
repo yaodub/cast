@@ -12,7 +12,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-let mockAuthenticate: ReturnType<typeof vi.fn>;
+let mockAuthenticate: ReturnType<typeof vi.fn<(...args: unknown[]) => unknown>>;
 vi.mock('mailauth', () => ({
   authenticate: (...args: unknown[]) => mockAuthenticate(...args),
 }));

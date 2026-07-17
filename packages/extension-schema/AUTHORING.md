@@ -57,8 +57,7 @@ The server injects context when creating an instance:
 | `secrets` | Validated credentials from `.env` |
 | `privateDir` | `ext/{name}/` — persistent private runtime (databases, subscription state, auth tokens). Never mounted. |
 | `sharedDir` | `shared/ext/{name}/` — output visible to the agent (mounted at `/shared/{name}`) |
-| `hasChannel` | Whether a dedicated processing channel is configured for this extension |
-| `deliver` | Push a message to the agent. Channel is baked in by the host. Pass `replyTo` for user context. |
+| `deliver` | Push a message to the agent. Pass the stored reply binding — `replyTo` (participant) and `channel` — captured from `ToolCallContext` at subscribe/watch time. Omitting `channel` falls back to the extension's configured default channel. The extension is a courier: echo the binding of the cell that asked, never choose a destination. |
 | `log` | Structured logger (pino-compatible interface). Falls back to `noopLogger` if not provided. |
 | `agentFolder` | Agent instance folder name |
 
@@ -80,7 +79,7 @@ Tools are the extension's public interface to the agent. Return them from a `too
 
 Optional string injected into the agent's system prompt. Tells the agent what tools are available and how to use them. Keep it concise — it's consumed every conversation turn.
 
-Condition content on config where relevant (e.g. "sending is disabled" vs "send mode: draft"). Condition on `hasChannel` to include or exclude subscription-related guidance.
+Condition content on config where relevant (e.g. "sending is disabled" vs "send mode: draft").
 
 ## Connect hook (admin)
 
@@ -130,13 +129,17 @@ Admin connect →  def.connect(privateDir)          # optional, credential check
 
 **`onAgentStart` / `onAgentStop`** — instance-level. For per-agent background tasks (IMAP IDLE connections, cron timers, polling loops). Start in `onAgentStart`, clean up in `onAgentStop`.
 
-## Channel pairing
+## Async delivery — the reply binding
 
-An extension can optionally pair with a dedicated conversation channel for processing notifications (subscription results, incoming events). The channel is a framework concern — configured in `capabilities.json` as `"channel": "channel-name"`, read and stripped by the server before config merge.
+An extension that fires later (subscriptions, watches, incoming events) must return the fire to the conversation that asked for it — **intent-cell return**. The pattern:
 
-The extension receives `ctx.hasChannel` (boolean). When true, `ctx.deliver()` routes to that channel. When false, subscription/notification features should be hidden (omit those tools, adjust `promptSection`).
+1. At subscribe/watch time, store the calling cell from `ToolCallContext`: `target = call.participant`, `originChannel = call.channel`. Both are host-stamped — never accept them as tool arguments.
+2. At fire time, echo the stored binding: `ctx.deliver(text, { replyTo: target, channel: originChannel })`. The extension never constructs or chooses an address.
+3. Scope management tools (list/remove) to the calling cell's own entries — compare `target` against `call.participant` via `ownsBinding()` from this package (operator handles see all). Do not re-derive the operator-prefix policy per extension.
 
-The channel itself (`blueprint/channels/{name}/`) is provided by the agent template author, not the extension. The extension delivers messages; the channel prompt defines what the agent does with them.
+Fires are machine stimulus: the host wraps the body in `<cast:watch>` provenance, logs it under sender `system`, and suppresses previews/typing/intermediate streaming for the turn — only the agent's final reply reaches the participant, gated by that participant's own channel grant.
+
+A default channel may still be configured in `capabilities.json` as `"channel": "channel-name"` (read and stripped by the server before config merge). It is the fallback landing for legacy bindings stored without a channel, and an optional home for agent-owned watches — not a gate: subscription tools should register whenever the extension is enabled.
 
 ## Service-side use
 
@@ -150,7 +153,7 @@ const instance = myExtension.create({
   secrets: { ... },
   privateDir: svc.serviceDir,      // ext/service/ (private runtime)
   sharedDir: svc.sharedDir,        // shared/ext/service/ (agent-visible)
-  deliver: (text, opts) => svc.routeMessage('default', text),
+  deliver: (text, opts) => svc.routeMessage(opts?.channel ?? 'default', text),
   log: console,
 });
 ```

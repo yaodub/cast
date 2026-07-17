@@ -56,6 +56,8 @@ For each hit, edit the `target` field down to the bare identity (everything befo
 
 **Stop the server before editing.** These stores are owned by live extension state: the email subscription manager persists its in-memory subscriptions back to disk on watermark updates *and on shutdown*, so an edit made while the server runs is silently overwritten — by the next poll, or by the shutdown flush of the very restart you do to apply it. The order that sticks: stop the server, edit the file, start the server.
 
+> Heading past 0.3 to 0.3.1? These same two stores gain an optional per-entry upgrade there (reply bindings that return fires to the conversation that created them) — see [`../0.3-to-0.3.1/README.md`](../0.3-to-0.3.1/README.md) after finishing this hop.
+
 ## If you run the web-fetch extension, reinstall its browser
 
 This is not a database step, but it is part of the 0.2 → 0.3 upgrade. Upgrading floats the `playwright` dependency (web-fetch declares `^1.60.0`), and a newer playwright expects a newer chromium build than your machine has cached. After `pnpm install` or rebuilding the server bundle, run:

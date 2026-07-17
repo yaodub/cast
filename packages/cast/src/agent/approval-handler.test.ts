@@ -383,3 +383,42 @@ describe('ApprovalHandler acl-edge outbound containment [2B.5]', () => {
     expect(tombstoneAclEdge).toHaveBeenCalledWith('self', 'a:weather@iss', 'default', 'q');
   });
 });
+
+describe('executeApprovedTool — callCtx channel stamp', () => {
+  // The approval-gated dispatch path is the DEFAULT config for email inbound:
+  // email__subscribe executes here after the human approves, and the extension
+  // stores callCtx.{participant,channel} as the subscription's reply binding.
+  // Without the channel stamp, an approval-gated subscribe would bind to the
+  // baked default channel — silently reintroducing the bug where fires land
+  // on a channel the subscriber holds no grant for, for exactly the most
+  // safety-conscious configuration.
+  function makeExtHandler(rowExtra: Record<string, unknown>) {
+    // Typed via the implementation so mock.calls carries the real tuple shape.
+    const handle = vi.fn(
+      async (_tool: string, _args: Record<string, unknown>, _call: Record<string, unknown>) =>
+        ({ content: [{ type: 'text' as const, text: 'ok' }] }),
+    );
+    const ext = { name: 'email', tools: [{ name: 'email__subscribe', description: '', schema: {} }], handle };
+    const made = makeHandler(
+      { extensions: { instances: [ext] } } as unknown as Partial<ApprovalDeps>,
+      { tool: 'email__subscribe', args: '{}', type: 'tool-call', ...rowExtra },
+    );
+    return { ...made, handle };
+  }
+
+  it('stamps the approval row channel onto the extension call context', async () => {
+    const { handler, handle } = makeExtHandler({ channel: 'main' });
+    await handler.handleResponse('tg:111', { id: 'abc', decision: 'approved' });
+    expect(handle).toHaveBeenCalledTimes(1);
+    const callCtx = handle.mock.calls[0]![2];
+    expect(callCtx.participant).toBe('u:alice@iss');
+    expect(callCtx.channel).toBe('main');
+  });
+
+  it('null row channel stamps undefined (agent-level context)', async () => {
+    const { handler, handle } = makeExtHandler({ channel: null });
+    await handler.handleResponse('tg:111', { id: 'abc', decision: 'approved' });
+    const callCtx = handle.mock.calls[0]![2];
+    expect(callCtx.channel).toBeUndefined();
+  });
+});

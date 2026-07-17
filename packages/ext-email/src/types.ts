@@ -77,7 +77,15 @@ export const SubscriptionSchema = z.object({
     body: z.string().optional(),
   }),
   folder: z.string().optional(),
+  /** Reply binding, participant half: the identity of the cell that subscribed.
+   *  Host-stamped at subscribe time (`ToolCallContext.participant`). */
   target: z.string(),
+  /** Reply binding, channel half: the channel of the cell that subscribed.
+   *  Host-stamped at subscribe time (`ToolCallContext.channel`). Absent on
+   *  legacy entries — those fall back to the extension's baked channel. */
+  originChannel: z.string().optional(),
+  /** Provenance: who created this subscription. Audit only, never routing. */
+  createdBy: z.string().optional(),
   schedule: z.string(),
   instructions: z.string(),
   timezone: z.string().optional(),

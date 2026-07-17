@@ -67,6 +67,10 @@ Cast is the server, and that's `packages/cast/`. Agents aren't code. They're fol
 
 Architecture, worked examples, and the design docs are at [getcast.dev](https://getcast.dev).
 
+## Upgrading
+
+Already running Cast? [UPGRADING.md](UPGRADING.md) has the procedure — each release ships a migration README under `scripts/migrations/`, including the releases where there's nothing to run.
+
 ## Developer alpha
 
 This is a developer alpha, so expect rough edges. The in-browser build consoles (the chat-to-build flow) are a preview: they work, but they're the newest and least settled part. The harness underneath is the part I'd stand behind. That's containment, identity, routing, the access control between agents.

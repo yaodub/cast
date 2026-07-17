@@ -88,6 +88,11 @@ export interface ToolCallContext {
   stagingOutDir: string;
   /** Caller identity (user or service). Undefined in agent-level (non-conversation) context. */
   participant?: string;
+  /** Channel name of the calling conversation. Host-stamped — never LLM-supplied.
+   *  Together with `participant` this is the caller's cell; extensions that
+   *  deliver later (subscriptions, watches) store the pair as the reply binding.
+   *  Undefined in agent-level (non-conversation) context. */
+  channel?: string;
 }
 
 /** MCP tool result — matches the MCP SDK's CallToolResult shape. */
@@ -102,6 +107,22 @@ export function textResult(text: string, isError?: boolean): ToolResult {
   const result: ToolResult = { content: [{ type: 'text', text }] };
   if (isError) result.isError = true;
   return result;
+}
+
+/**
+ * Ownership check for stored reply bindings (subscriptions, watches): the
+ * calling cell's participant matches the binding's target, or the caller is
+ * the operator tier (`cli:`/`admin:` — god-mode by identity, mirroring the
+ * host's operator short-circuit). Deliberately strict otherwise: peer-agent
+ * cells and other users see and touch only their own bindings.
+ *
+ * One home for the operator-prefix policy on the extension side — do not
+ * re-derive the prefixes in individual extensions.
+ */
+export function ownsBinding(target: string, call: ToolCallContext): boolean {
+  if (!call.participant) return false;
+  if (call.participant.startsWith('cli:') || call.participant.startsWith('admin:')) return true;
+  return target === call.participant;
 }
 
 // ---------------------------------------------------------------------------
@@ -143,14 +164,16 @@ export interface ExtensionContext<TConfig = unknown, TSecrets = unknown> {
   privateDir: string;
   /** Shared output directory visible to agent: shared/ext/{name}/ (mounted read-only at /shared/{name}). */
   sharedDir: string;
-  /** Whether the host configured a dedicated channel for this extension's notifications. */
-  hasChannel: boolean;
   /** Push a message to this agent from the extension. Routes directly (bypasses ACL).
-   *  Channel is baked in by the host — extensions pass replyTo only.
+   *  `channel` overrides the extension's configured default channel — pass only
+   *  values previously host-stamped into a stored binding (`ToolCallContext.channel`
+   *  captured at subscribe/watch time). The extension is a courier: it echoes the
+   *  binding of the cell that asked, it never chooses a destination. Omitted, the
+   *  host's configured channel (or the agent default) applies.
    *  On success, `result` carries the agent's first output (null if no response). */
   deliver: (
     text: string,
-    opts?: { replyTo?: string },
+    opts?: { replyTo?: string; channel?: string },
   ) => Promise<{ ok: true; result: string | null } | { ok: false; error: string }>;
   /** Structured logger. Optional — extensions fall back to noopLogger. */
   log?: Logger;

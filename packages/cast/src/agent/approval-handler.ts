@@ -464,6 +464,10 @@ export class ApprovalHandler {
           stagingDir: path.join(base, 'in'),
           stagingOutDir: path.join(base, 'out'),
           participant: row.participant,
+          // The calling cell's channel, persisted on the approval row at request
+          // time. Without it, an approval-gated subscribe/watch would store a
+          // binding with no channel and silently fall back to the baked default.
+          channel: row.channel ?? undefined,
         };
         return ext.handle(toolName, args, callCtx);
       }

@@ -60,7 +60,6 @@ export class EmailExtension implements ExtensionInstance {
   private config: EmailConfig;
   private secrets: EmailSecrets;
   private log: Logger;
-  private hasChannel: boolean;
   private watcher: EmailWatcher;
   private subs: SubscriptionManager;
 
@@ -68,7 +67,6 @@ export class EmailExtension implements ExtensionInstance {
     this.config = ctx.config;
     this.secrets = ctx.secrets;
     this.log = ctx.log ?? noopLogger;
-    this.hasChannel = ctx.hasChannel;
     this.watcher = new EmailWatcher(ctx.secrets, this.log);
     this.subs = new SubscriptionManager({
       watcher: this.watcher,
@@ -178,74 +176,72 @@ export class EmailExtension implements ExtensionInstance {
       },
     ];
 
-    if (this.hasChannel) {
-      tools.push(
-        {
-          name: 'email__subscribe',
-          description:
-            'Watch for new emails matching criteria. Notifications are processed on a dedicated channel and delegated to you. Subscriptions persist across conversations.',
-          schema: {
-            schedule: z
-              .string()
-              .describe(
-                'Schedule: "realtime" for IMAP IDLE push, or cron expression (e.g. "*/15 * * * *")',
-              ),
-            instructions: z
-              .string()
-              .describe('Instructions for the agent when matching emails arrive'),
-            from: z.string().optional().describe('Filter by sender address'),
-            subject: z.string().optional().describe('Filter by subject'),
-            folder: z
-              .string()
-              .optional()
-              .describe('IMAP folder to watch (default: INBOX)'),
-            id: z
-              .string()
-              .optional()
-              .describe('Custom subscription ID (auto-generated if omitted)'),
-            timezone: z
-              .string()
-              .optional()
-              .describe(
-                'IANA timezone for cron schedule (defaults to agent timezone)',
-              ),
+    tools.push(
+      {
+        name: 'email__subscribe',
+        description:
+          'Watch for new emails matching criteria. Matches return to this conversation as a notification turn; the `instructions` you pass govern what to do when they arrive (write them standalone — they run without this conversation\'s history). Subscriptions persist until unsubscribed.',
+        schema: {
+          schedule: z
+            .string()
+            .describe(
+              'Schedule: "realtime" for IMAP IDLE push, or cron expression (e.g. "*/15 * * * *")',
+            ),
+          instructions: z
+            .string()
+            .describe('Instructions for the agent when matching emails arrive'),
+          from: z.string().optional().describe('Filter by sender address'),
+          subject: z.string().optional().describe('Filter by subject'),
+          folder: z
+            .string()
+            .optional()
+            .describe('IMAP folder to watch (default: INBOX)'),
+          id: z
+            .string()
+            .optional()
+            .describe('Custom subscription ID (auto-generated if omitted)'),
+          timezone: z
+            .string()
+            .optional()
+            .describe(
+              'IANA timezone for cron schedule (defaults to agent timezone)',
+            ),
+        },
+        approval: readGate ? {
+          enabled: true,
+          preview: (args) => {
+            const folder = typeof args.folder === 'string' ? args.folder : 'INBOX';
+            const criteria: string[] = [];
+            if (typeof args.from === 'string' && args.from) criteria.push(`from ${args.from}`);
+            if (typeof args.subject === 'string' && args.subject) criteria.push(`subject "${args.subject}"`);
+            const criteriaStr = criteria.length > 0 ? criteria.join(', ') : 'any matching mail';
+            const schedule = typeof args.schedule === 'string' ? args.schedule : 'realtime';
+            return {
+              summary: `Subscribe to ${folder}: ${criteriaStr} (${schedule})`,
+              details: typeof args.instructions === 'string' ? `Instructions: ${args.instructions}` : undefined,
+            };
           },
-          approval: readGate ? {
-            enabled: true,
-            preview: (args) => {
-              const folder = typeof args.folder === 'string' ? args.folder : 'INBOX';
-              const criteria: string[] = [];
-              if (typeof args.from === 'string' && args.from) criteria.push(`from ${args.from}`);
-              if (typeof args.subject === 'string' && args.subject) criteria.push(`subject "${args.subject}"`);
-              const criteriaStr = criteria.length > 0 ? criteria.join(', ') : 'any matching mail';
-              const schedule = typeof args.schedule === 'string' ? args.schedule : 'realtime';
-              return {
-                summary: `Subscribe to ${folder}: ${criteriaStr} (${schedule})`,
-                details: typeof args.instructions === 'string' ? `Instructions: ${args.instructions}` : undefined,
-              };
-            },
-            filter: (args) => {
-              const folder = typeof args.folder === 'string' ? args.folder : 'INBOX';
-              if (!isAllowedFolder(this.config, folder)) return 'block';
-              const from = typeof args.from === 'string' ? args.from : '';
-              return from ? readDecision(this.config, from) : readDefaultDecision(this.config);
-            },
-          } : undefined,
-        },
-        {
-          name: 'email__unsubscribe',
-          description: 'Remove an email subscription.',
-          schema: {
-            id: z.string().describe('Subscription ID to remove'),
+          filter: (args) => {
+            const folder = typeof args.folder === 'string' ? args.folder : 'INBOX';
+            if (!isAllowedFolder(this.config, folder)) return 'block';
+            const from = typeof args.from === 'string' ? args.from : '';
+            return from ? readDecision(this.config, from) : readDefaultDecision(this.config);
           },
+        } : undefined,
+      },
+      {
+        name: 'email__unsubscribe',
+        description: 'Remove an email subscription created by this conversation.',
+        schema: {
+          id: z.string().describe('Subscription ID to remove'),
         },
-        {
-          name: 'email__list_subscriptions',
-          description: 'List all email subscriptions and their status.',
-          schema: {},
-        },
-      );
-    }
+      },
+      {
+        name: 'email__list_subscriptions',
+        description: 'List this conversation\'s email subscriptions and their status.',
+        schema: {},
+      },
+    );
 
     return tools;
   }
@@ -294,17 +290,13 @@ export class EmailExtension implements ExtensionInstance {
     lines.push(
       '- To reply, pass the `messageId` from `email__fetch` as `replyToMessageId` in `email__send`.',
     );
-    if (this.hasChannel) {
-      lines.push(
-        '- Use `email__subscribe` to watch for new emails. Supports `"realtime"` (IMAP IDLE) or cron schedules. Optional `folder` param.',
-        '- Subscription notifications include email IDs — use `email__fetch` with those IDs to download full content.',
-        '- Subscriptions persist across conversations. Use `email__list_subscriptions` to see active watches.',
-      );
-    } else {
-      lines.push(
-        '- Email subscriptions are not available — no processing channel is configured for this agent.',
-      );
-    }
+    lines.push(
+      '- Use `email__subscribe` to watch for new emails. Supports `"realtime"` (IMAP IDLE) or cron schedules. Optional `folder` param.',
+      '- Subscription matches return to the conversation that subscribed, as a notification turn carrying the subscription\'s `instructions`.',
+      '- Write subscription `instructions` standalone — they run without the subscribing conversation\'s history. For "only tell me if…" watches, front-load silent evaluation: if a match turns out irrelevant, output only `<cast:internal>` with your reasoning.',
+      '- Subscription notifications include email IDs — use `email__fetch` with those IDs to download full content.',
+      '- Subscriptions persist until unsubscribed. Use `email__list_subscriptions` to see this conversation\'s watches.',
+    );
     return lines.join('\n');
   }
 
@@ -329,9 +321,9 @@ export class EmailExtension implements ExtensionInstance {
       case 'email__subscribe':
         return this.subs.handleSubscribe(args, call);
       case 'email__unsubscribe':
-        return this.subs.handleUnsubscribe(args);
+        return this.subs.handleUnsubscribe(args, call);
       case 'email__list_subscriptions':
-        return this.subs.handleListSubscriptions();
+        return this.subs.handleListSubscriptions(call);
       default:
         return textResult(`Unknown tool: ${toolName}`, true);
     }

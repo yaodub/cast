@@ -170,6 +170,20 @@ export type DeliverKind =
   // same bubble instead of opening a new one.
   | 'system';
 
+/** Machine-stimulus kinds: turns nobody is waiting on. Previews, typing
+ *  indicators, and intermediate ("show steps") deliveries are a courtesy for
+ *  a participant who just wrote — a schedule/watch/service fire has no such
+ *  participant, so streaming its half-formed thoughts to the bound transport
+ *  is pure leakage (`<cast:internal>` is seal-time and cannot retract a
+ *  stream). Seals are untouched: a machine turn that concludes "the user
+ *  should know this" still delivers through the normal gates. `push` and
+ *  `system` stay visible (a push is directed communication in progress; a
+ *  correction repipe belongs to a participant exchange), and `lifecycle` is
+ *  already structurally gated by `gateUserHooks`. */
+function isMachineStimulus(kind: DeliverKind): boolean {
+  return kind === 'schedule' || kind === 'watch' || kind === 'service';
+}
+
 /** Wrap inbound text according to its `kind`. Participant text passes through
  *  unmodified (the agent treats it as user input); every other kind gets
  *  the `<cast:kind>...</cast:kind>` envelope so the system prompt can
@@ -476,6 +490,22 @@ export class ConversationRunner {
   private activeExtensions: readonly ExtensionInstance[];
   private mcpDeps: McpServerDeps | undefined;
   private readonly showSteps: boolean;
+
+  /** Stimulus kinds of in-flight turns, FIFO. Pushed on every successful
+   *  pipe (and seeded at spawn from the drained mailbox); shifted when the
+   *  turn's final result frame (`subtype: 'success'`) is processed; cleared
+   *  on `markIdle` (self-heal — an errored turn that never produced a result
+   *  desyncs at most until the runner drains). Head = the turn currently
+   *  producing output; consulted to suppress previews / typing / intermediate
+   *  deliveries for machine-stimulus turns. Fail-open: empty FIFO reads as
+   *  'participant' (worst case one turn of harmless preview noise, never a
+   *  missing seal). */
+  private turnKinds: DeliverKind[] = [];
+
+  /** Whether the turn currently producing output is machine stimulus. */
+  private machineTurn(): boolean {
+    return isMachineStimulus(this.turnKinds[0] ?? 'participant');
+  }
   private readonly maxOutputBytes: number;
   private readonly timezone: string | undefined;
   private readonly pipConfig: { allowed_packages: string[] } | undefined;
@@ -715,6 +745,7 @@ export class ConversationRunner {
       ? resolveModel(readAgentConfig(this.host.folder), { channelName: this.channelName, phase: 'cleanup' })
       : undefined;
     if (!this.sendViaIpc(wrapped, attachments, { kind: wireKind, model: cleanupModel })) return false;
+    this.turnKinds.push(kind);
 
     // Record inbound AFTER a successful pipe (not before the fail returns above),
     // so a message that fails to pipe and gets re-queued isn't double-logged when
@@ -726,7 +757,9 @@ export class ConversationRunner {
       'Piped message to active container',
     );
     this.resetIdleTimer();
-    if (this.lastHooks) this.emitTyping(this.lastHooks, true);
+    // Typing is a courtesy for a waiting participant — machine stimulus
+    // (schedule/watch/service) has none, so don't light the indicator.
+    if (this.lastHooks && !isMachineStimulus(kind)) this.emitTyping(this.lastHooks, true);
     return true;
   }
 
@@ -783,6 +816,15 @@ export class ConversationRunner {
     // `<cast:lifecycle>` so the system prompt can recognize it.
     const promptText = prompt.map((m) => wrapForKind(m.text, m.kind, m.attrs)).join('\n\n');
     const allAttachments = prompt.flatMap((m) => m.attachments ?? []);
+
+    // Seed the turn-kind FIFO for the cold first turn. The drained mailbox may
+    // mix kinds; the turn counts as machine stimulus only when EVERY drained
+    // message is (a participant message anywhere in the batch means someone is
+    // waiting — fail open toward showing).
+    const spawnKind: DeliverKind = prompt.length > 0 && prompt.every((m) => isMachineStimulus(m.kind ?? 'participant'))
+      ? (prompt[0]!.kind as DeliverKind)
+      : 'participant';
+    this.turnKinds = [spawnKind];
 
     // Record each drained message inbound. The cold path delivers the spawn
     // prompt straight to the container without ever calling pipeMessage, so
@@ -846,9 +888,9 @@ export class ConversationRunner {
         : this.agentMcpPorts;
 
       // Typing + lifecycle emissions — cleanup-phase suppression is
-      // enforced by the `gateUserHooks` proxy wrapping `hooks`, so call
-      // sites are unconditional. See `gateUserHooks` JSDoc.
-      this.emitTyping(hooks, true);
+      // enforced by the `gateUserHooks` proxy wrapping `hooks`. Machine-
+      // stimulus first turns additionally skip the indicator (nobody typed).
+      if (!isMachineStimulus(spawnKind)) this.emitTyping(hooks, true);
 
       // `sessionId === undefined` means the SDK starts without `--resume`,
       // so the LLM has no prior context. Fire a one-shot lifecycle event
@@ -1047,6 +1089,10 @@ export class ConversationRunner {
    * entering inter-turn rest.
    */
   markIdle(): void {
+    // Runner is between turns with an empty queue — the turn-kind FIFO must
+    // be empty too. Clearing here self-heals any desync from a turn that
+    // errored without emitting its success result.
+    this.turnKinds = [];
     if (this.isExpired || this.isSingleShot) return;
     if (this._state === 'running') {
       this.onIdle?.();
@@ -1288,6 +1334,7 @@ export class ConversationRunner {
       case 'preview': {
         if (output.kind !== 'text') return;
         if (!this.showSteps) return;
+        if (this.machineTurn()) return; // machine stimulus: no one is watching this stream
         if (this.participantAddress === this.address) return;
         const pkt = previewTextPkt(
           this.address,
@@ -1330,7 +1377,14 @@ export class ConversationRunner {
         // (no text to deliver) and successful-with-text both flip this — the
         // distinction the fallback guard needs is "did the SDK finish cleanly"
         // versus "did the container die before/instead of finishing."
-        if (output.subtype === 'success') ctx.sdkResultSeen = true;
+        // The turn-kind FIFO rotates on the same signal (one user message →
+        // one success result). Shifting early is safe: this frame is a seal,
+        // and the machineTurn() consumers (previews, intermediates, typing)
+        // only fire on non-success frames.
+        if (output.subtype === 'success') {
+          ctx.sdkResultSeen = true;
+          this.turnKinds.shift();
+        }
 
         // `showSteps` is a pure UX flag (display only) and is
         // applied later in `deliverValidatedOutput`. Validation and
@@ -1476,7 +1530,10 @@ export class ConversationRunner {
       await ctx.hooks.onResponse?.(a.requestId, a.text);
     }
     const outAttachments = (!isIntermediate && text) ? this.harvestOutbox() : undefined;
-    const showToUser = !isIntermediate || this.showSteps;
+    // Intermediates are display-only ("show steps"); a machine-stimulus turn
+    // has no watching participant, so its intermediates never surface — only
+    // the seal does, through the normal gates.
+    const showToUser = !isIntermediate || (this.showSteps && !this.machineTurn());
 
     if (text && showToUser) {
       // No inline cleanup gate — `emitTyping` and `ctx.hooks.onOutput`
@@ -1621,6 +1678,7 @@ export class ConversationRunner {
    *  debounce timer may still fire during cleanup (slight CPU waste) but
    *  no user emission occurs. */
   private emitTypingDebounced(hooks: SpawnHooks): void {
+    if (this.machineTurn()) return; // no waiting participant — no indicator
     const now = Date.now();
     if (now - this.lastTypingEmit >= 4000) {
       this.emitTyping(hooks, true);

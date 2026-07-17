@@ -68,7 +68,7 @@ export function registerSecurityManagerMcpTools(
 ): void {
   server.tool(
     'security__finalize_agent',
-    'Finalize a drafted agent — flip `manifest.status` from draft to ready. Only call this after the operator has explicitly approved shipping in the conversation. One-way: this tool does NOT revert ready agents to draft. Pass `posture_summary` describing what you reviewed and any caveats — it lands in the agent\'s audit log alongside `via: sm_review` and `requested_by: local`.',
+    'Finalize a drafted agent — flip `manifest.status` from draft to ready. Only call this after the operator has explicitly approved shipping in the conversation. One-way: this tool does NOT revert ready agents to draft. Pass `posture_summary` describing what you reviewed and any caveats — it lands in the agent\'s audit log alongside `via: sm_review` and `requested_by: operator`.',
     {
       alias: z
         .string()

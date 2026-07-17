@@ -18,10 +18,15 @@ The extension provides four on-demand tools and three subscription tools.
 
 **Staging files are ephemeral** — cleared when the conversation ends. Copy to `/memory/` if needed long-term.
 
-**Subscriptions** (requires a paired channel):
+**Subscriptions:**
 - `email__subscribe` creates a persistent watch. `"realtime"` uses IMAP IDLE push; cron expressions poll on schedule. Each subscription carries `instructions` that tell the agent what to do when matching emails arrive. Optional `folder` param selects which mailbox to watch (default: INBOX).
-- Subscription notifications include email IDs — use `email__fetch` with those IDs to download full content. Notifications are delivered to the paired channel, but the agent fetches content in the participant's conversation (different staging directories).
+- **Matches return to the conversation that subscribed.** The subscribe call's cell (participant + channel) is host-stamped into the subscription as its reply binding; every fire lands back in that conversation as a notification turn. A user who subscribes needs no membership anywhere else — their own channel grant authorizes the delivery.
+- Write `instructions` standalone — they run without the subscribing conversation's history (the conversation may have expired by fire time). For conditional watches ("only tell me if…"), front-load silent evaluation: instruct the agent to output only `<cast:internal>` with its reasoning when a structural match turns out irrelevant. The internal text is the audit record for chosen silence.
+- Subscription notifications include email IDs — use `email__fetch` with those IDs to download full content.
+- `email__list_subscriptions` and `email__unsubscribe` are scoped to the calling conversation's own subscriptions. Operator surfaces (`cli:`/`admin:`) see and can remove all.
 - The agent should prefer few broad subscriptions over many narrow ones.
+
+**Blueprint-owned watches** (agent builds its own context, no user in the loop): create them from a scheduled self-cell turn. A `schedule.txt` line points at a reconciliation doc that runs list-then-subscribe — `email__list_subscriptions`; subscribe with an explicit `id` only if absent; unsubscribe entries the doc no longer lists. The subscription binds to the creating self-cell, so fires land there and the agent internalizes per `instructions` (e.g. append to `/memory`). Re-subscribing with the same `id` and unchanged criteria is safe: the watch is replaced in place and its watermark carries over.
 
 ## CONFIG
 
@@ -82,23 +87,28 @@ For Gmail: requires 2FA enabled, generate app password at https://myaccount.goog
 
 ## CHANNEL
 
-The email extension optionally pairs with a dedicated channel for subscription processing.
+Subscription fires land in the conversation that subscribed; no dedicated channel is required, and the subscription tools are always available when the extension is enabled.
 
-**Delivered message format:** plain text notification with subscription ID, matched email count, and the subscription's `instructions` field.
+A configured channel (`"channel": "email"` in `capabilities.json`, with a matching `channels/email/` directory) retains two roles:
 
-**Channel prompt should instruct the agent to:** read the notification, use `email__fetch` to pull the relevant emails, process according to the subscription instructions, and delegate results to the appropriate user on the default channel.
+- **Fallback for legacy bindings:** subscriptions created before the reply binding carried a channel deliver there.
+- **A home for blueprint watches, by convention:** an operator may point scheduled self-cell watches at it so agent-owned processing has a dedicated prompt (the channel's prompt becomes the triage discipline). Nothing requires this — a blueprint watch created from any self-cell lands in that cell.
 
-**Without a channel:** subscription tools (`email__subscribe`, `email__unsubscribe`, `email__list_subscriptions`) are hidden. On-demand tools (search, fetch, send) work normally.
+**Delivered message format:** a `<cast:watch>`-wrapped notification (framework provenance — the agent's prompt can tell machine stimulus from user input; it logs under sender `system` in `message_log`) carrying the subscription ID, matched email count, email IDs, and the subscription's `instructions` field.
 
-Set `"channel": "email"` in `capabilities.json` and provide a matching `channels/email/` directory.
+**Fire turns run quiet:** a subscription fire is machine stimulus — the host suppresses previews, typing indicators, and intermediate ("show steps") deliveries for the turn. Only the agent's final reply reaches the subscriber, through their own channel grant as usual.
 
 ## STORAGE
 
 | Asset | Location | Format | Purpose |
 |-------|----------|--------|---------|
-| Subscriptions | `ext/email/subscriptions.json` | JSON array | Persistent subscription state (criteria, schedule, watermarks). Private runtime. |
+| Subscriptions | `ext/email/subscriptions.json` | JSON array | Persistent subscription state (criteria, schedule, watermarks, reply binding `target` + `originChannel`). Private runtime. |
 
 The extension does not maintain a local email index or cache. Each search/fetch hits IMAP directly.
+
+### Migrating pre-0.3.1 subscriptions
+
+Entries created before 0.3.1 have no `originChannel`; they keep firing on the extension's configured channel (never dropped). To move one to intent-cell delivery, re-create it from the conversation that should receive it (same explicit `id` — the watch is replaced in place and its watermark carries over when criteria are unchanged). The 0.2→0.3 caution about compound-form `target` values (`u:…/tg:…`) still applies: targets are routed participants and must be bare identities.
 
 ## SECURITY
 
