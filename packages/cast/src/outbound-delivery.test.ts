@@ -28,7 +28,10 @@ import type { AnyPacket } from './gateway/packets.js';
 import type { Transport } from './transports/schema.js';
 
 const AGENT = 'a:agent1@test';
+const OTHER_AGENT = 'a:agent2@test';
 const USER = 'cli:u1';
+/** Both agents mint the same conversation key — it isn't agent-qualified. */
+const CONV = `default|${USER}`;
 
 interface FakeTransport {
   transport: Transport;
@@ -36,16 +39,19 @@ interface FakeTransport {
   sent: string[];
   /** While true, every send throws. */
   setFailing(failing: boolean): void;
+  /** Fail only the sends matching this predicate — one dead wire, not the whole transport. */
+  setRejecting(match: ((pkt: AnyPacket) => boolean) | null): void;
 }
 
 function makeTransport(opts?: { deferredAck?: boolean }): FakeTransport {
   const sent: string[] = [];
   let failing = false;
+  let rejecting: ((pkt: AnyPacket) => boolean) | null = null;
   const transport: Transport = {
     name: 'test',
     deferredAck: opts?.deferredAck ?? false,
     send: async (pkt: AnyPacket) => {
-      if (failing) throw new Error('transport down');
+      if (failing || rejecting?.(pkt)) throw new Error('transport down');
       if (pkt.type === 'conversation') sent.push(pkt.text);
     },
     sendEvent: async () => {},
@@ -54,7 +60,12 @@ function makeTransport(opts?: { deferredAck?: boolean }): FakeTransport {
     connect: async () => {},
     disconnect: async () => {},
   };
-  return { transport, sent, setFailing: (f) => { failing = f; } };
+  return {
+    transport,
+    sent,
+    setFailing: (f) => { failing = f; },
+    setRejecting: (m) => { rejecting = m; },
+  };
 }
 
 function makeGateway(fake: FakeTransport): MessageGateway {
@@ -66,9 +77,15 @@ function makeGateway(fake: FakeTransport): MessageGateway {
 }
 
 /** Insert a pending outbound row as a previous process lifetime would have left it. */
-function insertPending(id: string, text: string, ageMs: number): void {
+function insertPending(
+  id: string,
+  text: string,
+  ageMs: number,
+  opts?: { from?: string; conversationKey?: string },
+): void {
   const ts = new Date(Date.now() - ageMs).toISOString();
-  storePacket(id, conversationPkt(AGENT, USER, text, undefined, ts, undefined, id), 'outbound');
+  const from = opts?.from ?? AGENT;
+  storePacket(id, conversationPkt(from, USER, text, undefined, ts, undefined, id), 'outbound', opts?.conversationKey);
 }
 
 function pendingTexts(): string[] {
@@ -135,7 +152,7 @@ describe('outbound delivery', () => {
     expect(pendingTexts()).toEqual([]);
   });
 
-  it('stops the drain at the first undeliverable packet so later ones wait behind it', async () => {
+  it('stops at the first undeliverable packet so later ones in the same scope wait behind it', async () => {
     const fake = makeTransport();
     const gw = makeGateway(fake);
 
@@ -151,6 +168,56 @@ describe('outbound delivery', () => {
     fake.setFailing(false);
     await gw.nudgeRecipient(USER);
     expect(fake.sent).toEqual(['a', 'b']);
+  });
+
+  it('holds later packets in one conversation behind a stalled earlier one', async () => {
+    const fake = makeTransport();
+    const gw = makeGateway(fake);
+
+    insertPending('pkt-1', 'first', 2000, { conversationKey: CONV });
+    insertPending('pkt-2', 'second', 1000, { conversationKey: CONV });
+
+    fake.setRejecting((pkt) => pkt.text === 'first');
+    await gw.runDeliveryPass();
+    // 'second' must not jump the queue — same sender, same conversation.
+    expect(fake.sent).toEqual([]);
+    expect(pendingTexts()).toEqual(['first', 'second']);
+
+    fake.setRejecting(null);
+    await gw.nudgeRecipient(USER);
+    expect(fake.sent).toEqual(['first', 'second']);
+    expect(pendingTexts()).toEqual([]);
+  });
+
+  it('delivers packets from other senders while a dead wire sits at the queue head', async () => {
+    const fake = makeTransport();
+    const gw = makeGateway(fake);
+
+    // The production shape: one agent's transport credential is permanently
+    // rejected, and its packet is the oldest in the recipient's queue.
+    insertPending('pkt-dead', 'dead-1', 3000, { from: OTHER_AGENT, conversationKey: CONV });
+    insertPending('pkt-live-1', 'live-1', 2000, { conversationKey: CONV });
+    insertPending('pkt-live-2', 'live-2', 1000, { conversationKey: CONV });
+
+    fake.setRejecting((pkt) => pkt.from === OTHER_AGENT);
+    await gw.runDeliveryPass();
+
+    expect(fake.sent).toEqual(['live-1', 'live-2']);
+    expect(pendingTexts()).toEqual(['dead-1']);
+  });
+
+  it('delivers one conversation while another from the same sender stalls', async () => {
+    const fake = makeTransport();
+    const gw = makeGateway(fake);
+
+    insertPending('pkt-stuck', 'stuck', 2000, { conversationKey: `alerts|${USER}` });
+    insertPending('pkt-ok', 'ok', 1000, { conversationKey: CONV });
+
+    fake.setRejecting((pkt) => pkt.text === 'stuck');
+    await gw.runDeliveryPass();
+
+    expect(fake.sent).toEqual(['ok']);
+    expect(pendingTexts()).toEqual(['stuck']);
   });
 
   it('expires packets older than the TTL as failed instead of delivering them', async () => {

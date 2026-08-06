@@ -78,18 +78,28 @@ function buildBasePayload(data: RoutesServerData): z.infer<typeof routeUpdateInp
   return { byType };
 }
 
-/** Build the mutation payload from the current server data + one draft. */
+/**
+ * Build the mutation payload from the current server data + one draft.
+ *
+ * An edit replaces the row where it sits. Splice-and-append would renumber the
+ * operator's table on every save, and it used to hand the server a list whose
+ * rows no longer lined up with the ones on disk.
+ */
 export function routesFormToPayload(
   data: RoutesServerData,
   draft: RouteDraft,
   editTarget: { type: string; idx: number } | null,
 ): z.infer<typeof routeUpdateInput> {
   const payload = buildBasePayload(data);
-  if (editTarget) {
-    payload.byType[editTarget.type]?.splice(editTarget.idx, 1);
+  const entry = entryFromDraft(draft);
+  const list = (payload.byType[draft.type] ??= []);
+  if (editTarget && editTarget.type === draft.type && editTarget.idx < list.length) {
+    list.splice(editTarget.idx, 1, entry);
+    return payload;
   }
-  if (!payload.byType[draft.type]) payload.byType[draft.type] = [];
-  payload.byType[draft.type]!.push(entryFromDraft(draft));
+  // Transport changed mid-edit (or the row is gone): drop it from its old list.
+  if (editTarget) payload.byType[editTarget.type]?.splice(editTarget.idx, 1);
+  list.push(entry);
   return payload;
 }
 

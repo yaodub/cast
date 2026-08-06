@@ -52,6 +52,20 @@ type SendOutcome =
 /** In-memory retry state for one pending packet. */
 type RetryState = { attempts: number; dueAt: number };
 
+/**
+ * Ordering scope for a pending outbound packet — the unit a stalled delivery
+ * is allowed to block. Sender + conversation, because that is the order the
+ * drain actually promises: one agent's dead wire must not hold up another
+ * agent's packets to the same recipient, and two agents can mint the same
+ * `conversation_key` (it isn't agent-qualified) so the sender has to be in the
+ * key. Rows with no conversation key (system replies, acks, bounces) fall back
+ * to sender-wide ordering. NUL separator — addresses and conversation keys both
+ * carry `|` and `:`.
+ */
+function orderingScope(p: StoredPacket): string {
+  return `${p.from_addr}\u0000${p.conversation_key ?? ''}`;
+}
+
 interface MessageGatewayDeps {
   bus: Bus;
   transports: () => Transport[];
@@ -482,12 +496,15 @@ export class MessageGateway implements BusHandler {
   /**
    * Drain a recipient's pending outbound packets, oldest first — the single
    * delivery implementation behind live sends, worker ticks, and reconnect
-   * nudges. Always called on the recipient's send chain. Stops at the first
-   * packet that can't deliver so per-conversation order is preserved;
-   * TTL-expired and poison packets are marked failed (terminal, loud) and
-   * skipped over.
+   * nudges. Always called on the recipient's send chain. A packet that can't
+   * deliver blocks only the rest of its own ordering scope (see
+   * `orderingScope`), so one sender's stalled conversation still lets every
+   * other sender's packets to this recipient get their attempt in the same
+   * pass; TTL-expired and poison packets are marked failed (terminal, loud)
+   * and skipped over.
    */
   private async drainRecipientPending(toAddr: string): Promise<void> {
+    const blocked = new Set<string>();
     for (const p of getPendingOutboundForRecipient(toAddr)) {
       const age = Date.now() - Date.parse(p.timestamp);
       if (age > OUTBOUND_DELIVERY_TTL_MS) {
@@ -500,9 +517,17 @@ export class MessageGateway implements BusHandler {
         continue;
       }
 
-      // Not due yet — later packets wait behind it so conversation order holds.
+      // An earlier packet in this scope didn't get through — everything behind
+      // it waits so conversation order holds.
+      const scope = orderingScope(p);
+      if (blocked.has(scope)) continue;
+
+      // Not due yet — same rule, the scope waits out the backoff.
       const sched = this.retrySchedule.get(p.id);
-      if (sched && sched.dueAt > Date.now()) return;
+      if (sched && sched.dueAt > Date.now()) {
+        blocked.add(scope);
+        continue;
+      }
 
       // Parse errors mean poison row — a payload that no longer parses can
       // never deliver. Mark failed so the drain can't stall on it forever.
@@ -532,12 +557,15 @@ export class MessageGateway implements BusHandler {
           break;
         case 'no-wire':
           // Recipient unreachable right now (no connected transport owns it).
+          // Recipient-wide in practice, so every scope blocks after one probe.
           // Nothing to schedule per-packet — the worker re-checks every tick.
-          return;
+          blocked.add(scope);
+          break;
         case 'failed':
           this.noteFailedAttempt(p.id);
           logger.warn({ pktId: p.id, to: toAddr, err: outcome.err }, 'Outbound delivery failed — retry scheduled');
-          return;
+          blocked.add(scope);
+          break;
       }
     }
   }

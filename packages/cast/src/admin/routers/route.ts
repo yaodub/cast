@@ -6,17 +6,28 @@
  * admin descriptor (lensing nested paths via descriptor.fields[].path), mask
  * `secret` fields on read, and resolve masked secrets back against the
  * existing on-disk value on write.
+ *
+ * `update` receives the whole list on every save and pairs each row with its
+ * stored entry by identity (address + channel), never by position — see
+ * `identityKey`.
  */
 import fs from 'fs';
 import path from 'path';
 
+import type { z } from 'zod';
+
+import { TRPCError } from '@trpc/server';
+
 import { CONFIG_DIR } from '../../config.js';
 import { loadRoutes } from '../../gateway/routes.js';
 import { getRegisteredTransports } from '../../transports/registry.js';
-import type { AdminField } from '../../transports/schema.js';
+import type { AdminField, TransportDefinition } from '../../transports/schema.js';
 import { writeAtomic } from '../../lib/utils.js';
-import { routeUpdateInput } from '../schemas.js';
+import { routeEntryInput, routeUpdateInput } from '../schemas.js';
 import { adminProcedure, router } from '../trpc.js';
+
+type RouteFormRow = z.infer<typeof routeEntryInput>;
+type StoredEntry = Record<string, unknown>;
 
 const MASK = '••••';
 
@@ -73,6 +84,108 @@ function entryToFormFields(
     out[f.key] = f.secret ? maskSecret(raw) : (raw ?? '');
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Form rows → stored entries: identity pairing + masked-secret resolution
+// ---------------------------------------------------------------------------
+
+/**
+ * Identity of a route entry — the agent address plus the channel it binds.
+ * That pair is what makes a route distinct at the gateway and what the
+ * operator sees in the table.
+ *
+ * Position is *not* identity: the form submits the whole list on every save
+ * and freely reorders, inserts and removes rows, so pairing by array index
+ * hands a row its neighbour's credentials. An absent channel and an empty one
+ * are the same route (`update` stores neither).
+ */
+function identityKey(address: unknown, channel: unknown): string {
+  const chan = typeof channel === 'string' ? channel : '';
+  return `${String(address ?? '')}\u0000${chan}`;
+}
+
+/**
+ * Bucket the stored slice by identity, preserving file order within a bucket.
+ *
+ * Duplicate address+channel pairs are legal (two bots feeding the same
+ * agent+channel differ only by credential) and indistinguishable from each
+ * other, so duplicates pair in file order and every stored entry is claimed at
+ * most once. A row that collides with an already-claimed entry therefore reads
+ * as new rather than cloning its twin's secret.
+ */
+function bucketByIdentity(entries: StoredEntry[]): Map<string, StoredEntry[]> {
+  const buckets = new Map<string, StoredEntry[]>();
+  for (const entry of entries) {
+    const key = identityKey(entry.address, entry.channel);
+    const bucket = buckets.get(key);
+    if (bucket) bucket.push(entry);
+    else buckets.set(key, [entry]);
+  }
+  return buckets;
+}
+
+/**
+ * Validate a routes.json slice through the transport's own schema so callers
+ * read canonical values rather than raw on-disk bytes. The registry erases
+ * `configSchema` to `ZodType<unknown>`; routed transports parse to an array of
+ * entries, which is what the admin surface is written against.
+ */
+function parseSlice(def: TransportDefinition<unknown>, slice: unknown): StoredEntry[] {
+  const parsed = def.configSchema.safeParse(slice);
+  return parsed.success ? (parsed.data as StoredEntry[]) : [];
+}
+
+/** Project one form row back onto the stored entry it came from (or a fresh one). */
+function formRowToEntry(def: TransportDefinition<unknown>, draft: RouteFormRow, prev: StoredEntry | null): StoredEntry {
+  // Start from the previous entry to preserve un-exposed fields
+  // (slack's allowedTeamIds, email's whitelist, etc.).
+  const entry: StoredEntry = prev ? { ...prev } : {};
+  entry.address = draft.address;
+  if (draft.channel) entry.channel = draft.channel;
+  else delete entry.channel;
+
+  // Lens form fields back onto the entry; resolve masked secrets.
+  for (const f of def.admin.fields) {
+    const formVal = draft.fields[f.key];
+    const targetPath = fieldPath(f);
+    if (f.secret && isMasked(formVal)) {
+      // A mask means "unchanged", so it resolves against this row's own stored
+      // entry and nothing else. With no stored value behind it there is nothing
+      // to keep, and writing the mask (or a blank) would burn the credential —
+      // reject instead, leaving routes.json exactly as it was.
+      const kept = prev ? getPath(prev, targetPath) : undefined;
+      if (kept == null || kept === '') {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: `No stored ${f.label} to keep for ${def.admin.displayLabel} route "${draft.address}". Enter it to save this route.`,
+        });
+      }
+      setPath(entry, targetPath, kept);
+      continue;
+    }
+    const coerced = f.type === 'number'
+      ? (typeof formVal === 'number' ? formVal : Number(formVal))
+      : formVal;
+    setPath(entry, targetPath, coerced);
+  }
+
+  return entry;
+}
+
+/**
+ * Rebuild one transport's routes.json slice from the submitted form rows.
+ *
+ * Pairing is by identity, never by position, so a save that reorders, inserts
+ * or removes rows still resolves each masked secret against the route it came
+ * from — and a route left untouched by the operator keeps its own credential.
+ */
+function resolveSlice(def: TransportDefinition<unknown>, incoming: RouteFormRow[], existingSlice: unknown[]): unknown[] {
+  const buckets = bucketByIdentity(parseSlice(def, existingSlice));
+  return incoming.map((draft) => {
+    const prev = buckets.get(identityKey(draft.address, draft.channel))?.shift() ?? null;
+    return formRowToEntry(def, draft, prev);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -143,10 +256,8 @@ export const routeRouter = router({
         // Parse against the transport's own schema; entries that don't pass
         // are dropped from the admin view (would also fail at boot — surfacing
         // them here adds noise without giving the operator a useful action).
-        const parsed = (def.configSchema as { safeParse: (v: unknown) => { success: true; data: unknown } | { success: false } })
-          .safeParse([raw]);
-        if (!parsed.success) continue;
-        const validated = (parsed.data as unknown[])[0] as Record<string, unknown>;
+        const validated = parseSlice(def, [raw])[0];
+        if (!validated) continue;
 
         entries.push({
           address: String(validated.address ?? ''),
@@ -169,50 +280,16 @@ export const routeRouter = router({
       const existing = readRoutesFile();
       const updated: Record<string, unknown[]> = { ...existing };
 
+      // Resolve every transport before writing anything — an unresolvable
+      // masked secret throws, and the file must survive the rejection intact.
       for (const [name, def] of getRegisteredTransports()) {
-        const incoming = input.byType[name] ?? [];
-        const existingSlice = existing[name] ?? [];
-
-        // Validate the existing slice through the transport's schema so secret
-        // resolution reads canonical values (not raw on-disk bytes).
-        const parsedExisting = (def.configSchema as { safeParse: (v: unknown) => { success: true; data: unknown } | { success: false } })
-          .safeParse(existingSlice);
-        const validatedExisting = (parsedExisting.success ? (parsedExisting.data as unknown[]) : []) as Array<Record<string, unknown>>;
-
-        const next: unknown[] = [];
-        for (let i = 0; i < incoming.length; i++) {
-          const draft = incoming[i]!;
-          const prev = validatedExisting[i] ?? null;
-
-          // Start from the previous entry to preserve un-exposed fields
-          // (slack's allowedTeamIds, email's whitelist, etc.).
-          const entry: Record<string, unknown> = prev ? { ...prev } : {};
-          entry.address = draft.address;
-          if (draft.channel) entry.channel = draft.channel;
-          else delete entry.channel;
-
-          // Lens form fields back onto the entry; resolve masked secrets.
-          for (const f of def.admin.fields) {
-            const formVal = draft.fields[f.key];
-            const targetPath = fieldPath(f);
-            if (f.secret && isMasked(formVal)) {
-              // Keep the existing value at this path.
-              if (prev) {
-                const prevVal = getPath(prev, targetPath);
-                setPath(entry, targetPath, prevVal);
-              }
-              continue;
-            }
-            const coerced = f.type === 'number'
-              ? (typeof formVal === 'number' ? formVal : Number(formVal))
-              : formVal;
-            setPath(entry, targetPath, coerced);
-          }
-
-          next.push(entry);
-        }
-
-        updated[name] = next;
+        const incoming = input.byType[name];
+        // A transport the payload omits is untouched, not emptied. The admin
+        // page posts every registered transport (an empty array is how the
+        // operator removes the last route of one), so a missing key is a
+        // partial submission — clearing its routes would be silent data loss.
+        if (!incoming) continue;
+        updated[name] = resolveSlice(def, incoming, existing[name] ?? []);
       }
 
       const routesPath = path.join(CONFIG_DIR, 'routes.json');
