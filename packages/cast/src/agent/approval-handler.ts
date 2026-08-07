@@ -26,7 +26,7 @@ import { appendChangelog } from '../lib/audit-log.js';
 import { escapeXml, formatMessages } from '../lib/format.js';
 import { conversationKeyToPath, parseJsonSafe } from '../lib/utils.js';
 import { logger } from '../logger.js';
-import { DEFAULT_APPROVAL_EXPIRY } from '../types.js';
+import { APPROVAL_EXPIRY_SECONDS } from '../types.js';
 
 import type { AgentDb, ApprovalRow } from './agent-db.js';
 import type { AgentService } from './agent-service.js';
@@ -153,7 +153,8 @@ export class ApprovalHandler {
     expiresIn?: number;
   }): string {
     const approvalId = randomBytes(4).toString('hex');
-    const expiresIn = data.expiresIn ?? DEFAULT_APPROVAL_EXPIRY;
+    // Shape-specific default; an explicit `expiresIn` always wins.
+    const expiresIn = data.expiresIn ?? APPROVAL_EXPIRY_SECONDS[data.type ?? 'tool-call'];
     // Owner-approves routes the decision to the agent's owner; otherwise the
     // conversing participant decides (today's default). The controller is both
     // the answerer-auth key and the routing target for the request packet. Only

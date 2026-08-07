@@ -33,7 +33,7 @@ const ApprovalRowSchema = z.object({
   participant: z.string(),
   channel: z.string().nullable(),
   conversation_key: z.string().nullable(),
-  status: z.enum(['pending', 'approved', 'rejected', 'expired', 'interrupted']),
+  status: z.enum(['pending', 'approved', 'rejected', 'expired', 'interrupted', 'dismissed']),
   created_at: z.string(),
   expires_at: z.string().nullable(),
   resolved_at: z.string().nullable(),
@@ -111,6 +111,35 @@ export function installApprovalsSchema(db: Database.Database): void {
   `);
 }
 
+/**
+ * What "still decidable" means, in one place.
+ *
+ * Correctness must not depend on a sweep having run. `expireStale` keeps the
+ * *stored* status honest for display and audit, but any query that interprets
+ * pending-ness carries the deadline itself, so a caller cannot reintroduce the
+ * bug by forgetting to sweep first. A null `expires_at` means no deadline.
+ */
+const DECIDABLE = "status = 'pending' AND (expires_at IS NULL OR expires_at > ?)";
+
+/**
+ * Its complement: dead, by any route — interrupted at a restart, marked
+ * expired, or past its deadline without the boot sweep having relabelled it yet
+ * (a lapsed row still stores 'pending' between boot and now while every surface
+ * already treats it as dead). Dismiss has to accept exactly what the surface
+ * showed as dead, or the button does nothing.
+ */
+const LAPSED = "(status IN ('expired', 'interrupted') OR (status = 'pending' AND expires_at IS NOT NULL AND expires_at < ?))";
+
+/**
+ * The row-level mirror of `DECIDABLE`, for callers holding a row rather than
+ * issuing a query. Kept beside it so the two cannot drift: a surface that
+ * renders "expired" and a query that refuses to resolve one must agree.
+ */
+export function isExpired(row: Pick<ApprovalRow, 'status' | 'expires_at'>, now = new Date()): boolean {
+  if (row.status === 'expired') return true;
+  return row.expires_at !== null && new Date(row.expires_at) < now;
+}
+
 // --- Operations ---
 
 export class ApprovalsStore {
@@ -172,8 +201,15 @@ export class ApprovalsStore {
    * are treated correctly (skip-and-warn) by `approval-handler.ts`.
    */
   markPendingApprovalsInterrupted(): number {
+    // Only tool-call rows: their outcome routes into a conversation that dies
+    // with the process, so 'interrupted' is the truthful terminal state. The
+    // policy shapes (acl-edge, user-push) carry their held request in `payload`
+    // and resolve statelessly, so they ride their window across restarts.
+    // Allowlist rather than exclusion: wrongly interrupting a survivable type
+    // destroys a live decision, wrongly sparing a context-bound one merely
+    // lapses into a visible 'expired' row later.
     return this.db.prepare(
-      "UPDATE approvals SET status = 'interrupted', resolved_at = ?, reason = ? WHERE status = 'pending'",
+      "UPDATE approvals SET status = 'interrupted', resolved_at = ?, reason = ? WHERE status = 'pending' AND type = 'tool-call'",
     ).run(new Date().toISOString(), 'server shutdown').changes;
   }
 
@@ -192,9 +228,11 @@ export class ApprovalsStore {
     // it a mutual X↔Y attempt on one channel would cross-dedup (both rows share
     // participant + channel). Filtered in JS — the candidate set per (participant,
     // channel) is tiny; the edge bit lives in `payload`, not a column.
+    // Deadline-aware: an expired row must not dedup a fresh ask. Suppressing on
+    // one would strand the requester behind a decision nobody can make any more.
     const rows = this.db.prepare(
-      `SELECT id, payload FROM approvals WHERE type = 'acl-edge' AND status = 'pending' AND participant = ? AND channel = ? ORDER BY created_at DESC`,
-    ).all(participant, channel) as { id: string; payload: string | null }[];
+      `SELECT id, payload FROM approvals WHERE type = 'acl-edge' AND ${DECIDABLE} AND participant = ? AND channel = ? ORDER BY created_at DESC`,
+    ).all(new Date().toISOString(), participant, channel) as { id: string; payload: string | null }[];
     for (const row of rows) {
       if (!bits) return row.id;
       let edgeBit: string | undefined;
@@ -214,22 +252,77 @@ export class ApprovalsStore {
    */
   pendingUserPush(channel: string, pusher: string, pushee: string): string | null {
     const row = this.db.prepare(
-      `SELECT id FROM approvals WHERE type = 'user-push' AND status = 'pending' AND channel = ? AND participant = ? AND controller = ? ORDER BY created_at DESC`,
-    ).get(channel, pusher, pushee) as { id: string } | undefined;
+      `SELECT id FROM approvals WHERE type = 'user-push' AND ${DECIDABLE} AND channel = ? AND participant = ? AND controller = ? ORDER BY created_at DESC`,
+    ).get(new Date().toISOString(), channel, pusher, pushee) as { id: string } | undefined;
     return row?.id ?? null;
   }
 
+  /**
+   * Transition every pending row past its `expires_at` to 'expired'.
+   *
+   * Expiry used to be discovered only when a human clicked an already-dead row
+   * (`approval-handler`'s soft check), so a stale approval sat 'pending'
+   * indefinitely and rendered as actionable. Sweeping makes the stored status
+   * honest before anyone looks. Marking is deliberately not the same as hiding:
+   * an expired row stays on the operator surface until dismissed, because a
+   * decision that silently vanished is the failure mode this replaces.
+   *
+   * Runs once at startup, the only point guaranteed to execute — a shutdown
+   * sweep is bypassed by SIGKILL, OOM and power loss. Reads do not depend on it:
+   * `DECIDABLE` carries the deadline, so a lapsed row is already excluded from
+   * every decision path before the sweep relabels it.
+   */
+  expireStale(now = new Date()): number {
+    return this.db.prepare(
+      `UPDATE approvals SET status = 'expired', resolved_at = ?
+       WHERE status = 'pending' AND expires_at IS NOT NULL AND expires_at < ?`,
+    ).run(now.toISOString(), now.toISOString()).changes;
+  }
+
+  /**
+   * Operator inbox rows: still-pending, plus dead-but-not-yet-dismissed
+   * (expired or interrupted).
+   *
+   * Dead rows are returned so the surface shows them *as* dead rather than
+   * dropping them — a decision that silently vanished is the failure mode this
+   * surface exists to prevent, whichever way it died. `status` rides along so
+   * the caller renders each state; no dead row may offer an approve action.
+   */
+  listOperatorApprovals(): ApprovalRow[] {
+    return queryAll(
+      this.db.prepare(
+        "SELECT * FROM approvals WHERE status IN ('pending', 'expired', 'interrupted') ORDER BY created_at DESC",
+      ),
+      ApprovalRowSchema,
+    );
+  }
+
+  /** Clear a dead row from the operator surface. Terminal, and only legal from
+   *  a non-decidable state — a decidable row must be decided, not dismissed. */
+
+  dismissApproval(id: string): boolean {
+    const now = new Date().toISOString();
+    return this.db.prepare(
+      `UPDATE approvals SET status = 'dismissed', resolved_at = ? WHERE id = ? AND ${LAPSED}`,
+    ).run(now, id, now).changes > 0;
+  }
+
+  /** Approvals a decision can still resolve. Excludes rows past their deadline
+   *  whether or not `expireStale` has caught them yet. */
   listPendingApprovals(participant?: string): ApprovalRow[] {
+    const now = new Date().toISOString();
     if (participant) {
       return queryAll(
-        this.db.prepare("SELECT * FROM approvals WHERE status = 'pending' AND participant = ? ORDER BY created_at DESC"),
+        this.db.prepare(`SELECT * FROM approvals WHERE ${DECIDABLE} AND participant = ? ORDER BY created_at DESC`),
         ApprovalRowSchema,
+        now,
         participant,
       );
     }
     return queryAll(
-      this.db.prepare("SELECT * FROM approvals WHERE status = 'pending' ORDER BY created_at DESC"),
+      this.db.prepare(`SELECT * FROM approvals WHERE ${DECIDABLE} ORDER BY created_at DESC`),
       ApprovalRowSchema,
+      now,
     );
   }
 

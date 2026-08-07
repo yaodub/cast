@@ -259,6 +259,10 @@ vi.mock('./agent/agent-db.js', () => ({
     getOpenInboundRequests = vi.fn(() => []);
     closeAllRequests = vi.fn(() => ({ closedInbound: [], closedOutboundCount: 0 }));
     logEvent = vi.fn(); readEvents = vi.fn(() => []); countEvents = vi.fn(() => 0);
+    // AgentManager sweeps stale approvals on construction and marks in-flight
+    // ones interrupted on shutdown, so the bundle has to exist on the mock.
+    approvals = { expireStale: vi.fn(() => 0), markPendingApprovalsInterrupted: vi.fn(() => 0) };
+    markOpenRequestsInterrupted = vi.fn(() => ({ inbound: 0, outbound: 0 }));
     close = vi.fn();
   },
 }));

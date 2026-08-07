@@ -15,6 +15,8 @@
  * executeApprovedTool (extensions/service) — the auth gate runs before the
  * decision split, so this exercises it fully.
  */
+import type { MockedFunction } from 'vitest';
+import type { InsertApprovalData } from '../lib/approvals-store.js';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { ApprovalHandler, type ApprovalDeps } from './approval-handler.js';
@@ -421,4 +423,43 @@ describe('executeApprovedTool — callCtx channel stamp', () => {
     const callCtx = handle.mock.calls[0]![2];
     expect(callCtx.channel).toBeUndefined();
   });
+});
+
+// ---------------------------------------------------------------------------
+// Per-shape expiry defaults
+// ---------------------------------------------------------------------------
+
+/** Seconds between now and a row's `expiresAt`, rounded — the window the
+ *  operator actually gets to answer in. Typed off the spy's own argument tuple,
+ *  so no cast is needed and a signature change breaks the test loudly. */
+function windowSeconds(insertApproval: MockedFunction<(data: InsertApprovalData) => void>): number {
+  const arg = insertApproval.mock.calls[0]![0];
+  if (!arg.expiresAt) throw new Error('approval was inserted without an expiry');
+  return Math.round((new Date(arg.expiresAt).getTime() - Date.now()) / 1000);
+}
+
+describe('createRequest expiry defaults', () => {
+  it('gives an acl-edge a week — a policy question does not decay', () => {
+    const { handler, insertApproval } = makeHandler();
+    handler.createRequest({
+      type: 'acl-edge', summary: 'alice wants in', participant: 'u:alice@iss',
+      approver: 'owner', controller: 'cli:owner', payload: '{}',
+    });
+    expect(windowSeconds(insertApproval)).toBeCloseTo(7 * 24 * 60 * 60, -1);
+  });
+
+  it('gives a tool-call a day — frozen args go stale', () => {
+    const { handler, insertApproval } = makeHandler();
+    handler.createRequest({ tool: 'noop', args: {}, summary: 'do it', participant: 'u:alice@iss' });
+    expect(windowSeconds(insertApproval)).toBeCloseTo(24 * 60 * 60, -1);
+  });
+
+  it('an explicit expiresIn still wins over the shape default', () => {
+    const { handler, insertApproval } = makeHandler();
+    handler.createRequest({
+      type: 'acl-edge', summary: 's', participant: 'u:alice@iss', payload: '{}', expiresIn: 90,
+    });
+    expect(windowSeconds(insertApproval)).toBeCloseTo(90, -1);
+  });
+
 });

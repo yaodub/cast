@@ -20,7 +20,7 @@ export function ExamplesIndex() {
             lineHeight: 1.05,
           }}
         >
-          Four worked examples.
+          Worked examples.
         </h1>
         <p
           style={{
@@ -31,9 +31,9 @@ export function ExamplesIndex() {
             margin: 0,
           }}
         >
-          Cast ships empty. You bring the description; the Design agent builds the agent. These
-          four are patterns the Design agent knows how to build — walked through end-to-end so you can see
-          how the moving parts fit.
+          Cast ships empty. You bring the description, the Design agent builds the agent.
+          Each example below is a pattern it knows how to build, walked through end-to-end so
+          you can see how the moving parts fit.
         </p>
       </div>
 

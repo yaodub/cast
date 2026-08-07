@@ -327,6 +327,17 @@ export class AgentManager implements BusHandler {
     this.watcher = opts.watcher;
     this.store = new AgentStateStore(agentPath(this.folder, 'state'));
     this.agentDb = new AgentDb(agentPath(this.folder, 'state', 'agent.db'));
+    // Expire stale approvals as the agent comes up. The matching shutdown sweep
+    // is best-effort by construction: it sits eight steps into the graceful
+    // drain, behind transport disconnects, so a process manager's kill timeout
+    // (pm2 defaults to ~1.6s) reaches it first, and SIGKILL, OOM or power loss
+    // bypass it outright. Boot is the only moment guaranteed to run, so it is
+    // where the guarantee belongs. Expired rows are marked, not deleted — they
+    // stay on the operator surface until dismissed.
+    const swept = this.agentDb.approvals.expireStale();
+    if (swept > 0) {
+      logger.info({ folder: this.folder, swept }, 'Expired stale approvals at startup');
+    }
     this.consoleDb = new ConsoleDb(agentPath(this.folder, 'state', 'console.db'));
     this.mcpDeps = opts.mcpDeps
       ? buildAgentMcpDeps(opts.mcpDeps, {
@@ -1303,9 +1314,12 @@ export class AgentManager implements BusHandler {
 
     this.scheduler.stop();
 
-    // Mark pending approvals + open cross-agent requests as 'interrupted' so
-    // post-restart audit trails don't show perpetual-pending rows. Done BEFORE
-    // drain so the runners can't race back in to resolve them.
+    // Mark pending tool-call approvals + open cross-agent requests as
+    // 'interrupted' — their outcomes route into conversations that die with the
+    // process. Policy approvals (acl-edge, user-push) are deliberately spared:
+    // payload-complete and stateless to resolve, they survive the restart and
+    // ride out their own expiry window. Done BEFORE drain so the runners can't
+    // race back in to resolve them.
     try {
       const approvals = this.agentDb.approvals.markPendingApprovalsInterrupted();
       const requests = this.agentDb.markOpenRequestsInterrupted();

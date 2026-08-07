@@ -161,8 +161,22 @@ export type PreviewPkt =
 
 export type AnyPacket = ConversationPkt | DelegatePkt | ApprovalRequestPkt | ApprovalAckPkt | PreviewPkt;
 
-/** Default approval expiry in seconds (1 hour). */
-export const DEFAULT_APPROVAL_EXPIRY = 3600;
+/**
+ * Default approval expiry in seconds, by approval shape. A `tool-call` holds
+ * `args` frozen at request time, so a late yes executes against a world that
+ * moved on — it keeps the tighter window. The policy shapes ask a question
+ * ("may this principal reach this agent here") whose answer does not decay, so
+ * they get a week. Overridable per request via `expiresIn` (tool declarations,
+ * service calls).
+ */
+export const APPROVAL_EXPIRY_SECONDS = {
+  'tool-call': 24 * 60 * 60,
+  'acl-edge': 7 * 24 * 60 * 60,
+  'user-push': 7 * 24 * 60 * 60,
+} as const;
+
+/** Packet-level fallback for callers that don't know the shape. */
+export const DEFAULT_APPROVAL_EXPIRY = APPROVAL_EXPIRY_SECONDS['tool-call'];
 
 /** Structured approval response from participant. */
 export interface ApprovalResponsePayload {
@@ -234,7 +248,7 @@ export interface LifecycleEvt extends EvtBase {
 /** Late approval response — the request was already resolved or expired. */
 export interface ApprovalStaleEvt extends EvtBase {
   type: 'approval_stale';
-  data: { approvalId: string; status: 'approved' | 'rejected' | 'expired' | 'interrupted'; summary: string };
+  data: { approvalId: string; status: 'approved' | 'rejected' | 'expired' | 'interrupted' | 'dismissed'; summary: string };
 }
 
 /** Structured intent for the operator's admin UI. Only meaningful to

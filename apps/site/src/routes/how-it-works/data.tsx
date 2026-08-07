@@ -1565,7 +1565,7 @@ export const hiwPillars: HIWPillar[] = [
   },
   {
     slug: 'reach',
-    pillar: 'The harness draws the reach',
+    pillar: 'Cast draws the reach',
     claim: 'Mount tables, allowlists, tool surfaces: declared, not requested',
     blurb: [
       "Every agent runs in its own container. Scoped filesystem: only the folders you mounted are visible. Scoped network: only the hosts on its allowlist are reachable. Tools are declared per channel, so the same agent can have a full surface in your main conversation and a narrow one in an automated lane. A clever model can't argue past it.",
@@ -1735,7 +1735,7 @@ export const hiwDeep: Record<string, HIWDeep> = {
   },
 
   reach: {
-    title: 'The harness draws the reach',
+    title: 'Cast draws the reach',
     lede: "An agent holds personal information. The harness keeps it sealed by default, and lets you open it deliberately, in both directions.",
     sections: [
       {

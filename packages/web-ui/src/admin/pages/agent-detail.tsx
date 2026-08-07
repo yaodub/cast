@@ -1642,7 +1642,7 @@ function ApprovalCard({
   nameMap,
 }: {
   alias: string;
-  approval: { id: string; type: string; summary: string; details: string | null; participant: string; channel: string | null; bit: string | null; controller: string };
+  approval: { id: string; type: string; summary: string; details: string | null; participant: string; channel: string | null; bit: string | null; controller: string; status: 'pending' | 'expired' | 'interrupted'; expiresAt: string | null };
   nameMap: Record<string, string>;
 }) {
   const utils = trpc.useUtils();
@@ -1657,7 +1657,16 @@ function ApprovalCard({
   });
   const act = (decision: 'approved' | 'rejected', tier: 'once' | 'always') =>
     respond.mutate({ alias, id: approval.id, decision, tier });
-  const busy = respond.isPending;
+  const dismiss = trpc.agent.dismissApproval.useMutation({
+    onSuccess: () => {
+      void utils.agent.listPendingApprovals.invalidate({ alias });
+      void utils.agent.pendingApprovalCounts.invalidate();
+    },
+  });
+  // A dead row (expired or interrupted) is shown, never actioned. Resolving one
+  // server-side is a silent no-op that reads as success — the failure this fixes.
+  const isDead = approval.status !== 'pending';
+  const busy = respond.isPending || dismiss.isPending;
   const btn = 'px-2.5 py-1 text-xs font-medium rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed';
   // An `io` edge is a first-contact conversation message — approving it MUST
   // write a standing grant, or the agent's free-prose reply bounces on outbound
@@ -1680,7 +1689,14 @@ function ApprovalCard({
           <IdentityLabel id={approval.participant} nameMap={nameMap} />
           <span class="text-sm text-gray-400 truncate">{approval.summary}</span>
         </div>
-        {approval.bit && <span class="mono text-xs text-gray-500 shrink-0">{approval.bit}</span>}
+        <div class="flex items-center gap-2 shrink-0">
+          {isDead && (
+            <span class="text-xs font-medium px-1.5 py-0.5 rounded bg-amber-950/60 text-amber-400 border border-amber-900/60">
+              {approval.status === 'interrupted' ? 'Interrupted' : 'Expired'}
+            </span>
+          )}
+          {approval.bit && <span class="mono text-xs text-gray-500">{approval.bit}</span>}
+        </div>
       </div>
       {approval.controller !== 'operator' && (
         <div class="text-xs text-gray-500">
@@ -1708,6 +1724,18 @@ function ApprovalCard({
           )}
         </div>
       )}
+      {isDead ? (
+        <div class="flex items-center gap-3 flex-wrap">
+          <span class="text-xs text-gray-500">
+            {approval.status === 'interrupted'
+              ? 'Interrupted by a server restart. The conversation that asked is gone, so the agent must ask again.'
+              : `Expired ${approval.expiresAt ? `on ${new Date(approval.expiresAt).toLocaleString()}` : ''} without a decision. The requester must ask again.`}
+          </span>
+          <button type="button" disabled={busy} onClick={() => dismiss.mutate({ alias, id: approval.id })}
+            class={`${btn} bg-gray-800 hover:bg-gray-700 text-gray-200`}>Dismiss</button>
+          {dismiss.error && <span class="text-xs text-red-400">{dismiss.error.message}</span>}
+        </div>
+      ) : (
       <div class="flex items-center gap-3 flex-wrap">
         {isMessage ? (
           <button type="button" disabled={busy} onClick={() => act('approved', 'always')}
@@ -1731,6 +1759,7 @@ function ApprovalCard({
         </div>
         {respond.error && <span class="text-xs text-red-400">{respond.error.message}</span>}
       </div>
+      )}
     </div>
   );
 }

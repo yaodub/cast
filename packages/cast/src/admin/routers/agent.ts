@@ -12,6 +12,7 @@ import { AgentConfigSchema, AgentManifestSchema, ProvisionsSchema, isUnlocked } 
 
 import type { AgentManager } from '../../agent/agent-manager.js';
 import { AgentDb } from '../../agent/agent-db.js';
+import { isExpired } from '../../lib/approvals-store.js';
 import { resourcePathEscapesAgentsTree } from '../../container/container-mounts.js';
 import { AclSchema, revokeAclEdge, getOwner, setOwner as setAclOwner } from '../../auth/acl.js';
 import { appendChangelog } from '../../lib/audit-log.js';
@@ -162,7 +163,7 @@ export const agentRouter = router({
     if (!fs.existsSync(dbPath)) return [];
     const db = new AgentDb(dbPath);
     try {
-      return db.approvals.listPendingApprovals()
+      return db.approvals.listOperatorApprovals()
         .filter((row) => (row.controller ?? row.participant) !== row.participant)
         .map((row) => {
           // acl-edge rows carry `{ bit, ... }` in payload; tool-call rows don't.
@@ -186,6 +187,15 @@ export const agentRouter = router({
             channel: row.channel,
             bit,
             createdAt: row.created_at,
+            // 'pending' (decidable) or 'expired' (show as dead, offer dismiss).
+            // The surface must not render an approve action on an expired row —
+            // resolving one is a silent no-op that looks like success.
+            // Derived, not read: the stored status is only as fresh as the
+            // boot sweep, and a row can lapse between boot and this poll.
+            // 'interrupted' is stored terminally, so it reads through as-is.
+            status: row.status === 'interrupted' ? 'interrupted' as const
+              : isExpired(row) ? 'expired' as const : 'pending' as const,
+            expiresAt: row.expires_at,
           };
         });
     } finally {
@@ -208,6 +218,9 @@ export const agentRouter = router({
       if (!fs.existsSync(dbPath)) continue;
       const db = new AgentDb(dbPath);
       try {
+        // Badge counts only what the operator can still act on — `listPending`
+        // is deadline-aware, so an expired row never inflates a number that no
+        // decision could clear.
         const n = db.approvals.listPendingApprovals()
           .filter((row) => (row.controller ?? row.participant) !== row.participant).length;
         if (n > 0) counts[entity.label] = n;
@@ -243,6 +256,27 @@ export const agentRouter = router({
         tier: input.tier,
       });
       return { ok: true };
+    }),
+
+  /**
+   * Clear an expired approval off the operator surface. Bookkeeping, not a
+   * decision: only a row past its deadline is dismissible, so this can never be
+   * used to sidestep one that is still decidable. Goes straight to the store
+   * rather than `ingestApprovalResponse`, which exists to carry a verdict to
+   * the waiting agent — an expired row has no verdict to deliver.
+   */
+  dismissApproval: adminProcedure
+    .input(z.object({ alias: z.string(), id: z.string().min(1) }))
+    .mutation(({ ctx, input }) => {
+      const folder = aliasToFolder(ctx.deps, input.alias);
+      const dbPath = agentPath(folder, 'state', 'agent.db');
+      if (!fs.existsSync(dbPath)) return { ok: false };
+      const db = new AgentDb(dbPath);
+      try {
+        return { ok: db.approvals.dismissApproval(input.id) };
+      } finally {
+        db.close();
+      }
     }),
 
   /**

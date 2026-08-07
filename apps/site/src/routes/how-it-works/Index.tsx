@@ -24,7 +24,7 @@ export function HIWIndex() {
             lineHeight: 1.05,
           }}
         >
-          The four claims, made concrete.
+          How it works.
         </h1>
         <p
           style={{
@@ -36,8 +36,8 @@ export function HIWIndex() {
             fontStyle: 'italic',
           }}
         >
-          You draw the lines. The harness holds them. The agent has no path around them. Here's
-          how that works, on four axes.
+          Nothing reaches an agent, and nothing leaves it, except through a gate you
+          configured. Four mechanisms make that true.
         </p>
       </div>
 
@@ -74,7 +74,7 @@ export function HIWIndex() {
                   marginBottom: 10,
                 }}
               >
-                Pillar {String(i + 1).padStart(2, '0')}
+                Mechanism {String(i + 1).padStart(2, '0')}
               </div>
               <h2
                 style={{
