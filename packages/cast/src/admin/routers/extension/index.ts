@@ -15,6 +15,7 @@ import { emailRouter } from './email.js';
 import { webFetchRouter } from './web-fetch.js';
 import { calendarRouter, createCalendarOAuthRouter } from './calendar.js';
 import { whatsappRouter } from './whatsapp.js';
+import { gmessagesRouter } from './gmessages.js';
 import { sharedRouter } from './helpers.js';
 
 import type { Router as RouterType } from 'express';
@@ -24,6 +25,7 @@ export const extensionRouter = router({
   webFetch: webFetchRouter,
   calendar: calendarRouter,
   whatsapp: whatsappRouter,
+  gmessages: gmessagesRouter,
   shared: sharedRouter,
 });
 

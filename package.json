@@ -1,6 +1,6 @@
 {
   "name": "cast",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "private": true,
   "description": "Framework for building Claude-powered agents that run as isolated container processes.",
   "license": "MIT",
@@ -35,6 +35,7 @@
     "version:set": "node scripts/bump-version.mjs",
     "build:image": "node packages/agent-runner/build.mjs",
     "check:service": "tsx scripts/check-service.mts",
+    "check:snapshots": "node scripts/check-snapshots.mjs",
     "deploy:service": "tsx scripts/deploy-service.mts",
     "stdlib": "tsx packages/cast-stdlib/src/cli.ts",
     "typecheck": "tsc -p packages/cast/tsconfig.json --noEmit && tsc -p packages/extension-schema/tsconfig.json && tsc -p packages/ext-email/tsconfig.json && tsc -p packages/ext-whatsapp/tsconfig.json && tsc -p packages/agent-schema/tsconfig.json && tsc -p packages/admin-schema/tsconfig.json",

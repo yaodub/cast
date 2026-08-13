@@ -1,6 +1,6 @@
 {
   "name": "@getcast/server",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Cast server — routes messages to Claude agents in containers",
   "type": "module",
   "main": "dist/index.js",
@@ -27,6 +27,7 @@
     "@getcast/agent-schema": "workspace:*",
     "@getcast/ext-calendar": "workspace:*",
     "@getcast/ext-email": "workspace:*",
+    "@getcast/ext-gmessages": "workspace:*",
     "@getcast/ext-web-fetch": "workspace:*",
     "@getcast/ext-whatsapp": "workspace:*",
     "@getcast/extension-schema": "workspace:*",

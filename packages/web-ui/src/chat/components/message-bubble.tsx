@@ -167,7 +167,7 @@ type AttState =
   | { status: 'loaded'; url: string }
   | { status: 'failed' };
 
-function AttachmentView({ attachment }: { attachment: MessageAttachment }) {
+export function AttachmentView({ attachment }: { attachment: MessageAttachment }) {
   const [state, setState] = useState<AttState>(
     attachment.hash ? { status: 'loading' } : { status: 'pending' },
   );

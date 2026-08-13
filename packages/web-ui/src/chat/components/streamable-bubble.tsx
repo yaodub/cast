@@ -1,15 +1,21 @@
 import { useMemo } from 'preact/hooks';
 
+import type { MessageAttachment } from '../lib/store';
 import { renderMarkdown } from '../../lib/markdown';
 import { useTypewriter, injectCursorInline } from '../../lib/streaming';
+import { AttachmentView } from './message-bubble';
 
 interface Props {
   text: string;
   sealed: boolean;
   timestamp?: string;
+  /** Stable id of the sealed message — keys the attachment views. */
+  msgId?: string;
+  /** Sealed message's attachments; rendered once the typewriter catches up. */
+  attachments?: MessageAttachment[];
 }
 
-export function StreamableBubble({ text, sealed, timestamp }: Props) {
+export function StreamableBubble({ text, sealed, timestamp, msgId, attachments }: Props) {
   const { displayedText, isStreaming, caughtUp, role } = useTypewriter(text, sealed);
 
   const html = useMemo(
@@ -30,6 +36,13 @@ export function StreamableBubble({ text, sealed, timestamp }: Props) {
           </div>
         )}
       </div>
+      {sealed && caughtUp && attachments && attachments.length > 0 && (
+        <div class="flex flex-wrap gap-2 mt-1 max-w-[75%] justify-start">
+          {attachments.map((att, i) => (
+            <AttachmentView key={`${msgId ?? 'stream'}-att-${i}`} attachment={att} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

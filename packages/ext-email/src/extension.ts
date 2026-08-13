@@ -45,7 +45,7 @@ import type {
 } from '@getcast/extension-schema';
 import { noopLogger, textResult } from '@getcast/extension-schema';
 
-import { formatEnvelopes, formatSidecar, listFolders, type FolderInfo } from './helpers.js';
+import { formatEnvelopes, formatImapError, formatSidecar, listFolders, type FolderInfo } from './helpers.js';
 import { searchEmails, sendEmail, readEmail } from './client.js';
 import { EmailWatcher } from './watcher.js';
 import { SubscriptionManager } from './subscription-manager.js';
@@ -370,10 +370,7 @@ export class EmailExtension implements ExtensionInstance {
       );
     } catch (err) {
       this.log.warn({ err }, 'email__search failed');
-      return textResult(
-        `Search failed: ${err instanceof Error ? err.message : String(err)}`,
-        true,
-      );
+      return textResult(`Search failed: ${formatImapError(err, folder)}`, true);
     }
   }
 
@@ -409,7 +406,7 @@ export class EmailExtension implements ExtensionInstance {
           const result = await this.fetchToDir(id, call.stagingDir, { folder, preRead });
           results.push(result);
         } catch (err) {
-          rejected.push({ id, reason: err instanceof Error ? err.message : String(err) });
+          rejected.push({ id, reason: formatImapError(err, folder) });
         }
       }
 
@@ -433,10 +430,7 @@ export class EmailExtension implements ExtensionInstance {
       return textResult(lines.join('\n'), isError);
     } catch (err) {
       this.log.warn({ err }, 'email__fetch failed');
-      return textResult(
-        `Fetch failed: ${err instanceof Error ? err.message : String(err)}`,
-        true,
-      );
+      return textResult(`Fetch failed: ${formatImapError(err, folder)}`, true);
     }
   }
 
@@ -482,10 +476,7 @@ export class EmailExtension implements ExtensionInstance {
       return textResult(lines.join('\n'));
     } catch (err) {
       this.log.warn({ err }, 'email__list_folders failed');
-      return textResult(
-        `Failed to list folders: ${err instanceof Error ? err.message : String(err)}`,
-        true,
-      );
+      return textResult(`Failed to list folders: ${formatImapError(err)}`, true);
     }
   }
 

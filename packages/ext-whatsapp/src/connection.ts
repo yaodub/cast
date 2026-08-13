@@ -28,7 +28,13 @@ type ConnectionStatus =
   | { status: 'unpaired' }
   | { status: 'connecting'; attempt: number }
   | { status: 'open' }
-  | { status: 'disconnected'; attempt: number };
+  | { status: 'disconnected'; attempt: number }
+  | { status: 'rejected'; statusCode: number };
+
+/** Result of ensureUsable — the one verb tools gate on. */
+export type UsableResult =
+  | { ok: true }
+  | { ok: false; reason: 'unpaired' | 'rejected' | 'timeout' };
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -36,6 +42,23 @@ type ConnectionStatus =
 
 const MAX_RECONNECT_DELAY_MS = 60_000;
 const CHATS_GRACE_MS = 3_000;
+
+/**
+ * WhatsApp refuses the login handshake with 405 when the announced client
+ * build (WA_VERSION) is below its rolling minimum. Not in Baileys'
+ * DisconnectReason enum. Permanent until the version pin is updated, so
+ * retrying is futile — classified as 'rejected', a terminal state.
+ */
+const CLIENT_VERSION_REJECTED = 405;
+
+const delay = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+/** How a socket close should be handled. Single classification site — keep all code-number knowledge here. */
+export function classifyDisconnect(statusCode: number | undefined): 'logged-out' | 'rejected' | 'reconnect' {
+  if (statusCode === DisconnectReason.loggedOut) return 'logged-out';
+  if (statusCode === CLIENT_VERSION_REJECTED) return 'rejected';
+  return 'reconnect';
+}
 
 // ---------------------------------------------------------------------------
 // ConnectionManager
@@ -74,7 +97,28 @@ export class ConnectionManager {
 
   get socket(): WASocket | null { return this.sock; }
 
-  get ready(): Promise<void> { return this.readyPromise; }
+  /**
+   * Wait until the connection can serve a tool call, or say why it can't.
+   * Owns the whole decision (tell, don't ask): callers get a discriminated
+   * reason, never a raw state to interpret. Re-reads readyPromise each
+   * iteration because reconnect cycles re-arm it.
+   */
+  async ensureUsable(timeoutMs: number): Promise<UsableResult> {
+    const deadline = Date.now() + timeoutMs;
+    while (true) {
+      if (this.state.status === 'rejected') return { ok: false, reason: 'rejected' };
+      if (this.state.status === 'unpaired' || !isRegistered(this.authDir)) {
+        return { ok: false, reason: 'unpaired' };
+      }
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return { ok: false, reason: 'timeout' };
+      const winner = await Promise.race([
+        this.readyPromise.then(() => 'ready' as const),
+        delay(Math.min(remaining, 500)).then(() => 'tick' as const),
+      ]);
+      if (winner === 'ready' && this.state.status === 'open') return { ok: true };
+    }
+  }
 
   isPaired(): boolean {
     if (this.state.status === 'unpaired') return false;
@@ -257,23 +301,42 @@ export class ConnectionManager {
     // Baileys wraps disconnect errors as @hapi/boom — check output.statusCode structurally
     const statusCode = (error as { output?: { statusCode?: number } } | undefined)?.output?.statusCode;
 
-    if (statusCode === DisconnectReason.loggedOut) {
-      this.opts.log.error('WhatsApp logged out — session invalidated');
-      this.disconnect();
-      this.state = { status: 'unpaired' };
-      return;
+    switch (classifyDisconnect(statusCode)) {
+      case 'logged-out':
+        this.opts.log.error('WhatsApp logged out — session invalidated');
+        this.disconnect();
+        this.state = { status: 'unpaired' };
+        return;
+
+      case 'rejected': {
+        // Terminal until a version update ships — retrying resends the same
+        // rejected build number. connect()/pair() reset state on recovery.
+        this.opts.log.error(
+          { statusCode },
+          'WhatsApp rejected this client — WA_VERSION/Baileys update required; not retrying',
+        );
+        this.disconnect();
+        this.state = { status: 'rejected', statusCode: statusCode ?? CLIENT_VERSION_REJECTED };
+        // Wake parked ensureUsable waiters so they report the rejection, then
+        // re-arm so a future recovery cycle gets a fresh pending promise.
+        this.readyResolve();
+        this.rearmReady();
+        return;
+      }
+
+      case 'reconnect': {
+        const prevAttempt = this.state.status === 'disconnected' ? this.state.attempt : 0;
+        this.opts.log.warn(
+          { statusCode, attempt: prevAttempt },
+          'WhatsApp disconnected, reconnecting',
+        );
+
+        this.sock = null;
+        this.rearmReady();
+        this.scheduleReconnect(prevAttempt);
+        return;
+      }
     }
-
-    // Any other disconnect (including 515 restartRequired) — reconnect
-    const prevAttempt = this.state.status === 'disconnected' ? this.state.attempt : 0;
-    this.opts.log.warn(
-      { statusCode, attempt: prevAttempt },
-      'WhatsApp disconnected, reconnecting',
-    );
-
-    this.sock = null;
-    this.rearmReady();
-    this.scheduleReconnect(prevAttempt);
   }
 
   private scheduleReconnect(attempt: number): void {

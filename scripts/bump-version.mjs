@@ -2,9 +2,13 @@
 // Set every workspace package.json (plus the root) to one version.
 // Cast versions in lockstep — all packages move together — so there is no
 // per-package coordination to do, just a single field rewrite across the tree.
-// Dependency-free on purpose: changesets/lerna earn their keep once packages
-// publish to npm or outside contributors file per-PR entries. Neither is true
-// yet, so a 20-line rewrite is the right-sized tool.
+// Dependency-free on purpose: changesets/lerna earn their keep once outside
+// contributors file per-PR entries, which is not true yet, so a 20-line
+// rewrite is the right-sized tool.
+//
+// The one exception is INDEPENDENT below. A package published to npm on its
+// own cadence must not be dragged to the server's release version, or the
+// next publish jumps a version line that has consumers on it.
 //
 // The version the site displays (hero block, footer) derives from
 // apps/site/package.json via apps/site/src/version.ts, so this script covers
@@ -22,6 +26,10 @@ if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(target ?? '')) {
   process.exit(1);
 }
 
+// Packages published to npm on their own cadence. Their version is not the
+// Cast release version and a release bump must leave them alone.
+const INDEPENDENT = new Set(['packages/extension-schema']);
+
 // pnpm-workspace.yaml declares packages/* and apps/*; the root is its own package.
 const dirs = ['.'];
 for (const parent of ['packages', 'apps']) {
@@ -34,6 +42,10 @@ for (const parent of ['packages', 'apps']) {
 
 let changed = 0;
 for (const dir of dirs) {
+  if (INDEPENDENT.has(dir)) {
+    console.log(`  ${dir}/package.json -> skipped (independent version line)`);
+    continue;
+  }
   const file = join(root, dir, 'package.json');
   if (!existsSync(file)) continue;
   const src = readFileSync(file, 'utf8');

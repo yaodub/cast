@@ -333,7 +333,7 @@ export const ConsoleIsolationSchema = z.enum(['normal', 'strict']);
 export type ConsoleIsolation = z.infer<typeof ConsoleIsolationSchema>;
 
 export const ServerConfigSchema = z.object({
-  consoleModel: z.string().default('claude-opus-4-7'),
+  consoleModel: z.string().default('claude-opus-5[1m]'),
   // Optional so unset stays distinct from explicit false. Server-scope
   // consoles fall back to per-console strategy defaults when undefined;
   // an explicit true/false from the operator overrides those defaults.
@@ -345,7 +345,7 @@ export const ServerConfigSchema = z.object({
 export type ServerConfig = z.infer<typeof ServerConfigSchema>;
 
 const EMPTY_SERVER_CONFIG: ServerConfig = {
-  consoleModel: 'claude-opus-4-7',
+  consoleModel: 'claude-opus-5[1m]',
   consoleIsolation: 'normal',
 };
 

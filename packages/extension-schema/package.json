@@ -1,8 +1,52 @@
 {
   "name": "@getcast/extension-schema",
-  "version": "0.3.3",
-  "private": true,
+  "version": "0.1.0",
+  "description": "The contract between a Cast extension and its host: types and helpers for defining extensions that expose tools to agents.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yaodub/cast.git",
+    "directory": "packages/extension-schema"
+  },
+  "homepage": "https://getcast.dev",
+  "keywords": [
+    "cast",
+    "agents",
+    "extensions",
+    "tools",
+    "mcp"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
-  "peerDependencies": { "zod": "^4.0.0" }
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "peerDependencies": {
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
 }

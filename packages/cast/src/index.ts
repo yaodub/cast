@@ -37,11 +37,13 @@ import { email } from '@getcast/ext-email';
 import { webFetch } from '@getcast/ext-web-fetch';
 import { calendar } from '@getcast/ext-calendar';
 import { whatsapp } from '@getcast/ext-whatsapp';
+import { gmessages } from '@getcast/ext-gmessages';
 
 registerExtension(email);
 registerExtension(webFetch);
 registerExtension(calendar);
 registerExtension(whatsapp);
+registerExtension(gmessages);
 
 // Aggregate per-extension manuals into packages/cast/manuals/extensions/<name>/
 // so every console container sees them at /ref/manuals/extensions/<name>/ via

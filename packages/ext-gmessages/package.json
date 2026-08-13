@@ -1,0 +1,27 @@
+{
+  "name": "@getcast/ext-gmessages",
+  "version": "0.3.4",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schemas": "./src/schemas.ts"
+  },
+  "scripts": {
+    "build": "tsx build.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "gmessages": "^0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.27.3",
+    "tsx": "^4.19.0",
+    "typescript": "^5.9.3"
+  },
+  "peerDependencies": {
+    "@getcast/extension-schema": "workspace:*",
+    "zod": "^4.0.0"
+  }
+}

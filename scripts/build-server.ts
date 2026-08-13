@@ -67,6 +67,16 @@ async function main(): Promise<void> {
     throw new Error(`--port must be an integer in [1, 65535], got ${portStr}`);
   }
 
+  // Gate the bundle on snapshot freshness. The baked cast-services snapshots
+  // are the offline floor for the model picker and the update banner, so a
+  // drifted one ships a stale catalog to every install that can't reach
+  // api.getcast.dev. Bundling is the last point where that's still fixable.
+  // CAST_SKIP_SNAPSHOT_CHECK=1 overrides for a deliberate offline build.
+  console.log('Checking cast-services snapshots...');
+  const { checkSnapshots } = await import('./check-snapshots.mjs');
+  const snapshots = await checkSnapshots();
+  if (!snapshots.ok) throw new Error('snapshot drift — see above');
+
   fs.mkdirSync(outdir, { recursive: true });
 
   console.log(`Bundling Cast server → ${outdir}/`);

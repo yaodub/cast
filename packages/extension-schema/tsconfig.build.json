@@ -1,0 +1,14 @@
+// Emit config for the published artifact. The sibling tsconfig.json stays `noEmit`
+// so the repo-wide typecheck keeps working unchanged.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src/**/*"]
+}

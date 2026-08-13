@@ -31,7 +31,6 @@ import { WhatsAppStore } from './store.js';
 import { ConnectionManager } from './connection.js';
 import { WatchManager } from './watch-manager.js';
 import {
-  withTimeout,
   formatMessage,
   mimetypeFromExtension,
   buildMediaContent,
@@ -498,14 +497,18 @@ export class WhatsAppExtension implements ExtensionInstance {
   // =========================================================================
 
   private async ensureReady(): Promise<ToolResult | null> {
-    if (!this.connection.isPaired()) {
-      return textResult('WhatsApp not paired. Link a device in the admin panel first.', true);
-    }
-    try {
-      await withTimeout(this.connection.ready, 15_000, 'WhatsApp not ready — connection timeout');
-      return null;
-    } catch {
-      return textResult('WhatsApp not ready — connection timeout. Try again in a moment.', true);
+    const usable = await this.connection.ensureUsable(15_000);
+    if (usable.ok) return null;
+    switch (usable.reason) {
+      case 'unpaired':
+        return textResult('WhatsApp not paired. Link a device in the admin panel first.', true);
+      case 'rejected':
+        return textResult(
+          'WhatsApp refused the connection: this client version is no longer accepted. The extension needs a version update — tell the operator.',
+          true,
+        );
+      case 'timeout':
+        return textResult('WhatsApp not ready — connection timeout. Try again in a moment.', true);
     }
   }
 

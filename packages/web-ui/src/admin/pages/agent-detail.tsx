@@ -18,6 +18,7 @@ import { EmailExtensionPage } from './extensions/email';
 import { WebFetchExtensionPage } from './extensions/web-fetch';
 import { CalendarExtensionPage } from './extensions/calendar';
 import { WhatsAppExtensionPage } from './extensions/whatsapp';
+import { GmessagesExtensionPage } from './extensions/gmessages';
 import { ServiceSecretsPage } from './extensions/service';
 import { McpServersPage } from './mcp-servers';
 import { TokensView } from './tokens-view';
@@ -1799,6 +1800,7 @@ const EXTENSION_LABELS: Record<string, string> = {
   'web-fetch': 'Web Fetch',
   calendar: 'Calendar',
   whatsapp: 'WhatsApp',
+  gmessages: 'Google Messages',
   service: 'Service',
 };
 
@@ -1807,6 +1809,7 @@ const EXTENSION_PAGES: Record<string, (props: { alias: string }) => JSX.Element>
   'web-fetch': WebFetchExtensionPage,
   calendar: CalendarExtensionPage,
   whatsapp: WhatsAppExtensionPage,
+  gmessages: GmessagesExtensionPage,
   service: ServiceSecretsPage,
 };
 

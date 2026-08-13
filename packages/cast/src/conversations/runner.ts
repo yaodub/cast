@@ -128,7 +128,7 @@ export interface Runner {
   pipeMessage(
     text: string,
     attachments?: Attachment[],
-    opts?: { kind?: DeliverKind; attrs?: Record<string, string>; rawText?: string },
+    opts?: { kind?: DeliverKind; attrs?: Record<string, string>; rawText?: string; meta?: DeliverMeta },
   ): boolean;
 
   /** Graceful close — sends 'close' over stdin. Container exits after current turn.
@@ -177,6 +177,27 @@ export interface PendingMessage {
   attrs?: Record<string, string>;
   /** Pre-format-pass content for logging (omits XML envelope). */
   rawText?: string;
+  /** Internal delivery metadata — never rendered or logged. See `DeliverMeta`. */
+  meta?: DeliverMeta;
+}
+
+/**
+ * Internal delivery metadata (task 114 Phase 3b.1). Rides the routing pipeline
+ * from the emitter to the runner — including through the mailbox, so a cold
+ * spawn sees it — but is NEVER rendered into the agent-visible `<cast:kind>`
+ * envelope and never written to the message log. This is the structural
+ * replacement for the retired `_`-prefixed-attr convention: internal data
+ * lives in its own typed field instead of sharing the attrs map with a strip
+ * filter at the renderer, so a leak is impossible by construction.
+ *
+ * Types are structural mirrors of their agent-layer owners (conversations/
+ * does not import agent/, same as `DeliverKind` below).
+ */
+export interface DeliverMeta {
+  /** Watch-lineage of the watch fire this message delivers (task 114 Phase
+   *  3.2) — mirrors `agent/watch-chain.ts:WatchChain`. The runner stamps it
+   *  onto the turn's write-reports for causal-loop detection. */
+  watchChain?: { id: string; hop: number; members: string[] };
 }
 
 /** Inbound stimulus class. Mirrors `agent/conversation-runner.ts:DeliverKind`. */

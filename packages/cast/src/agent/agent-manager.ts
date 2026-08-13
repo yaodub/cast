@@ -81,6 +81,7 @@ import {
   type AgentRouteDeps,
 } from './agent-route.js';
 import type { DeliverKind } from './conversation-runner.js';
+import type { DeliverMeta } from '../conversations/runner.js';
 import {
   buildConsoleContext as externalBuildConsoleContext,
   buildConsoleMcpDeps as externalBuildConsoleMcpDeps,
@@ -979,6 +980,7 @@ export class AgentManager implements BusHandler {
     attachments?: Attachment[],
     kind?: DeliverKind,
     attrs?: Record<string, string>,
+    meta?: DeliverMeta,
   ): Promise<RouteResult> {
     return externalRouteMessage(
       this.routeDeps(),
@@ -991,6 +993,7 @@ export class AgentManager implements BusHandler {
       attachments,
       kind,
       attrs,
+      meta,
     );
   }
 

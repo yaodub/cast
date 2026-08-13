@@ -41,6 +41,7 @@ import type {
   SpawnOutcome,
   PendingMessage,
   DeliverKind,
+  DeliverMeta,
   TeardownMode,
 } from './runner.js';
 
@@ -248,6 +249,9 @@ export interface DeliverOpts {
   attrs?: Record<string, string>;
   /** Pre-format-pass content for inbound logging. Falls back to `text`. */
   rawText?: string;
+  /** Internal delivery metadata — never rendered into the envelope, never
+   *  logged. See `DeliverMeta` (conversations/runner.ts). */
+  meta?: DeliverMeta;
 }
 
 /** Default drain timeout for slot eviction, env-stale invalidation, and
@@ -551,6 +555,7 @@ export class Conversation implements ExpirableConversation {
       kind: opts?.kind,
       attrs: opts?.attrs,
       rawText: opts?.rawText,
+      meta: opts?.meta,
     };
 
     // Invalidated runner: tear it down synchronously so the next branch sees
@@ -575,6 +580,7 @@ export class Conversation implements ExpirableConversation {
         kind: opts?.kind,
         attrs: opts?.attrs,
         rawText: opts?.rawText,
+        meta: opts?.meta,
       });
       if (piped) {
         // Track for crash/auth-error replay — see `pipedThisSpawn` declaration.
@@ -1035,7 +1041,17 @@ export class Conversation implements ExpirableConversation {
         // Re-affirm 'running' after each inner-loop respawn. A teardown during
         // a prior iteration's await would have superseded us — bail before
         // touching state or re-spawning, deferring to the successor cycle.
-        if (this.supersededSince(epoch)) return;
+        // Restore canon on bail: `prompt` holds messages drained but not yet
+        // delivered (the initial drain, or a settled/auth-retry branch that
+        // drained then continued into this check). A superseded cycle must
+        // not take them to the grave — unshift them back so the successor
+        // cycle's own drain (or its settled-branch mailbox re-check) delivers
+        // them. Without this, a message that raced a teardown is silently
+        // lost while the deliver resolver still reports ok.
+        if (this.supersededSince(epoch)) {
+          if (prompt.length > 0) this.mailbox.unshift(...prompt);
+          return;
+        }
         this.setState('running');
         let outcome: SpawnOutcome;
         try {

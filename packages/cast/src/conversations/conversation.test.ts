@@ -660,6 +660,49 @@ describe('Conversation — invalidate', () => {
     expect(f.factorySpy).toHaveBeenCalledTimes(2);
     expect(r2.spawnSpy).toHaveBeenCalledTimes(1);
   });
+
+  it('superseded cycle restores its drained prompt — message survives the invalidate-during-warm-idle race', async () => {
+    // Regression: a deliver that lands on an env-stale warm runner tears it
+    // down and queues the message; the OLD spawn cycle (still parked in
+    // `await runner.spawn()`) then settles, and its settled branch drains the
+    // mailbox before the loop-head supersede check bails — taking the queued
+    // message to the grave. The successor cycle spawned with an empty prompt
+    // and the message was silently lost (deliver resolver still fired ok).
+    const r1 = makeMockRunner({ manualSpawn: true });
+    // Hold r1's destroy open so the successor cycle stays queued on the slot
+    // while the superseded cycle settles and drains — the incident interleaving.
+    let releaseDestroy!: () => void;
+    const destroyGate = new Promise<void>((res) => { releaseDestroy = res; });
+    const innerDestroy = r1.destroy.bind(r1);
+    r1.destroy = async (mode: TeardownMode) => {
+      await destroyGate;
+      return innerDestroy(mode);
+    };
+    const r2 = makeMockRunner();
+    const f = makeConvFixture({ capacity: 1, runnerSequence: [r1, r2] });
+
+    void f.conv.deliver('first', {});
+    await settle();
+    f.triggerIdle(); // warm idle — cycle A still parked in await spawn()
+    expect(f.conv.state).toBe('idle-with-runner');
+    f.conv.invalidate();
+
+    // Teardown begins (destroy gated open); 'second' lands in the mailbox and
+    // cycle B queues on the still-held slot.
+    void f.conv.deliver('second', {});
+    await settle();
+    // Superseded cycle A wakes with a settled outcome and hits the drain path.
+    f.resolveSpawn({ type: 'settled', result: 'r1 done', outputSent: true });
+    await settle();
+    // Teardown completes, slot frees, cycle B spawns.
+    releaseDestroy();
+    await settle(20);
+
+    expect(f.conv.state).toBe('idle-with-runner');
+    expect(r2.spawnSpy).toHaveBeenCalledTimes(1);
+    const delivered = r2.spawnSpy.mock.calls.flatMap(([prompt]) => prompt.map((m) => m.text));
+    expect(delivered).toContain('second');
+  });
 });
 
 // =============================================================================

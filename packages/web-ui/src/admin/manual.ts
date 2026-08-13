@@ -33,6 +33,7 @@ import { pageManual as emailManual } from './pages/extensions/email';
 import { pageManual as webFetchManual } from './pages/extensions/web-fetch';
 import { pageManual as calendarManual } from './pages/extensions/calendar';
 import { pageManual as whatsappManual } from './pages/extensions/whatsapp';
+import { pageManual as gmessagesManual } from './pages/extensions/gmessages';
 
 export const ADMIN_MANUAL: AdminManual = {
   // Server-level pages
@@ -62,4 +63,5 @@ export const ADMIN_MANUAL: AdminManual = {
   '/agents/:alias/capabilities/extensions/web-fetch': webFetchManual,
   '/agents/:alias/capabilities/extensions/calendar': calendarManual,
   '/agents/:alias/capabilities/extensions/whatsapp': whatsappManual,
+  '/agents/:alias/capabilities/extensions/gmessages': gmessagesManual,
 };

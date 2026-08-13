@@ -36,6 +36,7 @@ import type { AgentDb } from './agent-db.js';
 import type { Routing } from './agent-bus-payload.js';
 import type { AgentStateStore } from './state-store.js';
 import { type DeliverKind } from './conversation-runner.js';
+import type { DeliverMeta } from '../conversations/runner.js';
 
 /** Per-conversation spawn context carried through `Conversations.deliver`
  *  and `Conversations.scheduleTtl`. AgentManager's factory closure receives
@@ -203,6 +204,7 @@ export async function routeMessage(
   attachments?: Attachment[],
   kind?: DeliverKind,
   attrs?: Record<string, string>,
+  meta?: DeliverMeta,
 ): Promise<RouteResult> {
   if (deps.isShuttingDown())
     return { ok: false, error: 'Shutting down' };
@@ -348,7 +350,7 @@ export async function routeMessage(
     conversationKey,
     text,
     ctx,
-    { kind, attrs, rawText, attachments: diskAttachments },
+    { kind, attrs, rawText, attachments: diskAttachments, meta },
   );
 }
 

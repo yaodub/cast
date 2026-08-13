@@ -9,7 +9,7 @@ import { AgentAvatar } from '../../lib/components/agent-avatar';
 
 type RenderItem =
   | { key: string; kind: 'message'; msg: StoredMessage; sortAt: number }
-  | { key: string; kind: 'stream'; text: string; sealed: boolean; timestamp: string; sortAt: number };
+  | { key: string; kind: 'stream'; text: string; sealed: boolean; timestamp: string; sortAt: number; msgId?: string; attachments?: StoredMessage['attachments'] };
 
 const RENDER_LIMIT = 200;
 
@@ -65,7 +65,7 @@ export function ChatArea({
     for (const m of msgs) {
       const sortAt = new Date(m.timestamp).getTime();
       if (m.streamId) {
-        items.push({ key: `stream-${m.streamId}`, kind: 'stream', text: m.text, sealed: true, timestamp: m.timestamp, sortAt });
+        items.push({ key: `stream-${m.streamId}`, kind: 'stream', text: m.text, sealed: true, timestamp: m.timestamp, sortAt, msgId: m.id, attachments: m.attachments });
       } else {
         items.push({ key: m.id, kind: 'message', msg: m, sortAt });
       }
@@ -182,7 +182,7 @@ export function ChatArea({
           )}
           {renderItems.map((item) => item.kind === 'message'
             ? <MessageBubble key={item.key} message={item.msg} currentHandle={currentHandle} />
-            : <StreamableBubble key={item.key} text={item.text} sealed={item.sealed} timestamp={item.timestamp} />
+            : <StreamableBubble key={item.key} text={item.text} sealed={item.sealed} timestamp={item.timestamp} msgId={item.msgId} attachments={item.attachments} />
           )}
           <ActivityIndicator typing={typing} lifecycle={lifecycle} streaming={previews.length > 0} />
         </div>

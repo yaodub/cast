@@ -7,6 +7,7 @@
 import { convert } from 'html-to-text';
 import { ImapFlow } from 'imapflow';
 import type { SearchObject } from 'imapflow';
+import { z } from 'zod';
 
 import { EmailAdminState } from './schemas.js';
 import type { EmailSecrets, EmailSearchRequest, EmailEnvelope } from './schemas.js';
@@ -195,6 +196,31 @@ export async function connect(ctx: { secrets: EmailSecrets; privateDir: string }
   } catch (err) {
     return { ok: false, message: `IMAP connection failed: ${err instanceof Error ? err.message : String(err)}` };
   }
+}
+
+// imapflow attaches diagnostics to command-failure errors whose message is often
+// just "Command failed". `mailboxMissing` is server-independent — imapflow verifies
+// it with its own LIST probe after a NO response. `responseText` is freeform server
+// prose: safe to surface verbatim, never to parse.
+const ImapErrorDetail = z.object({
+  mailboxMissing: z.boolean().optional(),
+  responseText: z.string().optional(),
+});
+
+/** Format an IMAP failure for a tool result: name a missing mailbox outright, otherwise append the server's response text to the error message. */
+export function formatImapError(err: unknown, folder?: string): string {
+  const message = err instanceof Error ? err.message : String(err);
+  const detail = ImapErrorDetail.safeParse(err);
+  if (!detail.success) return message;
+  if (detail.data.mailboxMissing) {
+    const name = folder ? `Folder "${folder}"` : 'Folder';
+    return `${name} does not exist on this server. Use email__list_folders to see available folders.`;
+  }
+  const { responseText } = detail.data;
+  if (responseText && !message.includes(responseText)) {
+    return `${message} — server response: ${responseText}`;
+  }
+  return message;
 }
 
 /** Find a SPECIAL-USE folder (e.g. '\\Drafts'). Falls back to name convention. */
